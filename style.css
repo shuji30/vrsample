@@ -1,0 +1,52 @@
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b1020;
+  color: #e8ecf8;
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+
+canvas { display: block; }
+
+#overlay {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 16px 20px;
+  border-radius: 14px;
+  background: rgba(10, 16, 34, 0.72);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  line-height: 1.6;
+  font-size: 14px;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+
+#overlay h1 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  letter-spacing: 0.02em;
+}
+
+#overlay p { margin: 6px 0; }
+
+#overlay ul {
+  margin: 8px 0 6px;
+  padding-left: 1.2em;
+}
+
+#overlay li { margin: 2px 0; }
+
+#status {
+  font-size: 12px;
+  color: #8fa3cc;
+}
+
+/* VR セッション中はオーバーレイを隠す */
+body.xr-presenting #overlay { opacity: 0; }

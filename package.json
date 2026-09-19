@@ -1,0 +1,14 @@
+{
+  "name": "vrsample",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WebXR + three.js でつくる、ビルド不要の VR サンプル",
+  "scripts": {
+    "start": "node scripts/serve.mjs .",
+    "vendor": "node scripts/vendor.mjs"
+  },
+  "devDependencies": {
+    "three": "0.186.0"
+  }
+}

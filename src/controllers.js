@@ -49,6 +49,7 @@ function buildPointer() {
     new THREE.LineBasicMaterial({ color: 0x8ef0ff, transparent: true, opacity: 0.8 }),
   );
   line.name = 'pointerLine';
+  line.frustumCulled = false; // 視錐台を合成できないヘッドセット対策（main.js のコメント参照）
   group.add(line);
 
   // 先端のドットはレーザーの兄弟にしておく（線のスケールで潰れないように）
@@ -57,6 +58,7 @@ function buildPointer() {
     new THREE.MeshBasicMaterial({ color: 0x8ef0ff }),
   );
   dot.name = 'pointerDot';
+  dot.frustumCulled = false;
   group.add(dot);
 
   group.userData.setLength = (distance, hit) => {
@@ -197,6 +199,35 @@ export function createPlayer(renderer, camera, scene, world) {
     return Math.abs(value) < DEADZONE ? 0 : value;
   }
 
+  /**
+   * サムスティックの値を読む。
+   *
+   * xr-standard では axes[2]/axes[3] がサムスティックだが、
+   * Pimax Sword や Vive ワンドなど一部のプロファイルでは
+   * axes[0]/axes[1] に来る。倒れている方のペアを採用して両対応する。
+   */
+  function readStick(gamepad) {
+    const axes = gamepad.axes;
+    let bestX = 0;
+    let bestY = 0;
+    let bestMagnitude = 0;
+
+    for (let i = 0; i + 1 < axes.length; i += 2) {
+      const x = axes[i] ?? 0;
+      const y = axes[i + 1] ?? 0;
+      const magnitude = Math.hypot(x, y);
+      // axes[2]/axes[3] を既定とみなし、他のペアは明確に上回るときだけ採用する
+      const bias = i === 2 ? 0.05 : 0;
+      if (magnitude + bias > bestMagnitude) {
+        bestMagnitude = magnitude + bias;
+        bestX = x;
+        bestY = y;
+      }
+    }
+
+    return { x: applyDeadzone(bestX), y: applyDeadzone(bestY) };
+  }
+
   function updateLocomotion(dt) {
     const session = renderer.xr.getSession();
     if (!session) return;
@@ -208,30 +239,38 @@ export function createPlayer(renderer, camera, scene, world) {
     forward.normalize();
     right.set(-forward.z, 0, forward.x); // forward を Y 軸まわりに -90度（右方向）
 
-    for (const source of session.inputSources) {
+    const sources = [...session.inputSources];
+
+    sources.forEach((source, index) => {
       const gamepad = source.gamepad;
-      if (!gamepad || gamepad.axes.length === 0) continue;
+      if (!gamepad || gamepad.axes.length === 0) return;
 
-      // xr-standard では axes[2]/axes[3] がサムスティック
-      const x = applyDeadzone(gamepad.axes[2] ?? gamepad.axes[0] ?? 0);
-      const y = applyDeadzone(gamepad.axes[3] ?? gamepad.axes[1] ?? 0);
-      const controller = controllers.find((c) => c.userData.handedness === source.handedness);
+      // handedness を返さないランタイムもあるので、その場合は順番で左右を決める
+      const hand =
+        source.handedness === 'left' || source.handedness === 'right'
+          ? source.handedness
+          : index === 0
+            ? 'left'
+            : 'right';
 
-      if (source.handedness === 'right') {
+      // three.js は inputSources の並び順どおりにコントローラーを割り当てる
+      const controller = controllers[index];
+      const { x, y } = readStick(gamepad);
+
+      if (hand === 'right') {
         // スナップターン：一度倒したら中央に戻すまで再入力しない
-        if (controller) {
-          if (x === 0) {
-            controller.userData.snapLatched = false;
-          } else if (!controller.userData.snapLatched) {
-            rotateAroundHead(-Math.sign(x) * SNAP_ANGLE);
-            controller.userData.snapLatched = true;
-          }
+        if (!controller) return;
+        if (x === 0) {
+          controller.userData.snapLatched = false;
+        } else if (!controller.userData.snapLatched) {
+          rotateAroundHead(-Math.sign(x) * SNAP_ANGLE);
+          controller.userData.snapLatched = true;
         }
       } else {
         player.position.addScaledVector(forward, -y * MOVE_SPEED * dt);
         player.position.addScaledVector(right, x * MOVE_SPEED * dt);
       }
-    }
+    });
   }
 
   // --- 毎フレーム更新 -----------------------------------------------------

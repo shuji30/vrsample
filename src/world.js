@@ -1,368 +1,157 @@
 import * as THREE from 'three';
-import { THEMES, DEFAULT_THEME } from './themes.js';
+import { createTextures } from './textures.js';
+import { createRoom, ROOM } from './room.js';
+import { createPark } from './park.js';
+import { createFurniture, TABLE } from './furniture.js';
+import { createLighting } from './lighting.js';
+import { DEFAULT_THEME } from './themes.js';
+
+/**
+ * 部屋と、窓の外の公園と、照明をまとめて組み立てる。
+ *
+ * 物理は相変わらず重力と着地だけの数十行。物理エンジンを入れないのは、
+ * つかんで投げて戻る、という遊びにはこれで足り、フレーム落ちの原因を
+ * 一つ減らせるから。
+ */
 
 const GRAVITY = -9.8;
-const RESTITUTION = 0.42; // 床で跳ね返るときの反発係数
-const FLOOR_RADIUS = 40;   // 地平線が霧に溶けるよう広めにとる
-const PLAY_RADIUS = 12;    // グリッドを敷く遊び場の広さ
-
-/** 中央のテーブル。床とあわせて「着地できる面」として扱う。 */
-const TABLE = { center: { x: 0, y: -2.2 }, radius: 0.9, top: 0.75 };
+const RESTITUTION = 0.38;   // 床の反発。木の床なので跳ねすぎない
+const WALL_RESTITUTION = 0.45;
+const FRICTION = 0.78;
 
 /**
- * グラデーション空。巨大な球を裏面表示して、頂点の高さで色を混ぜる。
+ * @param {THREE.WebGLRenderer} renderer
+ * @param {THREE.Scene} scene
+ * @param {object} [options]
+ * @param {number} [options.textureQuality] 1 = 既定。軽くしたいときは 0.5
+ * @param {number} [options.shadowMapSize]
  */
-function createSky() {
-  const uniforms = {
-    topColor: { value: new THREE.Color() },
-    bottomColor: { value: new THREE.Color() },
+export function createWorld(renderer, scene, { textureQuality = 1, shadowMapSize = 4096 } = {}) {
+  const tex = createTextures(renderer, { quality: textureQuality });
+
+  const room = createRoom(scene, tex);
+  const park = createPark(scene, tex);
+
+  let lighting = null;
+  const furniture = createFurniture(scene, tex, (key) => {
+    if (lighting) lighting.setTheme(key);
+  });
+
+  lighting = createLighting(renderer, scene, {
+    windows: room.windows,
+    lampSockets: furniture.lampSockets,
+    skyUniforms: park.skyUniforms,
+    shadowMapSize,
+  });
+
+  // 初期テーマ。環境マップは「部屋を撮って部屋に返す」ので、
+  // 2 回まわすと 1 バウンスぶん間接光が乗って落ち着く。
+  lighting.setTheme(DEFAULT_THEME);
+  lighting.refreshEnvironment();
+
+  const { grabbables, buttons } = furniture;
+
+  // プレイヤーが壁を抜けないようにするための内寸
+  const bounds = {
+    minX: ROOM.minX + 0.35,
+    maxX: ROOM.maxX - 0.35,
+    minZ: ROOM.minZ + 0.35,
+    maxZ: ROOM.maxZ - 0.35,
   };
 
-  const material = new THREE.ShaderMaterial({
-    uniforms,
-    side: THREE.BackSide,
-    depthWrite: false,
-    vertexShader: /* glsl */ `
-      varying vec3 vWorldPosition;
-      void main() {
-        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-        vWorldPosition = worldPosition.xyz;
-        gl_Position = projectionMatrix * viewMatrix * worldPosition;
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform vec3 topColor;
-      uniform vec3 bottomColor;
-      varying vec3 vWorldPosition;
-      void main() {
-        float h = clamp(normalize(vWorldPosition).y * 0.5 + 0.5, 0.0, 1.0);
-        gl_FragColor = vec4(mix(bottomColor, topColor, pow(h, 0.7)), 1.0);
-      }
-    `,
-  });
-
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(200, 32, 16), material);
-  sky.name = 'sky';
-  return { sky, uniforms };
-}
-
-/**
- * 日本語テキストを canvas に描いてテクスチャにする。
- */
-function createTextTexture(lines, { width = 1024, height = 512 } = {}) {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = 'rgba(8, 12, 26, 0.92)';
-  ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = 'rgba(120, 200, 255, 0.55)';
-  ctx.lineWidth = 6;
-  ctx.strokeRect(3, 3, width - 6, height - 6);
-
-  ctx.textBaseline = 'top';
-  let y = 48;
-  for (const line of lines) {
-    const heading = line.startsWith('#');
-    const text = heading ? line.slice(1).trim() : line;
-    ctx.font = heading
-      ? 'bold 52px system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif'
-      : '34px system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif';
-    ctx.fillStyle = heading ? '#8ef0ff' : '#e8ecf8';
-    ctx.fillText(text, 48, y);
-    y += heading ? 78 : 50;
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  return texture;
-}
-
-/**
- * ワールド（床・空・光・オブジェクト類）を組み立てる。
- * @param {THREE.Scene} scene
- */
-export function createWorld(scene) {
-  const grabbables = [];
-  const buttons = [];
-
-  // --- 空 ---------------------------------------------------------------
-  const { sky, uniforms: skyUniforms } = createSky();
-  scene.add(sky);
-  scene.fog = new THREE.Fog(0x000000, 14, 52);
-
-  // --- ライト -----------------------------------------------------------
-  const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
-  hemiLight.position.set(0, 20, 0);
-  scene.add(hemiLight);
-
-  const sunLight = new THREE.DirectionalLight(0xffffff, 2.5);
-  sunLight.position.set(6, 12, 4);
-  sunLight.castShadow = true;
-  sunLight.shadow.mapSize.set(2048, 2048);
-  sunLight.shadow.camera.top = 14;
-  sunLight.shadow.camera.bottom = -14;
-  sunLight.shadow.camera.left = -14;
-  sunLight.shadow.camera.right = 14;
-  sunLight.shadow.camera.far = 40;
-  sunLight.shadow.bias = -0.0005;
-  scene.add(sunLight);
-
-  // --- 床 ---------------------------------------------------------------
-  const floorMaterial = new THREE.MeshStandardMaterial({
-    color: 0x6f7f92,
-    roughness: 0.85,
-    metalness: 0.05,
-  });
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(FLOOR_RADIUS, 64), floorMaterial);
-  floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = true;
-  floor.name = 'floor';
-  scene.add(floor);
-
-  const grid = new THREE.GridHelper(PLAY_RADIUS * 2, 24, 0xffffff, 0xffffff);
-  grid.material.transparent = true;
-  grid.material.opacity = 0.18;
-  grid.position.y = 0.002;
-  scene.add(grid);
-
-  // --- 中央のテーブルと回転するオブジェ -----------------------------------
-  const tableMaterial = new THREE.MeshStandardMaterial({ color: 0x3b455f, roughness: 0.55, metalness: 0.15 });
-
-  const tableTop = new THREE.Mesh(
-    new THREE.CylinderGeometry(TABLE.radius, TABLE.radius, 0.06, 48),
-    tableMaterial,
-  );
-  tableTop.position.set(TABLE.center.x, TABLE.top - 0.03, TABLE.center.y);
-  tableTop.castShadow = true;
-  tableTop.receiveShadow = true;
-  scene.add(tableTop);
-
-  const tableLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.28, TABLE.top - 0.06, 24), tableMaterial);
-  tableLeg.position.set(TABLE.center.x, (TABLE.top - 0.06) / 2, TABLE.center.y);
-  tableLeg.castShadow = true;
-  tableLeg.receiveShadow = true;
-  scene.add(tableLeg);
-
-  const knotMaterial = new THREE.MeshStandardMaterial({
-    color: 0x223052,
-    roughness: 0.18,
-    metalness: 0.85,
-    emissive: new THREE.Color(0x36d1c4),
-    emissiveIntensity: 0.25,
-  });
-  const knot = new THREE.Mesh(new THREE.TorusKnotGeometry(0.26, 0.085, 200, 32), knotMaterial);
-
-  // ノット自身を光源にして、夜でも周囲がほんのり照らされるようにする
-  const knotLight = new THREE.PointLight(0x36d1c4, 2.2, 5, 2);
-  knot.add(knotLight);
-  knot.position.set(TABLE.center.x, TABLE.top + 0.55, TABLE.center.y);
-  knot.castShadow = true;
-  scene.add(knot);
-
-  // --- つかめるキューブ -------------------------------------------------
-  const cubeColors = [0xff6b6b, 0xffd166, 0x06d6a0, 0x4cc9f0, 0xb892ff, 0xff9ecd];
-  const cubeGeometry = new THREE.BoxGeometry(0.18, 0.18, 0.18);
-
-  cubeColors.forEach((color, i) => {
-    const mesh = new THREE.Mesh(
-      cubeGeometry,
-      new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.15 }),
-    );
-    const angle = (i / cubeColors.length) * Math.PI * 2;
-    const home = new THREE.Vector3(
-      TABLE.center.x + Math.cos(angle) * 0.62,
-      TABLE.top + 0.09,
-      TABLE.center.y + Math.sin(angle) * 0.62,
-    );
-    mesh.position.copy(home);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.userData = {
-      grabbable: true,
-      home,
-      halfSize: 0.09,
-      velocity: new THREE.Vector3(),
-      spin: new THREE.Vector3(),
-      held: false,
-      baseColor: new THREE.Color(color),
-    };
-    scene.add(mesh);
-    grabbables.push(mesh);
-  });
-
-  // --- 遠景の柱 ---------------------------------------------------------
-  // VR では動いていることが分かる目印がないと距離感がつかみにくいので、
-  // 外周にシンプルな柱を並べておく。
-  const pillarMaterial = new THREE.MeshStandardMaterial({ color: 0x4a5568, roughness: 0.9, metalness: 0.0 });
-  const pillarGeometry = new THREE.CylinderGeometry(0.28, 0.36, 1, 10);
-  const pillarCount = 16;
-
-  for (let i = 0; i < pillarCount; i++) {
-    const angle = (i / pillarCount) * Math.PI * 2 + 0.2;
-    const radius = 8.5 + ((i * 7) % 5) * 0.8;
-    const height = 1.6 + ((i * 3) % 4) * 0.9;
-    const pillar = new THREE.Mesh(pillarGeometry, pillarMaterial);
-    pillar.position.set(Math.cos(angle) * radius, height / 2, Math.sin(angle) * radius);
-    pillar.scale.y = height;
-    pillar.castShadow = true;
-    pillar.receiveShadow = true;
-    scene.add(pillar);
-  }
-
-  // --- 説明パネル -------------------------------------------------------
-  const panelTexture = createTextTexture([
-    '# WebXR おもちゃ箱',
-    'トリガー : つかむ / 離すと投げる',
-    '左スティック : 移動',
-    '右スティック : スナップターン',
-    'ボタンを撃つ : 時間帯を変える',
-  ]);
-  const panel = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.8, 0.9),
-    new THREE.MeshBasicMaterial({ map: panelTexture, toneMapped: false }),
-  );
-  panel.position.set(-2.6, 1.6, -2.6);
-  panel.rotation.y = Math.PI / 7;
-  scene.add(panel);
-
-  // --- テーマ切り替えボタン ---------------------------------------------
-  const console3d = new THREE.Group();
-  console3d.position.set(2.3, 0.95, -2.4);
-  console3d.rotation.y = -Math.PI / 7;
-  scene.add(console3d);
-
-  const consoleBody = new THREE.Mesh(
-    new THREE.BoxGeometry(1.0, 0.12, 0.42),
-    new THREE.MeshStandardMaterial({ color: 0x323c5c, roughness: 0.55, metalness: 0.15 }),
-  );
-  consoleBody.castShadow = true;
-  console3d.add(consoleBody);
-
-  const leg = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.05, 0.07, 0.9, 16),
-    new THREE.MeshStandardMaterial({ color: 0x323c5c, roughness: 0.6, metalness: 0.15 }),
-  );
-  leg.position.y = -0.51;
-  leg.castShadow = true;
-  console3d.add(leg);
-
-  const themeKeys = Object.keys(THEMES);
-  themeKeys.forEach((key, i) => {
-    const theme = THEMES[key];
-    const button = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.11, 0.11, 0.07, 24),
-      new THREE.MeshStandardMaterial({
-        color: theme.swatch,
-        roughness: 0.3,
-        emissive: new THREE.Color(theme.swatch),
-        emissiveIntensity: 0.15,
-      }),
-    );
-    button.position.set((i - (themeKeys.length - 1) / 2) * 0.3, 0.08, 0);
-    button.castShadow = true;
-    button.userData = {
-      interactive: true,
-      restY: 0.08,
-      press: 0,
-      onSelect: () => setTheme(key),
-    };
-    console3d.add(button);
-    buttons.push(button);
-  });
-
-  // --- テーマ適用 -------------------------------------------------------
-  let currentTheme = null;
-
-  function setTheme(key) {
-    const theme = THEMES[key] ?? THEMES[DEFAULT_THEME];
-    currentTheme = key;
-
-    skyUniforms.topColor.value.setHex(theme.skyTop);
-    skyUniforms.bottomColor.value.setHex(theme.skyBottom);
-    scene.fog.color.setHex(theme.fog);
-    floorMaterial.color.setHex(theme.ground);
-    grid.material.color.setHex(theme.grid);
-    hemiLight.color.setHex(theme.hemiSky);
-    hemiLight.groundColor.setHex(theme.hemiGround);
-    sunLight.color.setHex(theme.sun);
-    sunLight.intensity = theme.sunIntensity;
-    knotMaterial.emissive.setHex(theme.accent);
-    knotLight.color.setHex(theme.accent);
-    pillarMaterial.color.setHex(theme.pillar);
-  }
-
-  setTheme(DEFAULT_THEME);
-
-  // --- 毎フレームの更新 -------------------------------------------------
   const tmp = new THREE.Vector3();
 
-  function update(dt, elapsed) {
-    knot.rotation.x = elapsed * 0.6;
-    knot.rotation.y = elapsed * 0.9;
-    knot.position.y = TABLE.top + 0.55 + Math.sin(elapsed * 1.4) * 0.05;
-    knotMaterial.emissiveIntensity = 0.28 + Math.sin(elapsed * 2.2) * 0.08;
+  /** 小物を初期位置に戻す。 */
+  function resetProp(prop) {
+    const data = prop.userData;
+    prop.position.copy(data.home);
+    prop.rotation.set(0, 0, 0);
+    data.velocity.set(0, 0, 0);
+    data.spin.set(0, 0, 0);
+  }
 
-    // ボタンの押し込みアニメーション
+  function update(dt) {
+    // --- スイッチの押し込み ------------------------------------------------
     for (const button of buttons) {
-      button.userData.press = Math.max(0, button.userData.press - dt * 4);
-      button.position.y = button.userData.restY - button.userData.press * 0.035;
-      button.material.emissiveIntensity = 0.15 + button.userData.press * 0.85;
+      const data = button.userData;
+      data.press = Math.max(0, data.press - dt * 4);
+      button.position.z = data.restZ - data.press * 0.007;
+      button.material.emissiveIntensity = 0.1 + data.press * 0.9;
     }
 
-    // つかまれていないキューブに簡易物理を適用
-    for (const cube of grabbables) {
-      const data = cube.userData;
+    // --- 小物の簡易物理 ----------------------------------------------------
+    for (const prop of grabbables) {
+      const data = prop.userData;
       if (data.held) continue;
 
-      const prevY = cube.position.y;
+      const prevY = prop.position.y;
       data.velocity.y += GRAVITY * dt;
-      cube.position.addScaledVector(data.velocity, dt);
+      prop.position.addScaledVector(data.velocity, dt);
 
       if (data.spin.lengthSq() > 1e-6) {
-        cube.rotation.x += data.spin.x * dt;
-        cube.rotation.y += data.spin.y * dt;
-        cube.rotation.z += data.spin.z * dt;
-        data.spin.multiplyScalar(Math.max(0, 1 - dt * 0.8));
+        prop.rotation.x += data.spin.x * dt;
+        prop.rotation.y += data.spin.y * dt;
+        prop.rotation.z += data.spin.z * dt;
+        data.spin.multiplyScalar(Math.max(0, 1 - dt * 0.9));
       }
 
-      // 着地面の高さを決める（テーブルの真上にいればテーブル、それ以外は床）
-      const dx = cube.position.x - TABLE.center.x;
-      const dz = cube.position.z - TABLE.center.y;
+      // 着地面。テーブルの真上から落ちてきたときだけ天板に乗る
+      const dx = prop.position.x - TABLE.center.x;
+      const dz = prop.position.z - TABLE.center.z;
       const onTable =
         Math.hypot(dx, dz) < TABLE.radius && prevY >= TABLE.top + data.halfSize - 1e-3;
       const surfaceY = onTable ? TABLE.top : 0;
 
-      if (cube.position.y < surfaceY + data.halfSize) {
-        cube.position.y = surfaceY + data.halfSize;
+      if (prop.position.y < surfaceY + data.halfSize) {
+        prop.position.y = surfaceY + data.halfSize;
         if (data.velocity.y < 0) {
           data.velocity.y = -data.velocity.y * RESTITUTION;
           if (Math.abs(data.velocity.y) < 0.35) data.velocity.y = 0;
-          data.velocity.x *= 0.75;
-          data.velocity.z *= 0.75;
+          data.velocity.x *= FRICTION;
+          data.velocity.z *= FRICTION;
           data.spin.multiplyScalar(0.6);
         }
       }
 
-      // 床から落ちた / 遠くへ行きすぎたら元の位置に戻す
-      tmp.set(cube.position.x, 0, cube.position.z);
-      if (cube.position.y < -6 || tmp.length() > PLAY_RADIUS + 8) {
-        cube.position.copy(data.home);
-        cube.rotation.set(0, 0, 0);
-        data.velocity.set(0, 0, 0);
-        data.spin.set(0, 0, 0);
+      // 壁。室内なので跳ね返す（外に出られると回収できない）
+      const r = data.halfSize;
+      if (prop.position.x < ROOM.minX + r) {
+        prop.position.x = ROOM.minX + r;
+        data.velocity.x = Math.abs(data.velocity.x) * WALL_RESTITUTION;
+      } else if (prop.position.x > ROOM.maxX - r) {
+        prop.position.x = ROOM.maxX - r;
+        data.velocity.x = -Math.abs(data.velocity.x) * WALL_RESTITUTION;
       }
+      if (prop.position.z < ROOM.minZ + r) {
+        prop.position.z = ROOM.minZ + r;
+        data.velocity.z = Math.abs(data.velocity.z) * WALL_RESTITUTION;
+      } else if (prop.position.z > ROOM.maxZ - r) {
+        prop.position.z = ROOM.maxZ - r;
+        data.velocity.z = -Math.abs(data.velocity.z) * WALL_RESTITUTION;
+      }
+      if (prop.position.y > ROOM.height - r) {
+        prop.position.y = ROOM.height - r;
+        data.velocity.y = -Math.abs(data.velocity.y) * 0.3;
+      }
+
+      // 念のため。窓から飛び出すなどして行方不明になったら戻す
+      tmp.set(prop.position.x, 0, prop.position.z);
+      if (prop.position.y < -2 || tmp.length() > 30) resetProp(prop);
     }
   }
 
   return {
     grabbables,
     interactables: [...grabbables, ...buttons],
-    floor,
+    floor: room.floor,
+    bounds,
+    room,
+    park,
+    furniture,
+    lighting,
     update,
-    setTheme,
-    getTheme: () => currentTheme,
+    setTheme: (key) => lighting.setTheme(key),
+    getTheme: () => lighting.getTheme(),
+    resetProps: () => grabbables.forEach(resetProp),
   };
 }

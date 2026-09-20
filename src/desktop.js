@@ -6,15 +6,17 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
  * ドラッグで視点回転、ホイールでズーム、クリックでオブジェクトを跳ねさせる。
  */
 export function createDesktopControls(renderer, camera, world) {
-  camera.position.set(0, 1.6, 1.6);
+  // 入った瞬間にテーブルと、その奥の窓ごしの公園が見える位置
+  camera.position.set(0.85, 1.62, 1.75);
 
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 1.2, -2.2);
+  controls.target.set(0, 1.10, -2.4);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.minDistance = 1.2;
-  controls.maxDistance = 12;
-  controls.maxPolarAngle = Math.PI * 0.495; // 地面より下に潜らない
+  controls.minDistance = 0.8;
+  controls.maxDistance = 6.5;   // 部屋の大きさに合わせる
+  controls.minPolarAngle = Math.PI * 0.12;
+  controls.maxPolarAngle = Math.PI * 0.495; // 床より下に潜らない
   controls.update();
 
   const raycaster = new THREE.Raycaster();
@@ -42,9 +44,9 @@ export function createDesktopControls(renderer, camera, world) {
     const object = hit.object;
     if (object.userData.grabbable) {
       object.userData.velocity.set(
-        (Math.random() - 0.5) * 1.5,
-        3.2,
-        (Math.random() - 0.5) * 1.5,
+        (Math.random() - 0.5) * 1.2,
+        2.4,
+        (Math.random() - 0.5) * 1.2,
       );
       object.userData.spin.set(
         (Math.random() - 0.5) * 8,

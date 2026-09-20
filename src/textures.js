@@ -328,36 +328,38 @@ function brushedSteel(size) {
  * さるすべりの樹皮。1 タイル = 1m。
  *
  * この木の見分けどころは「猿も滑る」つるつるの幹と、古い皮が剥がれて
- * 出てくるクリーム色・肉桂色・灰色のまだら。凹凸はほとんど付けない。
+ * 出てくるクリーム色・肉桂色・灰色のまだら。全体に明るく、剥けたばかりの
+ * 面はほとんど磨いたような艶がある。凹凸はほぼ付けない。
  */
 function crapeMyrtleBark(size) {
   return bake(size, (u, v, out) => {
-    // 剥がれた皮のパッチ。低周波ノイズを閾値で切って輪郭を作る
-    const patch = fbm(u, v, 5, 7, 4, 3301);
-    const patch2 = fbm(u, v, 11, 15, 3, 9903);
-    const fresh = smoothstep(0.46, 0.56, patch);          // 新しい肌 = 明るい
-    const cinnamon = smoothstep(0.52, 0.62, patch2) * (1 - fresh);
+    // 剥がれた皮のパッチ。10〜25cm と大きめに取る（細かくすると樹皮が
+    // 「ノイズを貼った円柱」に見えてしまう）
+    const patch = fbm(u, v, 4, 5, 4, 3301);
+    const patch2 = fbm(u, v, 7, 9, 3, 9903);
+    const fresh = smoothstep(0.44, 0.58, patch);
+    const cinnamon = smoothstep(0.50, 0.63, patch2) * (1 - fresh);
 
-    // 幹の縦方向のうねり（樹皮の凹凸ではなく幹自体の筋肉質な起伏）
-    const sinew = fbm(u, v, 9, 3, 2, 555);
-    const mottle = fbm(u, v, 40, 30, 2, 71);
+    const sinew = fbm(u, v, 7, 2, 2, 555);   // 幹自体の筋肉質な起伏
+    const mottle = fbm(u, v, 30, 22, 2, 71);
 
-    let r = 0.52, g = 0.46, b = 0.42;                     // 下地の灰
-    r += fresh * 0.26; g += fresh * 0.21; b += fresh * 0.14;   // クリーム
-    r += cinnamon * 0.16; g += cinnamon * 0.04; b -= cinnamon * 0.04; // 肉桂
-    const shade = 0.90 + (mottle - 0.5) * 0.12 + (sinew - 0.5) * 0.10;
+    // 下地は明るい灰。実物は思っているよりずっと白っぽい
+    let r = 0.62, g = 0.585, b = 0.545;
+    r += fresh * 0.21; g += fresh * 0.18; b += fresh * 0.12;        // クリーム
+    r += cinnamon * 0.13; g += cinnamon * 0.01; b -= cinnamon * 0.07; // 肉桂
+    const shade = 0.93 + (mottle - 0.5) * 0.08 + (sinew - 0.5) * 0.07;
 
     out.r = clamp01(r * shade);
     out.g = clamp01(g * shade);
     out.b = clamp01(b * shade);
 
-    // 剥がれた縁だけわずかに段差を付ける。それ以外はつるつる
-    const rim = Math.abs(patch - 0.51) < 0.02 ? 0.35 : 0;
-    out.h = sinew * 0.7 + mottle * 0.15 - rim;
-    out.ao = clamp01(0.88 + fresh * 0.12 - rim * 0.3);
-    out.rough = clamp01(0.42 + (1 - fresh) * 0.22 + mottle * 0.08);
+    const rim = Math.abs(patch - 0.51) < 0.018 ? 0.30 : 0;
+    out.h = sinew * 0.75 + mottle * 0.10 - rim;
+    out.ao = clamp01(0.92 + fresh * 0.08 - rim * 0.25);
+    // 剥けたばかりの面は磨いたような艶、古い皮はくすむ
+    out.rough = clamp01(0.30 + (1 - fresh) * 0.26 + mottle * 0.06);
     out.metal = 0;
-  }, 5);
+  }, 4);
 }
 
 /** 公園の芝生。窓越しに見る前提なので、株のムラと色の幅だけ作る。1 タイル = 2m。 */
@@ -382,81 +384,194 @@ function grass(size) {
   }, 10);
 }
 
+/** 葉 1 枚の輪郭（倒卵形）。さるすべりの葉は先が丸く、中ほどより上が広い。 */
+function leafPath(ctx, length, width) {
+  ctx.beginPath();
+  ctx.moveTo(0, -length * 0.5);
+  ctx.quadraticCurveTo(width * 0.62, -length * 0.06, width * 0.20, length * 0.5);
+  ctx.quadraticCurveTo(0, length * 0.60, -width * 0.20, length * 0.5);
+  ctx.quadraticCurveTo(-width * 0.62, -length * 0.06, 0, -length * 0.5);
+  ctx.closePath();
+}
+
 /**
- * 葉のかたまり（アルファ付き）。クロスプレーンに貼って樹冠にする。
+ * 小枝ひと房ぶんの葉（アルファ付き）。
  *
- * VR ではビルボードが「紙」に見えてしまう（両目の視差で厚みが無いと分かる）ので、
- * カメラを向かせず固定の交差板として使う前提のテクスチャ。
+ * 前の実装は円の中に楕円をばらまいていたので、輪郭が真円になって
+ * 「ピンクの円盤」に見えていた。実際の葉の房は輪郭がぎざぎざで、
+ * 隙間から空が抜ける。葉を数本の軸に沿って対に並べ、塗りつぶさない。
  *
- * @param {object} options
- * @param {string[]} options.leafColors 葉の色
- * @param {string[]} options.blossomColors 花の色（さるすべりの紅色の穂）
+ * カードは実寸 30cm 前後で使う想定。葉の長さはテクスチャの 13% なので、
+ * 現物どおり 4cm ほどになる。
  */
-function foliageCluster(size, { leafColors, blossomColors, blossomRatio = 0 }) {
+function leafSprig(size, { leafColors, twigColor = '#6b5a46' }) {
   const canvas = makeCanvas(size);
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, size, size);
 
-  let seed = 1;
+  let seed = 12345;
+  const rand = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  const leafLen = size * 0.185;
+  const leafWide = leafLen * 0.52;
+
+  // 根元をやや下にずらした 3 本の軸に、葉を対に並べる
+  const axes = 3;
+  for (let a = 0; a < axes; a++) {
+    const baseAngle = -Math.PI / 2 + (a - (axes - 1) / 2) * 0.72 + (rand() - 0.5) * 0.2;
+    const originX = size * 0.5 + (rand() - 0.5) * size * 0.10;
+    const originY = size * 0.92;
+    const length = size * (0.40 + rand() * 0.16);
+    const bend = (rand() - 0.5) * 0.45;
+
+    // 小枝そのもの。これが無いと葉が宙に浮いて見える
+    ctx.strokeStyle = twigColor;
+    ctx.lineWidth = Math.max(1.2, size * 0.006);
+    ctx.beginPath();
+    for (let i = 0; i <= 12; i++) {
+      const t = i / 12;
+      const angle = baseAngle + bend * t;
+      const x = originX + Math.cos(angle) * length * t;
+      const y = originY + Math.sin(angle) * length * t;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    const pairs = 6 + ((rand() * 3) | 0);
+    for (let i = 0; i < pairs; i++) {
+      const t = 0.12 + (i / pairs) * 0.88;
+      const angle = baseAngle + bend * t;
+      const x = originX + Math.cos(angle) * length * t;
+      const y = originY + Math.sin(angle) * length * t;
+      // 先に行くほど小さく
+      const scale = 1.10 - t * 0.35;
+
+      for (const side of [-1, 1]) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle + Math.PI / 2 + side * (0.85 + rand() * 0.35));
+        ctx.globalAlpha = 0.88 + rand() * 0.12;
+        ctx.fillStyle = leafColors[(rand() * leafColors.length) | 0];
+        leafPath(ctx, leafLen * scale, leafWide * scale);
+        ctx.fill();
+        // 主脈。近くで見たときの情報量になる
+        ctx.globalAlpha = 0.18;
+        ctx.strokeStyle = '#d8e6bf';
+        ctx.lineWidth = Math.max(0.8, size * 0.003);
+        ctx.beginPath();
+        ctx.moveTo(0, leafLen * scale * 0.45);
+        ctx.lineTo(0, -leafLen * scale * 0.45);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  ctx.globalAlpha = 1;
+  return canvas;
+}
+
+/**
+ * 葉の塊（アルファ付き）。遠景の生垣や木立に使う。
+ *
+ * 遠くの木は 1 枚のカードが数メートルになるので、房の形を見せる必要がない。
+ * むしろ葉を密に敷いて空を遮る必要がある。ただし輪郭を真円にすると
+ * 「緑の円盤」になるので、最大半径を角度で波打たせてぎざぎざにしておく。
+ */
+function leafMass(size, leafColors) {
+  const canvas = makeCanvas(size);
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+
+  let seed = 4242;
   const rand = () => {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
     return seed / 4294967296;
   };
 
   const half = size / 2;
+  const edge = (a) => 0.72 + 0.20 * Math.sin(a * 3 + 1.2) + 0.14 * Math.sin(a * 5 + 2.7);
+  const leafLen = size * 0.13;
+  const count = Math.round(size * 0.9);
 
-  // 中心ほど密に葉を置く。輪郭がぼんやりした塊になるよう半径は二乗で分布させる
-  const leafCount = Math.round(size * 1.6);
-  for (let i = 0; i < leafCount; i++) {
+  for (let i = 0; i < count; i++) {
     const angle = rand() * Math.PI * 2;
-    const radius = Math.sqrt(rand()) * half * 0.94;
-    const x = half + Math.cos(angle) * radius;
-    const y = half + Math.sin(angle) * radius * 0.88;
+    const radius = Math.sqrt(rand()) * half * edge(angle);
+    const depth = 1 - radius / half;   // 内側ほど明るく（擬似的な樹冠の照り返し）
+    const scale = 0.8 + rand() * 0.5;
 
-    const len = size * (0.045 + rand() * 0.055);
-    const width = len * (0.42 + rand() * 0.22);
-
-    // 外周の葉は少し暗く（樹冠の内側からの照り返しを想像した擬似 AO）
-    const depth = 1 - radius / half;
     ctx.save();
-    ctx.translate(x, y);
+    ctx.translate(half + Math.cos(angle) * radius, half + Math.sin(angle) * radius * 0.92);
     ctx.rotate(rand() * Math.PI * 2);
-    ctx.globalAlpha = 0.72 + rand() * 0.28;
+    ctx.globalAlpha = 0.85 + rand() * 0.15;
     ctx.fillStyle = leafColors[(rand() * leafColors.length) | 0];
-    ctx.filter = `brightness(${(0.72 + depth * 0.45).toFixed(2)})`;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, width / 2, len / 2, 0, 0, Math.PI * 2);
+    ctx.filter = `brightness(${(0.74 + depth * 0.42).toFixed(2)})`;
+    leafPath(ctx, leafLen * scale, leafLen * scale * 0.52);
     ctx.fill();
     ctx.restore();
   }
 
-  // 花穂。小さな花が円錐状に集まるので、点を縦長の房にまとめて置く
-  const blossomCount = Math.round(size * 1.6 * blossomRatio);
-  for (let i = 0; i < blossomCount; i++) {
-    const angle = rand() * Math.PI * 2;
-    const radius = Math.sqrt(rand()) * half * 0.85;
-    const cx = half + Math.cos(angle) * radius;
-    const cy = half + Math.sin(angle) * radius * 0.88;
-    const color = blossomColors[(rand() * blossomColors.length) | 0];
-    const spread = size * 0.05;
+  ctx.filter = 'none';
+  ctx.globalAlpha = 1;
+  return canvas;
+}
 
-    for (let p = 0; p < 14; p++) {
-      const t = p / 14;
-      ctx.globalAlpha = 0.65 + rand() * 0.35;
-      ctx.fillStyle = color;
-      ctx.filter = `brightness(${(0.85 + rand() * 0.4).toFixed(2)})`;
+/**
+ * 花穂（アルファ付き）。さるすべりの見分けどころ。
+ *
+ * 枝先に直立する円錐形の穂で、縮れた小花が密に付く。葉の塊に点を混ぜても
+ * この形にはならないので、別テクスチャ・別カードとして立てて置く。
+ * カードは実寸 18cm 前後、穂そのものは 14cm ほどになる。
+ */
+function panicle(size, colors) {
+  const canvas = makeCanvas(size);
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+
+  let seed = 777;
+  const rand = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  // 軸
+  ctx.strokeStyle = '#5d6b41';
+  ctx.lineWidth = Math.max(1.2, size * 0.008);
+  ctx.beginPath();
+  ctx.moveTo(size * 0.5, size * 0.98);
+  ctx.lineTo(size * 0.5, size * 0.18);
+  ctx.stroke();
+
+  const florets = Math.round(size * 0.85);
+  for (let i = 0; i < florets; i++) {
+    // 下ほど広い円錐。t = 0 が根元
+    const t = Math.pow(rand(), 0.75);
+    const spread = (1 - t) * 0.34 + 0.05;
+    const cx = size * (0.5 + (rand() - 0.5) * 2 * spread);
+    const cy = size * (0.90 - t * 0.80) + (rand() - 0.5) * size * 0.03;
+    const r = size * (0.024 + rand() * 0.016) * (1.1 - t * 0.30);
+    const color = colors[(rand() * colors.length) | 0];
+
+    // 小花 1 つ = 縮れた花弁 6 枚ぶんの小円。ふわっとした輪郭になる
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.72 + rand() * 0.28;
+    for (let p = 0; p < 6; p++) {
+      const a = (p / 6) * Math.PI * 2 + rand() * 0.5;
       ctx.beginPath();
-      ctx.arc(
-        cx + (rand() - 0.5) * spread * (1 - t) * 2,
-        cy - spread * 1.6 * t + (rand() - 0.5) * spread * 0.5,
-        size * (0.008 + rand() * 0.010),
-        0, Math.PI * 2,
-      );
+      ctx.arc(cx + Math.cos(a) * r * 0.62, cy + Math.sin(a) * r * 0.62, r * 0.52, 0, Math.PI * 2);
       ctx.fill();
     }
+    // 中心の黄色い蕊
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = '#f2d98a';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.22, 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  ctx.filter = 'none';
   ctx.globalAlpha = 1;
   return canvas;
 }
@@ -495,27 +610,28 @@ export function createTextures(renderer, { quality = 1 } = {}) {
     grass: pack(grass(res(512)), 2.0),
   };
 
-  /** 交差板に貼る葉テクスチャ。手前の木と遠景で作り分ける。 */
+  /** 交差板に貼る葉の房。手前の木と遠景で作り分ける。 */
   const foliage = toTexture(
-    foliageCluster(res(512), {
-      leafColors: ['#3f6b2b', '#4a7a30', '#355c24', '#557f38', '#2e5320'],
-      blossomColors: ['#d94f86', '#e06a99', '#c53c74', '#ee89b2'],
-      blossomRatio: 0.45,
+    leafSprig(res(512), {
+      leafColors: ['#3f6b2b', '#436f2c', '#355c24', '#4d7633', '#2e5320', '#547d36'],
     }),
     { srgb: true, anisotropy: aniso },
   );
   foliage.wrapS = foliage.wrapT = THREE.ClampToEdgeWrapping;
 
-  // 遠景の生垣と木立。花は付けず、色も落として大気遠近を助ける
+  // 遠景の生垣と木立。1 枚が数メートルになるので、房ではなく塊を貼る
   const foliageDark = toTexture(
-    foliageCluster(res(256), {
-      leafColors: ['#2f4a26', '#37552c', '#28401f', '#3f5f33', '#22371b'],
-      blossomColors: [],
-      blossomRatio: 0,
-    }),
+    leafMass(res(256), ['#2f4a26', '#37552c', '#28401f', '#3f5f33', '#22371b']),
     { srgb: true, anisotropy: aniso },
   );
   foliageDark.wrapS = foliageDark.wrapT = THREE.ClampToEdgeWrapping;
+
+  // さるすべりの花穂
+  const blossom = toTexture(
+    panicle(res(256), ['#d15b8c', '#dd7aa2', '#c2547c', '#e79ab8', '#cb6894']),
+    { srgb: true, anisotropy: aniso },
+  );
+  blossom.wrapS = blossom.wrapT = THREE.ClampToEdgeWrapping;
 
   /**
    * テクスチャ組からマテリアルを作る。
@@ -553,5 +669,5 @@ export function createTextures(renderer, { quality = 1 } = {}) {
     return mat;
   }
 
-  return { sets, foliage, foliageDark, material, anisotropy: aniso };
+  return { sets, foliage, foliageDark, blossom, material, anisotropy: aniso };
 }

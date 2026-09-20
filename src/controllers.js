@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-const MOVE_SPEED = 2.2;        // m/s
+const MOVE_SPEED = 1.6;        // m/s（室内なので歩く速さくらいに）
 const SNAP_ANGLE = Math.PI / 6; // 30度
 const DEADZONE = 0.25;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -195,6 +195,23 @@ export function createPlayer(renderer, camera, scene, world) {
     player.rotation.y += angle;
   }
 
+  /**
+   * 頭が壁を抜けないようにリグを押し戻す。
+   *
+   * リグの原点ではなく **頭のワールド位置** で判定するのが要点。リグだけを
+   * 制限しても、実空間で一歩踏み出せば頭は壁の外に出てしまう。
+   */
+  function clampToBounds() {
+    const bounds = world.bounds;
+    if (!bounds) return;
+
+    renderer.xr.getCamera().getWorldPosition(pivot);
+    if (pivot.x < bounds.minX) player.position.x += bounds.minX - pivot.x;
+    else if (pivot.x > bounds.maxX) player.position.x += bounds.maxX - pivot.x;
+    if (pivot.z < bounds.minZ) player.position.z += bounds.minZ - pivot.z;
+    else if (pivot.z > bounds.maxZ) player.position.z += bounds.maxZ - pivot.z;
+  }
+
   function applyDeadzone(value) {
     return Math.abs(value) < DEADZONE ? 0 : value;
   }
@@ -264,6 +281,7 @@ export function createPlayer(renderer, camera, scene, world) {
           controller.userData.snapLatched = false;
         } else if (!controller.userData.snapLatched) {
           rotateAroundHead(-Math.sign(x) * SNAP_ANGLE);
+          clampToBounds();
           controller.userData.snapLatched = true;
         }
       } else {
@@ -271,6 +289,8 @@ export function createPlayer(renderer, camera, scene, world) {
         player.position.addScaledVector(right, x * MOVE_SPEED * dt);
       }
     });
+
+    clampToBounds();
   }
 
   // --- 毎フレーム更新 -----------------------------------------------------

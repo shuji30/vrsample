@@ -110,7 +110,9 @@ export function createDebugPanel(renderer, player) {
   }
 
   function update(dt) {
-    if (dt > 0) fps = fps * 0.9 + (1 / dt) * 0.1; // ゆるく平滑化した実測フレームレート
+    // 呼び出し側からはクランプ前の実時間が渡ってくる（物理用の dt だと
+    // 20fps より下が測れない）。ゆるく平滑化して表示する。
+    if (dt > 0) fps = fps * 0.9 + (1 / dt) * 0.1;
     if (!mesh.visible) return;
 
     // 左手（なければ最初のコントローラー）にくっつける

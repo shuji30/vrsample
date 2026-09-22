@@ -6,6 +6,7 @@ import { createDesktopControls } from './desktop.js';
 import { createDebugPanel } from './debug.js';
 
 const statusEl = document.getElementById('status');
+const perfEl = document.getElementById('perf');
 const params = new URLSearchParams(location.search);
 
 /**
@@ -60,8 +61,22 @@ window.addEventListener('unhandledrejection', (event) => fail('非同期処理',
 // XR の解像度も落として「重すぎて開けない」のかどうかを見る。
 const safeMode = params.has('safe');
 
+/** GPU の名前。Chrome が伏せている場合もあるので、取れなければそう言う。 */
+function describeGpu(gl) {
+  try {
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    return String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+  } catch {
+    return '不明';
+  }
+}
+
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// 描画コストはピクセル数にほぼ比例する。4K ディスプレイを 200% 表示で使っていると
+// devicePixelRatio が 2 になり、同じウィンドウでも塗る量が 4 倍になる。
+// GPU が上の PC のほうが重い、という現象はたいていこれ。?dpr=1 で抑えられる。
+const dprLimit = Number(params.get('dpr')) || 2;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprLimit));
 renderer.setSize(window.innerWidth, window.innerHeight);
 // r180 台で PCFSoftShadowMap は削除され、PCF に一本化された。
 // 室内は影の縁がそのまま目に入るので、Basic ではなく PCF を使う。
@@ -79,6 +94,18 @@ if (Number.isFinite(framebufferScale) && framebufferScale > 0) {
   renderer.xr.setFramebufferScaleFactor(framebufferScale);
 }
 document.body.appendChild(renderer.domElement);
+
+const gpuName = describeGpu(renderer.getContext());
+
+/**
+ * 実際に塗っているピクセル数。CSS ピクセルではなくバックバッファの実寸で見る。
+ * 2 台の PC で重さを比べるときは、まずこの数字が同じかどうかを確認する。
+ */
+function describeCanvas() {
+  const canvas = renderer.domElement;
+  const megapixels = (canvas.width * canvas.height / 1e6).toFixed(1);
+  return `${canvas.width}x${canvas.height} (${megapixels}Mpx) dpr ${renderer.getPixelRatio().toFixed(2)}`;
+}
 
 // WebGL のコンテキストが飛ぶと画面が固まるだけで何も分からないので拾っておく。
 // Pimax のような巨大なレンダーターゲットではメモリ不足で起こりうる。
@@ -183,17 +210,22 @@ async function start() {
   renderer.setAnimationLoop((timestamp) => {
     try {
       timer.update(timestamp);
-      const dt = Math.min(timer.getDelta(), 0.05); // フレーム落ち時の飛びを抑える
+      const elapsed = timer.getDelta();
+      const dt = Math.min(elapsed, 0.05); // フレーム落ち時の飛びを抑える
 
+      // 計測には **クランプ前の実時間** を使う。物理用の dt は 0.05 秒で
+      // 頭打ちにしてあるので、それで fps を出すと 20fps より下が測れず、
+      // 重さを調べるための表示としては嘘をつくことになる。
       if (stats) {
-        if (stats.warmup > 0) stats.warmup -= dt;
-        else { stats.frames++; stats.seconds += dt; }
+        if (stats.warmup > 0) stats.warmup -= elapsed;
+        else { stats.frames++; stats.seconds += elapsed; }
       }
 
       player.update(dt);
       desktop.update();
       world.update(dt);
-      debugPanel.update(dt);
+      debugPanel.update(elapsed);
+      updatePerf(elapsed);
 
       renderer.render(scene, camera);
     } catch (error) {
@@ -204,8 +236,29 @@ async function start() {
 
   Object.assign(window.__vrsample, { world, player, desktop, debugPanel });
 
+  // 実測表示（?perf / ?debug）
+  const showPerf = params.has('perf') || params.has('debug');
+  let perfTimer = 0;
+  let perfFrames = 0;
+  let perfSeconds = 0;
+  if (perfEl && showPerf) perfEl.hidden = false;
+
+  function updatePerf(dt) {
+    if (!perfEl || !showPerf || renderer.xr.isPresenting) return;
+    perfFrames++;
+    perfSeconds += dt;
+    perfTimer += dt;
+    if (perfTimer < 0.5) return;
+
+    const fps = perfFrames / perfSeconds;
+    perfEl.textContent = `${fps.toFixed(0)} fps\n${describeCanvas()}\n${gpuName}`;
+    perfTimer = 0;
+    perfFrames = 0;
+    perfSeconds = 0;
+  }
+
   // 起動状況の表示
-  const suffix = `（生成 ${buildMs}ms${safeMode ? ' / safe' : ''}）`;
+  const suffix = `（生成 ${buildMs}ms${safeMode ? ' / safe' : ''}）\n${describeCanvas()} / ${gpuName}`;
   if (navigator.xr?.isSessionSupported) {
     navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
       report((supported

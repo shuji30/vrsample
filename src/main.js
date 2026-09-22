@@ -27,6 +27,32 @@ function fail(stage, error) {
   report(`${stage}で失敗しました。\n${error?.message ?? error}`, true);
 }
 
+/**
+ * VR セッションの実測をひとことにまとめる。
+ *
+ * 目安として、90fps を保てるのはおおむね 900 万ピクセル／フレームまで。
+ * それを超えていれば、まず解像度を落とすのが一番効く。
+ */
+function describeSession(stats) {
+  if (!stats || stats.seconds <= 0) return 'VR を終了しました。';
+
+  const fps = stats.frames / stats.seconds;
+  const pixels = stats.width * stats.height;
+  const megapixels = (pixels / 1e6).toFixed(1);
+  const lines = [
+    `VR 実測: ${fps.toFixed(0)}fps / フレームバッファ ${stats.width}x${stats.height}（${megapixels}Mpx）`,
+  ];
+
+  if (pixels > 9e6) {
+    const suggested = Math.max(0.4, Math.min(1, Math.sqrt(9e6 / pixels))).toFixed(1);
+    lines.push(`解像度が大きすぎます。?scale=${suggested} を試してください。`);
+  } else if (fps < 60) {
+    lines.push('?scale=0.8 または ?shadow=1024、それでも重ければ ?safe を試してください。');
+  }
+
+  return lines.join('\n');
+}
+
 window.addEventListener('error', (event) => fail('スクリプトエラー', event.error ?? event.message));
 window.addEventListener('unhandledrejection', (event) => fail('非同期処理', event.reason));
 
@@ -85,7 +111,7 @@ async function start() {
   const started = performance.now();
   const world = createWorld(renderer, scene, {
     textureQuality: Number(params.get('quality')) || (safeMode ? 0.25 : 1),
-    shadowMapSize: Number(params.get('shadow')) || 4096,
+    shadowMapSize: Number(params.get('shadow')) || 2048,
     environment: !safeMode,
   });
   const buildMs = Math.round(performance.now() - started);
@@ -123,15 +149,32 @@ async function start() {
     if (event.key === 'r' || event.key === 'R') world.resetProps();
   });
 
+  // VR 中の実測。ヘッドセットを被っている間は画面の文字が読めないので、
+  // 抜けた瞬間に「何ピクセル要求されて、何 fps 出ていたか」を残す。
+  // Pimax のような広視野機はレンダーターゲットが桁違いに大きくなるので、
+  // 重いときはまずこの数字を見る。
+  let stats = null;
+
   renderer.xr.addEventListener('sessionstart', () => {
     document.body.classList.add('xr-presenting');
     player.reset(); // VR に入るときはリグを原点に戻す
     player.player.position.set(0, 0, 0.9);
+
+    const layer = renderer.xr.getSession()?.renderState?.baseLayer;
+    stats = {
+      width: layer?.framebufferWidth ?? 0,
+      height: layer?.framebufferHeight ?? 0,
+      frames: 0,
+      seconds: 0,
+      warmup: 1.0,   // 最初の 1 秒はシェーダーのコンパイルが混ざるので捨てる
+    };
   });
 
   renderer.xr.addEventListener('sessionend', () => {
     document.body.classList.remove('xr-presenting');
     player.reset(); // 持ったままのオブジェクトを手放し、PC 操作に戻す
+    report(describeSession(stats));
+    stats = null;
   });
 
   const timer = new THREE.Timer();
@@ -141,6 +184,11 @@ async function start() {
     try {
       timer.update(timestamp);
       const dt = Math.min(timer.getDelta(), 0.05); // フレーム落ち時の飛びを抑える
+
+      if (stats) {
+        if (stats.warmup > 0) stats.warmup -= dt;
+        else { stats.frames++; stats.seconds += dt; }
+      }
 
       player.update(dt);
       desktop.update();

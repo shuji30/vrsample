@@ -125,12 +125,12 @@ export function createFurniture(scene, tex, onSelectTheme) {
   // テクセル密度を揃えるために、マテリアルは「その部材が実寸で何メートルか」
   // ごとに分ける。同じ木材マテリアルを天板にも椅子の脚にも使い回すと、
   // 小さい部材ほど木目が細かくなりすぎて、くしゃくしゃの箔のように見える。
+  // clearcoat は 0.06 まで下げるとほぼ見えないのに、BRDF の計算量は倍近くなる。
+  // Pimax のような広視野機ではピクセル数が桁違いなので、木部は素の
+  // MeshStandardMaterial にしてある（つやは roughness だけで作る）。
   const wood = (size, extra = {}) => tex.material('walnut', {
     sizeX: size, sizeY: size,
     roughness: 1,
-    physical: true,
-    clearcoat: 0.06,
-    clearcoatRoughness: 0.5,
     normalScale: new THREE.Vector2(0.22, 0.22),
     ...extra,
   });

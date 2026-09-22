@@ -5,7 +5,7 @@
 部屋はそのまま動きます。
 
 ```
-models/character.vrm
+models/character.vrm    このリポジトリのオーナーが自作した VRM 1.0 モデル
 ```
 
 別のファイルを試したいときは URL で差し替えられます。
@@ -14,16 +14,17 @@ models/character.vrm
 http://localhost:8080/?vrm=./models/another.vrm
 ```
 
-## VRM をリポジトリに入れていない理由
+## ライセンス
 
-VRM にはモデルごとのライセンス（`VRMC_vrm.meta`）が埋め込まれていて、
-**再配布（`allowRedistribution`）や改変（`modification`）が禁止**されている
-ものが珍しくありません。リポジトリに置いて GitHub Pages で公開するのは
-再配布にあたるので、`.gitignore` で `models/*.vrm` を除外しています。
+VRM にはモデルごとのライセンスがファイル自身に埋め込まれています
+（`VRMC_vrm.meta`）。同梱の `character.vrm` は作者本人が置いたものですが、
+メタデータ上は**再配布・改変・商用利用が不可、作者表示が必要**
+（`creditNotation: required`）です。フォークして再公開するときは差し替えて
+ください。
 
-自分で作ったモデルや、再配布が許可されたモデルを使うときは、
-`.gitignore` の該当行を外してコミットしてください。
+他所のモデルを置く場合も同じで、再配布が許可されていないモデルをリポジトリに
+入れて GitHub Pages で公開するのは再配布にあたります。その場合は `.gitignore` に
+`models/*.vrm` を足して、手元に置くだけにしてください。
 
-多くのモデルは表示（`creditNotation: required`）を求めます。読み込みに成功すると
-`meta` の名前と作者を画面左上のオーバーレイに出すようにしてあります
-（`src/main.js`）。
+作者表示は、読み込みに成功すると `meta` の名前と作者を画面左上のオーバーレイに
+出すようにしてあります（`src/main.js`）。

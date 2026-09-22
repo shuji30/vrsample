@@ -26,7 +26,7 @@ const FRICTION = 0.78;
  * @param {number} [options.textureQuality] 1 = 既定。軽くしたいときは 0.5
  * @param {number} [options.shadowMapSize]
  */
-export function createWorld(renderer, scene, { textureQuality = 1, shadowMapSize = 4096 } = {}) {
+export function createWorld(renderer, scene, { textureQuality = 1, shadowMapSize = 4096, environment = true } = {}) {
   const tex = createTextures(renderer, { quality: textureQuality });
 
   const room = createRoom(scene, tex);
@@ -42,6 +42,7 @@ export function createWorld(renderer, scene, { textureQuality = 1, shadowMapSize
     lampSockets: furniture.lampSockets,
     skyUniforms: park.skyUniforms,
     shadowMapSize,
+    environment,
   });
 
   // 初期テーマ。環境マップは「部屋を撮って部屋に返す」ので、

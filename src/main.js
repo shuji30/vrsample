@@ -6,6 +6,7 @@ import { createDesktopControls } from './desktop.js';
 import { createDebugPanel } from './debug.js';
 
 const statusEl = document.getElementById('status');
+const creditEl = document.getElementById('credit');
 const params = new URLSearchParams(location.search);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -40,6 +41,9 @@ const started = performance.now();
 const world = createWorld(renderer, scene, {
   textureQuality: Number(params.get('quality')) || 1,
   shadowMapSize: Number(params.get('shadow')) || 4096,
+  // キャラクターの視線に追わせる。?vrm= で別の VRM に差し替えられる
+  camera,
+  characterUrl: params.get('vrm') ?? undefined,
 });
 const buildMs = Math.round(performance.now() - started);
 
@@ -128,6 +132,16 @@ if (navigator.xr?.isSessionSupported) {
 } else {
   report('WebXR 非対応のブラウザです（PC 操作でそのまま見られます）。');
 }
+
+// VRM のライセンスはたいてい作者表示（creditNotation）を求めるので、
+// 読み込めたら名前と作者を出しておく。
+world.character.ready.then((vrm) => {
+  if (!vrm || !creditEl) return;
+  const meta = vrm.meta;
+  const name = meta.name ?? meta.title ?? 'VRM';
+  const authors = meta.authors?.join(', ') ?? meta.author ?? '';
+  creditEl.textContent = `キャラクター: ${name}${authors ? ` / ${authors}` : ''}`;
+});
 
 // デバッグ用にコンソールから触れるようにしておく
 window.__vrsample = { renderer, scene, camera, world, player, desktop, debugPanel, THREE };

@@ -16,10 +16,19 @@ const UP = new THREE.Vector3(0, 1, 0);
  * 曲線に沿って半径の変わる筒を張る。TubeGeometry は半径が一定なので、
  * 根元が太く先が細い幹や枝はこれで作る。
  *
+ * flute を渡すと断面を花びら状に波打たせて縦溝を作れる。さるすべりの幹は
+ * 筋肉質にうねっているので、真円の円柱のままだと途端に「棒」に見える。
+ *
  * UV はメートル単位（u = 周長、v = 曲線長）で吐くので、
  * テクスチャ側は uvInMeters で受ける。
+ *
+ * @param {THREE.Curve} curve
+ * @param {(t:number) => number} radiusAt
+ * @param {number} tubularSegments
+ * @param {number} radialSegments
+ * @param {{count:number, depth:number, twist?:number}} [flute]
  */
-function taperedTube(curve, radiusAt, tubularSegments = 20, radialSegments = 10) {
+function taperedTube(curve, radiusAt, tubularSegments = 20, radialSegments = 10, flute = null) {
   const frames = curve.computeFrenetFrames(tubularSegments, false);
   const length = curve.getLength();
   const positions = [];
@@ -32,19 +41,39 @@ function taperedTube(curve, radiusAt, tubularSegments = 20, radialSegments = 10)
     const point = curve.getPointAt(t);
     const N = frames.normals[i];
     const B = frames.binormals[i];
-    const radius = radiusAt(t);
+    const base = radiusAt(t);
 
     for (let j = 0; j <= radialSegments; j++) {
       const angle = (j / radialSegments) * Math.PI * 2;
       const sin = Math.sin(angle);
       const cos = -Math.cos(angle);
-      const nx = cos * N.x + sin * B.x;
-      const ny = cos * N.y + sin * B.y;
-      const nz = cos * N.z + sin * B.z;
 
-      normals.push(nx, ny, nz);
-      positions.push(point.x + radius * nx, point.y + radius * ny, point.z + radius * nz);
-      uvs.push((j / radialSegments) * radius * Math.PI * 2, t * length);
+      // 断面まわりの基底。radial が外向き、tangent がその周方向の微分
+      const rx = cos * N.x + sin * B.x;
+      const ry = cos * N.y + sin * B.y;
+      const rz = cos * N.z + sin * B.z;
+      const tx = sin * N.x + cos * B.x;
+      const ty = sin * N.y + cos * B.y;
+      const tz = sin * N.z + cos * B.z;
+
+      let radius = base;
+      let dRadius = 0;
+      if (flute) {
+        const phase = flute.count * angle + (flute.twist ?? 0) * t;
+        radius = base * (1 + flute.depth * Math.sin(phase));
+        dRadius = base * flute.depth * flute.count * Math.cos(phase);
+      }
+
+      // 断面が波打つと法線も傾く。極座標の曲線の法線は (r, -dr/dθ)。
+      // 解析的に出しておけば、継ぎ目に線が出る computeVertexNormals を避けられる。
+      const nx = radius * rx - dRadius * tx;
+      const ny = radius * ry - dRadius * ty;
+      const nz = radius * rz - dRadius * tz;
+      const inv = 1 / Math.hypot(nx, ny, nz);
+
+      normals.push(nx * inv, ny * inv, nz * inv);
+      positions.push(point.x + radius * rx, point.y + radius * ry, point.z + radius * rz);
+      uvs.push((j / radialSegments) * base * Math.PI * 2, t * length);
     }
   }
 
@@ -64,6 +93,44 @@ function taperedTube(curve, radiusAt, tubularSegments = 20, radialSegments = 10)
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   return geometry;
+}
+
+/**
+ * position / normal / uv だけを持つジオメトリをまとめる。
+ * 幹と枝と小枝で 100 個近いジオメトリができるので、1 つに畳んでおく。
+ */
+function mergeParts(geometries) {
+  let vertexCount = 0;
+  let indexCount = 0;
+  for (const g of geometries) {
+    vertexCount += g.attributes.position.count;
+    indexCount += g.index.count;
+  }
+
+  const position = new Float32Array(vertexCount * 3);
+  const normal = new Float32Array(vertexCount * 3);
+  const uv = new Float32Array(vertexCount * 2);
+  const index = vertexCount > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
+
+  let vertexOffset = 0;
+  let indexOffset = 0;
+  for (const g of geometries) {
+    position.set(g.attributes.position.array, vertexOffset * 3);
+    normal.set(g.attributes.normal.array, vertexOffset * 3);
+    uv.set(g.attributes.uv.array, vertexOffset * 2);
+    const source = g.index.array;
+    for (let i = 0; i < source.length; i++) index[indexOffset + i] = source[i] + vertexOffset;
+    vertexOffset += g.attributes.position.count;
+    indexOffset += source.length;
+    g.dispose();
+  }
+
+  const merged = new THREE.BufferGeometry();
+  merged.setIndex(new THREE.BufferAttribute(index, 1));
+  merged.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  merged.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
+  merged.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return merged;
 }
 
 /**
@@ -174,61 +241,80 @@ function createSky() {
 /**
  * さるすべり（百日紅）。
  *
- * 見分けどころは 3 つ。根元から株立ちに分かれた幹、猿も滑るというつるつるの
- * まだら模様の樹皮、そして枝先にもこもこと付く紅色の花穂。樹皮は textures.js
- * 側で作ってあるので、ここでは株立ちの形と花の付き方を再現する。
+ * 見分けどころは 3 つ。根元から株立ちに分かれて外へ開く壺形の樹形、猿も滑ると
+ * いうつるつるのまだらな樹皮、そして枝先に**直立して付く円錐形の紅い花穂**。
+ *
+ * 作り方で一番効くのは枝の階層を 3 段（幹 → 枝 → 小枝）にすること。太い枝から
+ * いきなり大きな葉の板が生えていると、その「中間が抜けている」感じが
+ * 一目で CG に見える原因になる。葉は小枝に沿って小さく多数、花穂は小枝の先端に
+ * 立てて置く。
  */
-function createCrapeMyrtle(tex, { height = 4.6, trunks = 4, seed = 7 } = {}) {
+function createCrapeMyrtle(tex, { height = 5.0, trunks = 4, seed = 7 } = {}) {
   const group = new THREE.Group();
   const rand = makeRandom(seed);
 
   const barkMaterial = tex.material('bark', {
     uvInMeters: true,
     roughness: 1,
-    normalScale: new THREE.Vector2(0.40, 0.40),
+    normalScale: new THREE.Vector2(0.35, 0.35),
   });
 
-  const foliageMaterial = new THREE.MeshStandardMaterial({
+  const leafMaterial = new THREE.MeshStandardMaterial({
     map: tex.foliage,
-    alphaTest: 0.35,
+    alphaTest: 0.3,
     side: THREE.DoubleSide,
-    roughness: 0.82,
+    roughness: 0.72,   // 葉の表面は意外とつやがある
     metalness: 0,
   });
 
-  const tips = [];
+  const blossomMaterial = new THREE.MeshStandardMaterial({
+    map: tex.blossom,
+    alphaTest: 0.3,
+    side: THREE.DoubleSide,
+    roughness: 0.88,
+    metalness: 0,
+  });
+
+  const wood = [];
+  const leafSites = [];
+  const blossomSites = [];
+
+  const scale = height / 5.0;
 
   for (let i = 0; i < trunks; i++) {
-    // 株立ち。根元でわずかに散らし、上に行くほど外へ開く
-    const angle = (i / trunks) * Math.PI * 2 + rand() * 0.6;
-    const lean = 0.55 + rand() * 0.45;
-    const top = height * (0.52 + rand() * 0.16);
-    const baseR = 0.075 + rand() * 0.030;
-
+    // 壺形。根元でわずかに散らし、上に行くほど外へ開く
+    const angle = (i / trunks) * Math.PI * 2 + rand() * 0.5;
+    const lean = (0.55 + rand() * 0.35) * scale;
+    const top = height * (0.44 + rand() * 0.12);
+    const baseR = (0.070 + rand() * 0.028) * scale;
     const dir = new THREE.Vector2(Math.cos(angle), Math.sin(angle));
-    const curve = new THREE.CatmullRomCurve3([
+
+    const trunkCurve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(dir.x * 0.05, 0, dir.y * 0.05),
-      new THREE.Vector3(dir.x * lean * 0.30, top * 0.30, dir.y * lean * 0.30),
-      // 途中で少し身をよじらせる。まっすぐな幹は途端に CG くさくなる
-      new THREE.Vector3(dir.x * lean * 0.52 + (rand() - 0.5) * 0.18, top * 0.62, dir.y * lean * 0.52 + (rand() - 0.5) * 0.18),
+      new THREE.Vector3(dir.x * lean * 0.34, top * 0.32, dir.y * lean * 0.34),
+      // 途中で身をよじらせる。まっすぐな幹は途端に棒に見える
+      new THREE.Vector3(
+        dir.x * lean * 0.70 + (rand() - 0.5) * 0.16,
+        top * 0.66,
+        dir.y * lean * 0.70 + (rand() - 0.5) * 0.16,
+      ),
       new THREE.Vector3(dir.x * lean, top, dir.y * lean),
     ]);
 
-    const trunk = new THREE.Mesh(
-      taperedTube(curve, (t) => baseR * (1 - t * 0.62), 16, 10),
-      barkMaterial,
-    );
-    trunk.castShadow = true;
-    trunk.receiveShadow = true;
-    group.add(trunk);
+    wood.push(taperedTube(
+      trunkCurve,
+      (t) => baseR * (1 - t * 0.55),
+      18, 10,
+      { count: 5, depth: 0.085, twist: 0.9 },   // 縦溝
+    ));
 
-    // 幹の上から枝を伸ばす
-    const branches = 3;
+    const branches = 3 + ((rand() * 2) | 0);
     for (let b = 0; b < branches; b++) {
-      const from = curve.getPointAt(0.72 + b * 0.09);
-      const bAngle = angle + (rand() - 0.5) * 2.2;
-      const reach = 0.7 + rand() * 0.7;
-      const rise = (height - from.y) * (0.55 + rand() * 0.35);
+      const from = trunkCurve.getPointAt(0.58 + b * 0.14);
+      const bAngle = angle + (rand() - 0.5) * 1.8;
+      // 実物の樹冠は高さより幅がある。上へ伸ばすより外へ張らせる
+      const reach = (0.85 + rand() * 0.75) * scale;
+      const rise = (height - from.y) * (0.24 + rand() * 0.26);
       const tip = new THREE.Vector3(
         from.x + Math.cos(bAngle) * reach,
         from.y + rise,
@@ -237,41 +323,135 @@ function createCrapeMyrtle(tex, { height = 4.6, trunks = 4, seed = 7 } = {}) {
       const branchCurve = new THREE.CatmullRomCurve3([
         from,
         new THREE.Vector3(
-          (from.x + tip.x) / 2 + (rand() - 0.5) * 0.2,
-          (from.y + tip.y) / 2 + 0.1,
-          (from.z + tip.z) / 2 + (rand() - 0.5) * 0.2,
+          (from.x + tip.x) / 2 + (rand() - 0.5) * 0.18,
+          // 中間を持ち上げて弓なりにする。花の重みで先が少し垂れる形
+          (from.y + tip.y) / 2 + rise * 0.42,
+          (from.z + tip.z) / 2 + (rand() - 0.5) * 0.18,
         ),
         tip,
       ]);
+      const branchR = baseR * 0.44;
+      wood.push(taperedTube(branchCurve, (t) => branchR * (1 - t * 0.82), 10, 7));
 
-      const branch = new THREE.Mesh(
-        taperedTube(branchCurve, (t) => baseR * 0.42 * (1 - t * 0.7), 10, 7),
-        barkMaterial,
-      );
-      branch.castShadow = true;
-      group.add(branch);
-      tips.push(tip);
+      // 枝先そのものにも葉を回す
+      leafSites.push({
+        x: tip.x, y: tip.y, z: tip.z,
+        size: (0.32 + rand() * 0.16) * scale,
+        ry: rand() * Math.PI * 2,
+        tilt: (rand() - 0.5) * 1.1,
+        roll: (rand() - 0.5) * 1.3,
+        shade: 0.82 + rand() * 0.26,
+        warm: 0.82 + rand() * 0.30,
+      });
+
+      // 小枝。ここを省くと枝と葉の間に何も無い「CG の木」になる
+      const twigs = 7 + ((rand() * 3) | 0);
+      for (let w = 0; w < twigs; w++) {
+        const at = 0.34 + (w / twigs) * 0.64;
+        const origin = branchCurve.getPointAt(at);
+        const tAngle = bAngle + (rand() - 0.5) * 2.6;
+        const length = (0.26 + rand() * 0.34) * scale;
+        // 斜め上へ。真上を向かせると樹冠が箒のように立ってしまう
+        const lift = 0.15 + rand() * 0.55;
+        const twigTip = new THREE.Vector3(
+          origin.x + Math.cos(tAngle) * length * Math.sqrt(1 - lift * lift),
+          origin.y + length * lift,
+          origin.z + Math.sin(tAngle) * length * Math.sqrt(1 - lift * lift),
+        );
+        const twigCurve = new THREE.CatmullRomCurve3([
+          origin,
+          new THREE.Vector3(
+            (origin.x + twigTip.x) / 2,
+            (origin.y + twigTip.y) / 2 + length * 0.09,
+            (origin.z + twigTip.z) / 2,
+          ),
+          twigTip,
+        ]);
+        const twigR = branchR * 0.38;
+        wood.push(taperedTube(twigCurve, (t) => twigR * (1 - t * 0.6), 5, 5));
+
+        // 葉の房を小枝に沿って
+        const clusters = 4 + ((rand() * 2) | 0);
+        for (let k = 0; k < clusters; k++) {
+          // 先端まで葉を回す。ここを空けると枯れ枝が樹冠から突き出して見える
+          const p = twigCurve.getPointAt(0.30 + (k / (clusters - 1)) * 0.70);
+          leafSites.push({
+            x: p.x + (rand() - 0.5) * 0.12 * scale,
+            y: p.y + (rand() - 0.5) * 0.10 * scale,
+            z: p.z + (rand() - 0.5) * 0.12 * scale,
+            size: (0.30 + rand() * 0.20) * scale,
+            ry: rand() * Math.PI * 2,
+            tilt: (rand() - 0.5) * 1.1,
+            roll: (rand() - 0.5) * 1.3,
+            shade: 0.82 + rand() * 0.26,
+            warm: 0.82 + rand() * 0.30,
+          });
+        }
+
+        // 花穂は枝先に直立。これが無いとただの雑木になる
+        if (rand() < 0.72) {
+          blossomSites.push({
+            x: twigTip.x + (rand() - 0.5) * 0.06,
+            y: twigTip.y,
+            z: twigTip.z + (rand() - 0.5) * 0.06,
+            size: (0.17 + rand() * 0.10) * scale,
+            ry: rand() * Math.PI * 2,
+            tone: 0.78 + rand() * 0.34,
+          });
+        }
+      }
     }
   }
 
-  // 樹冠。枝先にクロスプレーンを差す。VR ではビルボードだと厚みが無いのが
-  // 立体視でバレるので、向きを固定した板を交差させる。
-  const planeGeometry = new THREE.PlaneGeometry(1, 1);
-  for (const tip of tips) {
-    const size = 1.15 + rand() * 0.75;
+  const trunkMesh = new THREE.Mesh(mergeParts(wood), barkMaterial);
+  trunkMesh.castShadow = true;
+  trunkMesh.receiveShadow = true;
+  group.add(trunkMesh);
+
+  const matrix = new THREE.Matrix4();
+  const quaternion = new THREE.Quaternion();
+  const euler = new THREE.Euler();
+  const position = new THREE.Vector3();
+  const size = new THREE.Vector3();
+  const plane = new THREE.PlaneGeometry(1, 1);
+
+  // 葉。1 か所につき 90 度ずらした 2 枚を交差させる。VR ではビルボードだと
+  // 両目の視差で「紙」だと分かってしまうので、向きは固定する。
+  const tint = new THREE.Color();
+  const leafMesh = new THREE.InstancedMesh(plane, leafMaterial, leafSites.length * 2);
+  leafSites.forEach((site, i) => {
     for (let k = 0; k < 2; k++) {
-      const plane = new THREE.Mesh(planeGeometry, foliageMaterial);
-      plane.scale.set(size, size * 0.85, 1);
-      plane.position.set(
-        tip.x + (rand() - 0.5) * 0.35,
-        tip.y + 0.12 + (rand() - 0.5) * 0.3,
-        tip.z + (rand() - 0.5) * 0.35,
-      );
-      plane.rotation.set((rand() - 0.5) * 0.5, rand() * Math.PI * 2, (rand() - 0.5) * 0.7);
-      plane.castShadow = true;
-      group.add(plane);
+      position.set(site.x, site.y, site.z);
+      euler.set(site.tilt, site.ry + k * Math.PI / 2, site.roll);
+      quaternion.setFromEuler(euler);
+      size.set(site.size, site.size, 1);
+      leafMesh.setMatrixAt(i * 2 + k, matrix.compose(position, quaternion, size));
+      // 同じテクスチャを何百枚も貼るので、明るさと色味を 1 枚ずつずらす。
+      // これが無いと樹冠がべったり一色に見える。
+      leafMesh.setColorAt(i * 2 + k, tint.setRGB(site.warm, site.shade, site.shade * 0.92));
     }
-  }
+  });
+  leafMesh.instanceMatrix.needsUpdate = true;
+  if (leafMesh.instanceColor) leafMesh.instanceColor.needsUpdate = true;
+  leafMesh.castShadow = true;
+  group.add(leafMesh);
+
+  // 花穂。カードの下端が枝先に来るよう半分ぶん持ち上げる
+  const blossomMesh = new THREE.InstancedMesh(plane, blossomMaterial, blossomSites.length * 2);
+  blossomSites.forEach((site, i) => {
+    for (let k = 0; k < 2; k++) {
+      position.set(site.x, site.y + site.size * 0.45, site.z);
+      quaternion.setFromAxisAngle(UP, site.ry + k * Math.PI / 2);
+      size.set(site.size * 0.62, site.size, 1);
+      blossomMesh.setMatrixAt(i * 2 + k, matrix.compose(position, quaternion, size));
+      // 咲きはじめと盛りが混ざるので、穂ごとに濃さを変える
+      blossomMesh.setColorAt(i * 2 + k, tint.setRGB(site.tone, site.tone * 0.93, site.tone * 0.96));
+    }
+  });
+  blossomMesh.instanceMatrix.needsUpdate = true;
+  if (blossomMesh.instanceColor) blossomMesh.instanceColor.needsUpdate = true;
+  blossomMesh.castShadow = true;
+  group.add(blossomMesh);
 
   return group;
 }
@@ -593,12 +773,16 @@ export function createPark(scene, tex) {
   group.add(fence);
 
   // --- さるすべり ---------------------------------------------------------
-  const tree = createCrapeMyrtle(tex, { height: 5.0, trunks: 4, seed: 19 });
-  tree.position.set(-1.75, 0, -7.9);
+  // 樹高と位置は窓の画角から逆算している。開始位置（目の高さ 1.6m）から
+  // 窓の上枠ごしに見える高さは距離 d に対しておよそ 1.6 + 0.16d なので、
+  // 5m の木だと花の付く上半分が枠で切れてしまう。実物としても 4m 前後は
+  // ありふれた大きさなので、そちらに合わせた。
+  const tree = createCrapeMyrtle(tex, { height: 4.0, trunks: 4, seed: 19 });
+  tree.position.set(-1.6, 0, -9.2);
   group.add(tree);
 
-  const smallTree = createCrapeMyrtle(tex, { height: 3.4, trunks: 3, seed: 91 });
-  smallTree.position.set(-6.0, 0, -12.0);
+  const smallTree = createCrapeMyrtle(tex, { height: 3.2, trunks: 3, seed: 91 });
+  smallTree.position.set(-6.4, 0, -12.6);
   smallTree.rotation.y = 1.1;
   group.add(smallTree);
 

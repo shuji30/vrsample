@@ -28,12 +28,14 @@ const FRICTION = 0.78;
  * @param {number} [options.shadowMapSize]
  * @param {THREE.Camera} [options.camera] キャラクターに視線で追わせる相手
  * @param {string} [options.characterUrl] VRM ファイルの URL
+ * @param {boolean} [options.wander] キャラクターを歩きまわらせるか
  */
 export function createWorld(renderer, scene, {
   textureQuality = 1,
   shadowMapSize = 4096,
   camera = null,
   characterUrl,
+  wander = true,
 } = {}) {
   const tex = createTextures(renderer, { quality: textureQuality });
 
@@ -58,7 +60,7 @@ export function createWorld(renderer, scene, {
   lighting.refreshEnvironment();
 
   // キャラクターは読み込みが非同期なので、部屋の生成はここで待たない
-  const character = createCharacter(scene, { url: characterUrl, camera });
+  const character = createCharacter(scene, { url: characterUrl, camera, wander });
 
   const { grabbables, buttons } = furniture;
 

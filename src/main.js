@@ -44,6 +44,7 @@ const world = createWorld(renderer, scene, {
   // キャラクターの視線に追わせる。?vrm= で別の VRM に差し替えられる
   camera,
   characterUrl: params.get('vrm') ?? undefined,
+  wander: params.get('walk') !== 'off',
 });
 const buildMs = Math.round(performance.now() - started);
 

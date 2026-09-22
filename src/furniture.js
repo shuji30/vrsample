@@ -14,6 +14,23 @@ import { THEMES } from './themes.js';
 /** 中央のテーブル。world.js の簡易物理が着地面として参照する。 */
 export const TABLE = { center: { x: 0, z: -2.05 }, radius: 0.62, top: 0.745 };
 
+/**
+ * ソファ。character.js が座る場所として参照するので、位置と座面はここに出しておく。
+ * ローカル +Z が座る側（背もたれは -Z）、yaw の回転で -X を向く。
+ */
+export const SOFA = {
+  center: { x: ROOM.maxX - 0.95, z: 0.35 },
+  yaw: -Math.PI / 2,
+  /** 座面の高さ（クッションの上面） */
+  top: 0.61,
+  /** クッション 2 枚の中心（ローカル x） */
+  cushions: [-0.5, 0.5],
+  /** 腰を下ろす位置のローカル z。背もたれの手前 */
+  seatZ: -0.12,
+  /** 前縁のローカル z。ここより手前でないと立てない */
+  frontZ: 0.44,
+};
+
 /** つかめる小物。素材の振れ幅があるほど「物がある」感じが出る。 */
 const PROPS = [
   { name: '陶器',     color: 0xf0ece4, roughness: 0.18, metalness: 0.0, clearcoat: 0.9 },
@@ -242,8 +259,8 @@ export function createFurniture(scene, tex, onSelectTheme) {
 
   // --- ソファ -------------------------------------------------------------
   const sofa = new THREE.Group();
-  sofa.position.set(ROOM.maxX - 0.95, 0, 0.35);
-  sofa.rotation.y = -Math.PI / 2;
+  sofa.position.set(SOFA.center.x, 0, SOFA.center.z);
+  sofa.rotation.y = SOFA.yaw;
 
   const sofaBase = new THREE.Mesh(new RoundedBoxGeometry(2.05, 0.34, 0.88, 4, 0.05), linenMaterial);
   sofaBase.position.y = 0.30;
@@ -267,7 +284,7 @@ export function createFurniture(scene, tex, onSelectTheme) {
   // 座面クッション。わずかに間隔と沈み込みを変えると生活感が出る
   for (let i = 0; i < 2; i++) {
     const cushion = new THREE.Mesh(new RoundedBoxGeometry(0.96, 0.15, 0.80, 4, 0.06), cushionMaterial);
-    cushion.position.set(-0.50 + i * 1.0, 0.535 - i * 0.008, 0.02);
+    cushion.position.set(SOFA.cushions[i], SOFA.top - 0.075 - i * 0.008, 0.02);
     cushion.rotation.y = (i - 0.5) * 0.02;
     cushion.castShadow = true;
     cushion.receiveShadow = true;

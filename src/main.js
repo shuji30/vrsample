@@ -144,7 +144,11 @@ async function start() {
   const buildMs = Math.round(performance.now() - started);
 
   report('操作の準備中…');
-  const player = createPlayer(renderer, camera, scene, world);
+  const player = createPlayer(renderer, camera, scene, world, {
+    // 上下動は VR だと酔いにつながるので、弱めたり切ったりできるようにしておく
+    bobScale: params.has('bob') ? Number(params.get('bob')) || 0 : 1,
+    muted: params.has('mute'),
+  });
   const desktop = createDesktopControls(renderer, camera, world);
 
   // three.js は左右の目が平行に向いている前提で、カリング用にひとつの視錐台を

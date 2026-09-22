@@ -1,8 +1,18 @@
 import * as THREE from 'three';
+import { createFootsteps } from './audio.js';
 
-const MOVE_SPEED = 1.6;        // m/s（室内なので歩く速さくらいに）
+const MOVE_SPEED = 1.45;        // m/s（室内なので歩く速さくらいに）
+const ACCELERATION = 8.0;       // m/s^2 歩き出し
+const DECELERATION = 11.0;      // m/s^2 止まるほうが速い
 const SNAP_ANGLE = Math.PI / 6; // 30度
 const DEADZONE = 0.25;
+
+// 歩容。人が歩くとき頭は 1 歩ごとに 2〜3cm 沈む。これが無いと、
+// どれだけ床を作り込んでも「滑っている」「浮いている」ようにしか感じられない。
+const STEP_LENGTH = 0.72;       // m 1 歩の歩幅（毎分 120 歩あたりになる）
+const BOB_HEIGHT = 0.022;       // m 頭の上下動
+const BOB_SWAY = 0.008;         // m 左右の振れ（VR では大きくすると酔う）
+
 const UP = new THREE.Vector3(0, 1, 0);
 
 /**
@@ -71,6 +81,43 @@ function buildPointer() {
 }
 
 /**
+ * 足元の影。
+ *
+ * VR で下を見たときに体が無いと、自分が床の上にいるという手がかりが
+ * まったく無い。太陽で落とす本物の影はプレイヤーには付けられない（体の
+ * ジオメトリが無い）ので、柔らかい楕円を頭の真下に敷く。
+ */
+function buildGroundShadow() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gradient.addColorStop(0, 'rgba(0, 0, 0, 0.5)');
+  gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.22)');
+  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 128, 128);
+
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.85, 0.85),
+    new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(canvas),
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  mesh.name = 'groundShadow';
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = 0.012;
+  mesh.renderOrder = 1;
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+  return mesh;
+}
+
+/**
  * プレイヤーリグ（カメラ + 両手コントローラー）を作り、
  * つかむ・押す・移動する操作をまとめて面倒を見る。
  *
@@ -79,11 +126,25 @@ function buildPointer() {
  * @param {THREE.Scene} scene
  * @param {ReturnType<import('./world.js').createWorld>} world
  */
-export function createPlayer(renderer, camera, scene, world) {
+export function createPlayer(renderer, camera, scene, world, { bobScale = 1, muted = false } = {}) {
   const player = new THREE.Group();
   player.name = 'player';
-  player.add(camera);
   scene.add(player);
+
+  // 歩容の揺れ用に 1 段はさむ。player.position を直接触ると、移動・
+  // スナップターン・壁の押し戻しと取り合いになるので、揺れは子側で持つ。
+  // カメラも手もこの下にぶら下げるので、体ごと沈む動きになる。
+  const bob = new THREE.Group();
+  bob.name = 'bob';
+  player.add(bob);
+  bob.add(camera);
+
+  const footsteps = createFootsteps({ muted });
+
+  // 影はリグではなくシーン直下に置く。実空間で歩いて頭だけ動いたときにも
+  // 足元に追従させたいので、毎フレーム頭のワールド座標から位置を決める。
+  const groundShadow = buildGroundShadow();
+  scene.add(groundShadow);
 
   const raycaster = new THREE.Raycaster();
   const tempMatrix = new THREE.Matrix4();
@@ -173,12 +234,12 @@ export function createPlayer(renderer, camera, scene, world) {
       controller.userData.hasPrevPos = false;
     });
 
-    player.add(controller);
+    bob.add(controller);
     controllers.push(controller);
 
     const grip = renderer.xr.getControllerGrip(i);
     grip.add(buildControllerMesh());
-    player.add(grip);
+    bob.add(grip);
   }
 
   // --- 移動・旋回 ---------------------------------------------------------
@@ -186,6 +247,15 @@ export function createPlayer(renderer, camera, scene, world) {
   const right = new THREE.Vector3();
   const camQuat = new THREE.Quaternion();
   const pivot = new THREE.Vector3();
+
+  // 歩容の状態。velocity は world 空間の水平速度で、スティック入力そのものでは
+  // なく「そこへ寄せていく目標」として扱う。瞬時に最高速へ飛ぶと、床を蹴って
+  // いる感じが出ずに滑っているように見える。
+  const desired = new THREE.Vector3();
+  const velocity = new THREE.Vector3();
+  const towards = new THREE.Vector3();
+  let stepDistance = 0;
+  let stepsTaken = 0;
 
   function rotateAroundHead(angle) {
     renderer.xr.getCamera().getWorldPosition(pivot);
@@ -213,7 +283,11 @@ export function createPlayer(renderer, camera, scene, world) {
   }
 
   function applyDeadzone(value) {
-    return Math.abs(value) < DEADZONE ? 0 : value;
+    const magnitude = Math.abs(value);
+    if (magnitude < DEADZONE) return 0;
+    // 縁で 0 から始まるよう引き伸ばす。切り捨てるだけだと、
+    // わずかに倒した瞬間に 0.25 ぶんの速度が飛び出して階段状になる。
+    return Math.sign(value) * (magnitude - DEADZONE) / (1 - DEADZONE);
   }
 
   /**
@@ -246,8 +320,13 @@ export function createPlayer(renderer, camera, scene, world) {
   }
 
   function updateLocomotion(dt) {
+    desired.set(0, 0, 0);
+
     const session = renderer.xr.getSession();
-    if (!session) return;
+    if (!session) {
+      velocity.set(0, 0, 0);
+      return;
+    }
 
     renderer.xr.getCamera().getWorldQuaternion(camQuat);
     forward.set(0, 0, -1).applyQuaternion(camQuat);
@@ -285,12 +364,51 @@ export function createPlayer(renderer, camera, scene, world) {
           controller.userData.snapLatched = true;
         }
       } else {
-        player.position.addScaledVector(forward, -y * MOVE_SPEED * dt);
-        player.position.addScaledVector(right, x * MOVE_SPEED * dt);
+        desired.addScaledVector(forward, -y * MOVE_SPEED);
+        desired.addScaledVector(right, x * MOVE_SPEED);
       }
     });
 
+    // 斜め入力で速くならないように頭打ちにする
+    if (desired.lengthSq() > MOVE_SPEED * MOVE_SPEED) desired.setLength(MOVE_SPEED);
+
+    // 目標速度へ一定の加速度で寄せる。歩き出しと止まりに時間をかけると、
+    // 体重が乗っている感じが出る。止まるほうを速くするのは、
+    // 入力を放したあともずるずる進むと操作感が悪いため。
+    const rate = (desired.lengthSq() > 1e-6 ? ACCELERATION : DECELERATION) * dt;
+    towards.subVectors(desired, velocity);
+    if (towards.lengthSq() <= rate * rate) velocity.copy(desired);
+    else velocity.addScaledVector(towards.normalize(), rate);
+
+    player.position.addScaledVector(velocity, dt);
     clampToBounds();
+  }
+
+  /**
+   * 歩容。進んだ距離から歩数を割り出し、頭を上下させて足音を鳴らす。
+   *
+   * 時間ではなく **距離** を位相にするのが要点。時間で回すと、ゆっくり歩いても
+   * 同じ間隔で足音が鳴ってしまい、歩幅と合わない。
+   */
+  function updateGait(dt) {
+    const speed = velocity.length();
+
+    // 遅いときは揺れも足音も弱くする。止まりぎわに 1 歩だけ鳴るのを防ぐ
+    const gait = Math.min(1, speed / (MOVE_SPEED * 0.55));
+
+    if (speed > 0.05) {
+      stepDistance += speed * dt;
+      const count = Math.floor(stepDistance / STEP_LENGTH);
+      if (count > stepsTaken) {
+        stepsTaken = count;
+        footsteps.step(gait);
+      }
+    }
+
+    // 1 歩ごとに 1 回沈む。左右の振れは 2 歩で 1 周期
+    const phase = (stepDistance / STEP_LENGTH) * Math.PI;
+    bob.position.y = -Math.abs(Math.sin(phase)) * BOB_HEIGHT * gait * bobScale;
+    bob.position.x = Math.sin(phase * 0.5) * BOB_SWAY * gait * bobScale;
   }
 
   // --- 毎フレーム更新 -----------------------------------------------------
@@ -298,6 +416,16 @@ export function createPlayer(renderer, camera, scene, world) {
 
   function update(dt) {
     updateLocomotion(dt);
+    updateGait(dt);
+
+    // 足元の影を頭の真下へ。歩幅の沈み込みに合わせて少し濃くすると接地が出る
+    groundShadow.visible = renderer.xr.isPresenting;
+    if (groundShadow.visible) {
+      renderer.xr.getCamera().getWorldPosition(worldPos);
+      groundShadow.position.set(worldPos.x, 0.012, worldPos.z);
+      const sink = -bob.position.y / (BOB_HEIGHT || 1);
+      groundShadow.material.opacity = 0.8 + sink * 0.35;
+    }
 
     for (const controller of controllers) {
       // 手の速度を記録（投げる速度に使う）
@@ -354,7 +482,12 @@ export function createPlayer(renderer, camera, scene, world) {
     }
     player.position.set(0, 0, 0);
     player.rotation.set(0, 0, 0);
+    velocity.set(0, 0, 0);
+    desired.set(0, 0, 0);
+    bob.position.set(0, 0, 0);
+    stepDistance = 0;
+    stepsTaken = 0;
   }
 
-  return { player, controllers, update, reset };
+  return { player, bob, controllers, footsteps, update, reset };
 }

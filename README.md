@@ -6,17 +6,22 @@ three.js + WebXR でつくった、**ビルド不要**の VR サンプルです�
 木の床に丸テーブルと椅子、ソファ、本棚のある部屋です。左の窓から日が差して
 床に光の帯を落とし、正面の大きな窓の外には**さるすべりの木と滑り台のある公園**が
 広がっています。右の壁のスイッチで昼 / 夕 / 夜が切り替わります。
+窓辺には **VRM のキャラクター**が立っていて、呼吸とまばたきをしながら
+こちらを目で追います（[キャラクター（VRM）](#キャラクターvrm)）。
 
 - ヘッドセット（Meta Quest など）のブラウザ → 「ENTER VR」で没入
 - PC / スマホのブラウザ → そのまま 3D シーンとして操作できる
 
 <!-- 画面: 手前に木の床とラグ、中央に丸テーブルと椅子 3 脚、天井からペンダント。
      正面の大きな窓の外に、さるすべりの木・ベンチ・白い柵・青い滑り台のある公園。
-     左の窓から日が差して床に窓枠の影が伸びる。右の壁に昼/夕/夜のスイッチ。 -->
+     左の窓から日が差して床に窓枠の影が伸びる。右の壁に昼/夕/夜のスイッチ。
+     左手前、2 つの窓のあいだに VRM のキャラクターが立ってこちらを見ている。 -->
 
-**3D モデルもテクスチャ画像も 1 枚も持っていません。**床の木目も壁の塗りムラも
-さるすべりの樹皮も、すべて起動時にコードで焼いています（`src/textures.js`）。
-クローンしてすぐ動き、オフラインでも回線が細くても影響を受けません。
+**部屋のほうは 3D モデルもテクスチャ画像も 1 枚も持っていません。**床の木目も
+壁の塗りムラもさるすべりの樹皮も、すべて起動時にコードで焼いています
+（`src/textures.js`）。クローンしてすぐ動き、オフラインでも回線が細くても
+影響を受けません。外から持ち込むアセットは `models/character.vrm`（キャラクター）
+だけで、これも無ければ部屋はそのまま動きます。
 
 ## 動かす
 
@@ -160,6 +165,72 @@ PC の Chrome で試すだけなら、[WebXR API Emulator](https://chromewebstor
 | `?quality=0.5` | 手続きテクスチャの解像度倍率（起動時間に効く） |
 | `?cull=off` | 視錐台カリングを完全に切る（外縁が欠けるヘッドセット向け） |
 | `?debug` | VR 内にデバッグパネルを出す（PC では D キーでも切替） |
+| `?vrm=./models/other.vrm` | 読み込む VRM を差し替える（既定 `./models/character.vrm`） |
+
+## キャラクター（VRM）
+
+窓辺に立っているのは `models/character.vrm`（このリポジトリのオーナーが自作した
+VRM 1.0 モデル）です。リポジトリで唯一のバイナリアセットで、15MB ほどあります。
+
+読み込みは非同期なので起動は待たせません。ファイルを消した場合はキャラクターが
+居ないだけで、部屋はそのまま動きます。
+
+別のモデルを試すときは `models/` に置いて URL で差し替えられます。
+
+```
+http://localhost:8080/?vrm=./models/another.vrm
+```
+
+### なぜ素の GLTFLoader ではなく three-vrm なのか
+
+VRM は glTF の拡張なので `GLTFLoader` だけでも「読めて」しまいますが、それだと
+こうなります。
+
+- **MToon マテリアルが unlit に落ちる** … 部屋の光を拾わないので、昼でも夜でも
+  同じ明るさの板が立っているように見える
+- **髪や服が揺れない**（`VRMC_springBone`）
+- **視線が動かない**（`VRMC_vrm` の lookAt）
+
+この 3 つは [@pixiv/three-vrm](https://github.com/pixiv/three-vrm)（MIT）を
+`GLTFLoader` にプラグインとして挿すだけで解決します。`vendor/three-vrm/` に
+同梱してあるので、追加のインストールは要りません。
+
+```js
+const loader = new GLTFLoader();
+loader.register((parser) => new VRMLoaderPlugin(parser));
+const vrm = (await loader.loadAsync(url)).userData.vrm;
+```
+
+残りは `src/character.js` の仕事です。
+
+- **T ポーズをほどく** … 正規化ボーン（humanoid の normalized rig）に角度を入れる。
+  腕を下ろし、肘と指を少し曲げるだけで人形っぽさが消えます
+- **呼吸と重心の揺れ** … 周期の違う sin を 2 本重ねる。棒立ちは 3D だとすぐ
+  人形に見えます
+- **まばたき** … `expressionManager.setValue('blink', …)` を 2〜6 秒に 1 回
+- **視線** … `vrm.lookAt.target = camera`。XR 中もカメラの `matrixWorld` は
+  WebXRManager が更新してくれるので、PC と VR の両方でこちらを見ます
+- **カリングから外す** … スキニングしたメッシュのバウンディングは当てにならず、
+  `main.js` のバウンディングスフィア膨張も読み込み前に終わっているため
+
+毎フレーム `vrm.update(dt)` を呼ぶのを忘れないでください（スプリングボーン・
+視線・表情がまとめて進みます）。`src/world.js` の `update()` から呼んでいます。
+
+### モデルのライセンス
+
+VRM にはモデルごとのライセンスがファイル自身に埋め込まれています
+（`VRMC_vrm.meta`）。同梱の `character.vrm` は作者本人がこのリポジトリに置いた
+ものですが、メタデータ上は **再配布（`allowRedistribution`）と改変
+（`modification`）が不可、商用利用は不可（`personalNonProfit`）、作者表示が必要
+（`creditNotation: required`）** になっています。フォークして再公開する場合は
+このファイルを差し替えてください。
+
+他所から持ってきたモデルを置くときも同じで、**再配布不可のモデルをリポジトリに
+入れて GitHub Pages で公開するのは再配布にあたります**。その場合は
+`.gitignore` に `models/*.vrm` を足して、手元に置くだけにしてください。
+
+作者表示は、読み込みに成功したら `meta` の名前と作者を画面左上に出すように
+してあります（`src/main.js`）。
 
 ## 構成
 
@@ -174,21 +245,25 @@ src/
   furniture.js          家具と小物（テーブル・椅子・ソファ・本棚・照明器具）
   lighting.js           太陽 / 窓の面光源 / 室内灯 / 環境マップ
   themes.js             昼 / 夕 / 夜の照明シナリオ
+  character.js          VRM のキャラクター（ポーズ・呼吸・まばたき・視線）
   world.js              上をまとめて組み立てる。簡易物理もここ
   controllers.js        プレイヤーリグ、つかむ / 押す / 移動
   desktop.js            ヘッドセットなしのときの操作（OrbitControls）
   debug.js              VR 内で入力を確認するデバッグパネル（?debug）
+models/character.vrm    キャラクター（唯一の外部アセット。15MB）
 scripts/
   serve.mjs             依存なしの静的サーバー
-  vendor.mjs            three.js を vendor/ にコピーするスクリプト
+  vendor.mjs            three.js と three-vrm を vendor/ にコピーするスクリプト
 vendor/three/           three.js 本体と addons（リポジトリに同梱）
+vendor/three-vrm/       @pixiv/three-vrm（MIT。同梱）
 ```
 
-### three.js を更新する
+### three.js / three-vrm を更新する
 
 ```bash
-npm install three@<version>   # devDependencies のバージョンも更新される
-npm run vendor                # vendor/ にコピーし直す
+npm install three@<version>              # devDependencies のバージョンも更新される
+npm install @pixiv/three-vrm@<version>
+npm run vendor                           # vendor/ にコピーし直す
 ```
 
 ## 画質のつくり方
@@ -266,6 +341,8 @@ Unity URP + ライトマップベイクに移すのが現実的です。
   木の幹はこれで作っています。
 - **時間帯を足す** → `src/themes.js` にもう 1 つ定義を書けば、壁のスイッチが
   自動で増えます。
-- **3D モデルを置く** → `GLTFLoader`（`three/examples/jsm/loaders/GLTFLoader.js`）を
-  `scripts/vendor.mjs` の `FILES` に追加して `npm run vendor`。
+- **3D モデルを置く** → `GLTFLoader` は `vendor/` に同梱済みです。
+  `src/character.js` と同じ要領で読み込んでシーンに足せます。
+- **キャラクターの立ち位置を変える** → `src/character.js` の `CHARACTER`
+  （`position` と `yaw`）。ポーズは `RELAXED_POSE` です。
 - **ハンドトラッキング** → `renderer.xr.getHand(i)` と `XRHandModelFactory` を使います。

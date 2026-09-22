@@ -43,10 +43,14 @@ canvas { display: block; }
 
 #overlay li { margin: 2px 0; }
 
-#status {
+#status,
+#credit {
   font-size: 12px;
   color: #8fa3cc;
 }
+
+/* VRM のライセンス表記（作者名）。モデルが無いときは空のまま */
+#credit:empty { display: none; }
 
 /* VR セッション中はオーバーレイを隠す */
 body.xr-presenting #overlay { opacity: 0; }

@@ -21,8 +21,9 @@ export const ROOM = {
 
 /** 開口部。x は壁のローカル座標（壁の中心が 0）、y は床からの高さ。 */
 const OPENINGS = {
-  // 正面（-Z）: 公園が見える大きな窓
-  front: { x: 0, width: 3.2, sill: 0.42, head: 2.32 },
+  // 正面（-Z）: 庭へ出る掃き出し窓。腰高の窓ではなく床まで開いているので、
+  // そのまま外へ歩いて出られる。すぐ外にテラスがあるので導線としても自然。
+  front: { x: 0, width: 3.2, sill: 0.0, head: 2.32, doorway: true },
   // 左（-X）: 採光用。ここから斜めに日が差して床に光の帯を作る
   left: { x: 0.7, width: 1.8, sill: 0.42, head: 2.32 },
   // 背面（+Z）: ドア
@@ -105,7 +106,18 @@ function addBaseboard(group, material) {
   };
 
   const inset = T / 2;
-  run(ROOM.width, [0, 0, ROOM.minZ + inset], 0);
+  // 正面は掃き出し窓の開口ぶんを空ける
+  const front = OPENINGS.front;
+  if (front.sill <= 0.001) {
+    const left = front.x - front.width / 2;
+    const right = front.x + front.width / 2;
+    const leftLen = left - ROOM.minX;
+    const rightLen = ROOM.maxX - right;
+    if (leftLen > 0.01) run(leftLen, [ROOM.minX + leftLen / 2, 0, ROOM.minZ + inset], 0);
+    if (rightLen > 0.01) run(rightLen, [right + rightLen / 2, 0, ROOM.minZ + inset], 0);
+  } else {
+    run(ROOM.width, [0, 0, ROOM.minZ + inset], 0);
+  }
   run(ROOM.depth, [ROOM.minX + inset, 0, 0], Math.PI / 2);
   run(ROOM.depth, [ROOM.maxX - inset, 0, 0], -Math.PI / 2);
 
@@ -146,12 +158,26 @@ function addWindowTrim(group, frameMaterial, sillMaterial, spec) {
   box(T, height + T * 2, D, -width / 2 - T / 2, 0, D / 2, frameMaterial);
   box(T, height + T * 2, D, width / 2 + T / 2, 0, D / 2, frameMaterial);
 
-  // 窓台（室内に少し出す）
-  box(width + T * 4, 0.03, sillDepth, 0, -height / 2 - 0.015, sillDepth / 2 - 0.02, sillMaterial);
+  if (spec.doorway) {
+    // 敷居。掃き出し窓なので窓台ではなく、床と地面をつなぐ框を置く
+    box(width + T * 2, 0.022, 0.14, 0, -height / 2 + 0.011, 0.02, sillMaterial);
+  } else {
+    // 窓台（室内に少し出す）
+    box(width + T * 4, 0.03, sillDepth, 0, -height / 2 - 0.015, sillDepth / 2 - 0.02, sillMaterial);
+  }
 
-  // 方立と無目。ガラスの割り付けがあると一気に「窓」になる
-  box(0.045, height, 0.03, 0, 0, 0.015, frameMaterial);
-  box(width, 0.04, 0.03, 0, height / 2 - height * 0.32, 0.015, frameMaterial);
+  if (spec.doorway) {
+    // 引き戸を左右に寄せて開けた状態。中央が通り抜けられることが形で分かる
+    const panel = width * 0.33;
+    for (const side of [-1, 1]) {
+      box(0.04, height, 0.035, side * (width / 2 - panel), 0, 0.018, frameMaterial);
+      box(panel, 0.04, 0.035, side * (width / 2 - panel / 2), height / 2 - height * 0.30, 0.018, frameMaterial);
+    }
+  } else {
+    // 方立と無目。ガラスの割り付けがあると一気に「窓」になる
+    box(0.045, height, 0.03, 0, 0, 0.015, frameMaterial);
+    box(width, 0.04, 0.03, 0, height / 2 - height * 0.32, 0.015, frameMaterial);
+  }
 
   group.add(trim);
 }
@@ -237,6 +263,42 @@ export function createRoom(scene, tex) {
 
   addBaseboard(group, trimMaterial);
 
+  // --- 屋根 ---------------------------------------------------------------
+  // 庭から見ると、屋根が無いままでは家が書き割りに見える（天井が透けて
+  // 見えてしまう）。陸屋根に深い庇を回して、外から見ても建物になるようにする。
+  const EAVE = 0.55;
+  const ROOF_THICK = 0.20;
+  const roofW = ROOM.width + ROOM.wall * 2 + EAVE * 2;
+  const roofD = ROOM.depth + ROOM.wall * 2 + EAVE * 2;
+
+  const roof = new THREE.Mesh(
+    new THREE.BoxGeometry(roofW, ROOF_THICK, roofD),
+    tex.material('plaster', {
+      sizeX: roofW, sizeY: roofD,
+      color: 0xb9b3a8,
+      roughness: 0.95,
+      normalScale: new THREE.Vector2(0.25, 0.25),
+    }),
+  );
+  roof.position.set(0, ROOM.height + ROOF_THICK / 2 + 0.02, 0);
+  roof.castShadow = true;
+  roof.receiveShadow = true;
+  group.add(roof);
+
+  // 鼻隠し。庇の小口に一本入れると、厚みのある屋根に見える
+  const fasciaMaterial = tex.material('walnut', {
+    sizeX: roofW, sizeY: 0.09, color: 0x6a5b4a, roughness: 0.62,
+  });
+  for (const [w, d, x, z] of [
+    [roofW, 0.03, 0, -roofD / 2], [roofW, 0.03, 0, roofD / 2],
+    [0.03, roofD, -roofW / 2, 0], [0.03, roofD, roofW / 2, 0],
+  ]) {
+    const fascia = new THREE.Mesh(new THREE.BoxGeometry(w, 0.09, d), fasciaMaterial);
+    fascia.position.set(x, ROOM.height + 0.02 - 0.02, z);
+    fascia.castShadow = true;
+    group.add(fascia);
+  }
+
   // --- 窓 -----------------------------------------------------------------
   // ライティング側が面光源を置くために、開口の実座標を返す
   const front = OPENINGS.front;
@@ -249,6 +311,7 @@ export function createRoom(scene, tex) {
       width: front.width,
       height: front.head - front.sill,
       normal: new THREE.Vector3(0, 0, 1),
+      doorway: Boolean(front.doorway),
     },
     {
       name: 'left',
@@ -275,14 +338,26 @@ export function createRoom(scene, tex) {
     toneMapped: false,
   });
   for (const spec of windows) {
-    const glass = new THREE.Mesh(
-      new THREE.PlaneGeometry(spec.width, spec.height),
-      glassMaterial,
-    );
-    glass.position.copy(spec.center);
-    if (spec.axis === 'x') glass.rotation.y = Math.PI / 2;
-    glass.renderOrder = 2;
-    group.add(glass);
+    // 掃き出し窓は左右に寄せた戸のぶんだけガラスを張る。中央は開いている
+    const panes = spec.doorway
+      ? [[-spec.width * 0.335, spec.width * 0.33], [spec.width * 0.335, spec.width * 0.33]]
+      : [[0, spec.width]];
+
+    for (const [offset, paneWidth] of panes) {
+      const glass = new THREE.Mesh(
+        new THREE.PlaneGeometry(paneWidth, spec.height),
+        glassMaterial,
+      );
+      glass.position.copy(spec.center);
+      if (spec.axis === 'x') {
+        glass.rotation.y = Math.PI / 2;
+        glass.position.z -= offset;
+      } else {
+        glass.position.x += offset;
+      }
+      glass.renderOrder = 2;
+      group.add(glass);
+    }
   }
 
   // --- ドア ---------------------------------------------------------------
@@ -311,5 +386,5 @@ export function createRoom(scene, tex) {
   knob.castShadow = true;
   group.add(knob);
 
-  return { group, floor, windows, materials: { wallMaterial, ceilingMaterial, floorMaterial, trimMaterial } };
+  return { group, floor, windows, doorway: { x: front.x, width: front.width }, materials: { wallMaterial, ceilingMaterial, floorMaterial, trimMaterial } };
 }

@@ -15,6 +15,9 @@ import { DEFAULT_THEME } from './themes.js';
  * 一つ減らせるから。
  */
 
+/** 庭の広さ。歩いて出られる範囲で、公園の遊具や木は柵の向こう側に残る */
+const GARDEN = { minX: -6.0, maxX: 6.0, minZ: -13.0 };
+
 const GRAVITY = -9.8;
 const RESTITUTION = 0.38;   // 床の反発。木の床なので跳ねすぎない
 const WALL_RESTITUTION = 0.45;
@@ -70,13 +73,41 @@ export function createWorld(renderer, scene, {
 
   const { grabbables, buttons } = furniture;
 
-  // プレイヤーが壁を抜けないようにするための内寸
-  const bounds = {
-    minX: ROOM.minX + 0.35,
-    maxX: ROOM.maxX - 0.35,
-    minZ: ROOM.minZ + 0.35,
-    maxZ: ROOM.maxZ - 0.35,
-  };
+  // 歩ける範囲。掃き出し窓から庭へ出られるようになったので、単純な箱ひとつ
+  // ではなく「部屋」「窓の通り道」「庭」の 3 つの矩形の和で表す。隣り合う
+  // 矩形をわずかに重ねておくと、境目で引っかからずに通り抜けられる。
+  const MARGIN = 0.35;
+  const outerZ = ROOM.minZ - ROOM.wall;       // 外壁の外面
+  const door = room.doorway;
+  const regions = [
+    { minX: ROOM.minX + MARGIN, maxX: ROOM.maxX - MARGIN, minZ: ROOM.minZ + MARGIN, maxZ: ROOM.maxZ - MARGIN },
+    { minX: door.x - door.width / 2 + 0.25, maxX: door.x + door.width / 2 - 0.25, minZ: outerZ - 0.25, maxZ: ROOM.minZ + MARGIN },
+    { minX: GARDEN.minX, maxX: GARDEN.maxX, minZ: GARDEN.minZ, maxZ: outerZ - 0.2 },
+  ];
+
+  /**
+   * 与えた点を、歩ける範囲のいちばん近いところへ寄せる。
+   * inset は物の半径ぶんの余白（壁にめり込ませないため）。
+   */
+  function clampToBounds(x, z, inset = 0) {
+    let best = null;
+    let bestDistance = Infinity;
+    for (const region of regions) {
+      const minX = region.minX + inset;
+      const maxX = region.maxX - inset;
+      const minZ = region.minZ + inset;
+      const maxZ = region.maxZ - inset;
+      if (maxX < minX || maxZ < minZ) continue;
+      const cx = Math.min(Math.max(x, minX), maxX);
+      const cz = Math.min(Math.max(z, minZ), maxZ);
+      const distance = (cx - x) ** 2 + (cz - z) ** 2;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { x: cx, z: cz };
+      }
+    }
+    return best ?? { x, z };
+  }
 
   const tmp = new THREE.Vector3();
 
@@ -134,23 +165,26 @@ export function createWorld(renderer, scene, {
         }
       }
 
-      // 壁。室内なので跳ね返す（外に出られると回収できない）
+      // 壁。歩ける範囲と同じ形で押し戻し、押し戻した向きに速度を反射する。
+      // 掃き出し窓の開口ぶんはここが空いているので、ボールは庭へ抜けていく。
       const r = data.halfSize;
-      if (prop.position.x < ROOM.minX + r) {
-        prop.position.x = ROOM.minX + r;
-        data.velocity.x = Math.abs(data.velocity.x) * WALL_RESTITUTION;
-      } else if (prop.position.x > ROOM.maxX - r) {
-        prop.position.x = ROOM.maxX - r;
-        data.velocity.x = -Math.abs(data.velocity.x) * WALL_RESTITUTION;
+      const clamped = clampToBounds(prop.position.x, prop.position.z, r);
+      const pushX = clamped.x - prop.position.x;
+      const pushZ = clamped.z - prop.position.z;
+      if (pushX * pushX + pushZ * pushZ > 1e-8) {
+        prop.position.x = clamped.x;
+        prop.position.z = clamped.z;
+        const length = Math.hypot(pushX, pushZ);
+        const nx = pushX / length;
+        const nz = pushZ / length;
+        const along = data.velocity.x * nx + data.velocity.z * nz;
+        if (along < 0) {
+          data.velocity.x -= (1 + WALL_RESTITUTION) * along * nx;
+          data.velocity.z -= (1 + WALL_RESTITUTION) * along * nz;
+        }
       }
-      if (prop.position.z < ROOM.minZ + r) {
-        prop.position.z = ROOM.minZ + r;
-        data.velocity.z = Math.abs(data.velocity.z) * WALL_RESTITUTION;
-      } else if (prop.position.z > ROOM.maxZ - r) {
-        prop.position.z = ROOM.maxZ - r;
-        data.velocity.z = -Math.abs(data.velocity.z) * WALL_RESTITUTION;
-      }
-      if (prop.position.y > ROOM.height - r) {
+      // 天井は室内だけ
+      if (prop.position.z > ROOM.minZ && prop.position.y > ROOM.height - r) {
         prop.position.y = ROOM.height - r;
         data.velocity.y = -Math.abs(data.velocity.y) * 0.3;
       }
@@ -165,7 +199,8 @@ export function createWorld(renderer, scene, {
     grabbables,
     interactables: [...grabbables, ...buttons],
     floor: room.floor,
-    bounds,
+    bounds: regions,
+    clampToBounds,
     room,
     park,
     furniture,

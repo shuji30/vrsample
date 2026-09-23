@@ -104,18 +104,26 @@ const FINGERS = ['Index', 'Middle', 'Ring', 'Little'].flatMap((finger) =>
   ['Proximal', 'Intermediate', 'Distal'].map((joint) => `${finger}${joint}`),
 );
 
-/** 歩きの振り幅 */
+/**
+ * 歩きのパラメータ。
+ *
+ * 腿と膝の角度はここには無い。以前は腿の振り幅を角度で決め打ちしていたが、
+ * それだと足の可動範囲（脚長 × sin 振り幅）と歩幅が一致せず、立脚中の足が
+ * 地面を滑る。いまは歩幅と脚の長さから毎フレーム逆算している（solveLeg）。
+ */
 const GAIT = {
-  upperLeg: 0.46,   // 腿の前後
-  knee: 0.62,       // 遊脚のときだけ曲げる
-  foot: 0.24,
   arm: 0.34,        // 腕は脚と逆位相
-  bob: 0.018,       // 腰の上下
+  ankle: 0.30,      // 蹴り出し / 着地の足首
+  lift: 0.30,       // 遊脚で足を持ち上げる高さ（歩幅に対する比）
+  dip: 0.014,       // 接地直後に体重が乗って沈む量（m）
   roll: 0.035,      // 腰の左右の傾き
   twist: 0.05,      // 胸の捻り
 };
 
+const TAU = Math.PI * 2;
+
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 const smoothstep = (edge0, edge1, x) => {
   const t = clamp01((x - edge0) / (edge1 - edge0));
@@ -177,6 +185,46 @@ function placeSeats(thighReach) {
  * @param {THREE.Camera} [options.camera] 視線で追わせる相手
  * @param {boolean} [options.wander] false なら歩かせず、その場に立たせる
  */
+/**
+ * 足の下に敷く柔らかい影。
+ *
+ * 太陽の影だけに頼ると、直射日光の当たらない場所に立ったときに影がまったく
+ * 出ず、床に貼り付いていないように見える。実際この部屋は窓から差す光が
+ * 届く範囲が狭いので、立ち位置によっては影がゼロになる。接地感は
+ * 「足の真下が暗いこと」でほとんど決まるので、別に敷いてしまう。
+ */
+function buildContactShadow() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  // 濃い部分を靴の下だけに置くと、その靴に隠れて何も見えない。実際これで
+  // 一度失敗している（影は描かれていたが、濃い範囲が 15cm しかなく、
+  // 立った姿勢では靴に覆われて画面に出てこなかった）。減衰をゆるくして
+  // 履物の外側まではみ出させる。
+  const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gradient.addColorStop(0, 'rgba(0, 0, 0, 0.55)');
+  gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.32)');
+  gradient.addColorStop(0.8, 'rgba(0, 0, 0, 0.10)');
+  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 64, 64);
+
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(canvas),
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.renderOrder = 1;
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
 export function createCharacter(scene, { url = CHARACTER.url, camera = null, wander = true } = {}) {
   const group = new THREE.Group();
   group.name = 'character';
@@ -186,6 +234,14 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   group.rotation.y = yaw;
   scene.add(group);
 
+  // 影はキャラクターの Group ではなくシーン直下に置く。床に貼り付いていて
+  // ほしいので、体の傾きや腰の上下に引きずられないほうがよい。
+  const footShadows = [buildContactShadow(), buildContactShadow()];
+  for (const shadow of footShadows) {
+    shadow.visible = false;
+    scene.add(shadow);
+  }
+
   const loader = new GLTFLoader();
   loader.register((parser) => new VRMLoaderPlugin(parser));
 
@@ -194,6 +250,13 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let bones = {};
   let hipsRestY = 0;      // 腰のボーンの、足元からの高さ
   let stride = CHARACTER.stride;
+
+  // 脚の寸法。歩幅と辻褄の合う脚の角度を逆算するのに要る
+  let thighLen = 0.34;    // 腰から膝
+  let shinLen = 0.34;     // 膝から足首
+  let legLength = 0.67;   // 伸ばしきらない脚長（特異点を避けて 98.5%）
+  let ankleRestY = 0.06;  // 足首の床からの高さ
+  let hipWidth = 0.06;    // 左右の脚の間隔（片側）
 
   // --- ふるまいの状態 -----------------------------------------------------
   let state = 'idle';
@@ -245,6 +308,18 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       // 腰の高さと腿の長さは、座面に腰を乗せる位置に要る。歩幅も身体に合わせる
       hipsRestY = bones.hips ? bones.hips.position.y : 0.7;
       stride = CHARACTER.stride * (hipsRestY / 0.70);
+
+      // 正規化ボーンのローカル位置は、そのまま骨の長さになっている
+      thighLen = bones.leftLowerLeg ? bones.leftLowerLeg.position.length() : thighLen;
+      shinLen = bones.leftFoot ? bones.leftFoot.position.length() : shinLen;
+      // 脚は伸ばしきらない。腰の高さを脚長ちょうどに置くと、踏み出した足が
+      // 届く / 届かないの境目に乗ってしまい、前半分だけクランプされて歩容が
+      // 前後非対称になる。2% 残しておくと膝もわずかに曲がって自然に見える。
+      legLength = (thighLen + shinLen) * 0.98;
+      ankleRestY = Math.max(0.02, hipsRestY - (thighLen + shinLen));
+      hipWidth = bones.leftUpperLeg ? Math.abs(bones.leftUpperLeg.position.x) : hipWidth;
+      // 歩幅は脚長の半分まで。これ以上広げると腰の沈み込みが大きくなりすぎる
+      stride = Math.min(stride, legLength * 0.5);
       placeSeats(measureThigh(vrm) * Math.sin(-SIT_POSE.leftUpperLeg[0]));
 
       // 視線でこちらを追わせる。XR 中も camera の matrixWorld は
@@ -365,8 +440,10 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     group.position.x += Math.sin(yaw) * moved;
     group.position.z += Math.cos(yaw) * moved;
 
-    // 位相は「進んだ距離」から進める。回っているだけのときも少し足を動かす
-    advanceGait(moved + Math.abs(turned) * 0.2, dt, moved > 0 ? 1 : 0.55);
+    // 位相は「進んだ距離」だけから進める。ここに旋回ぶんを足すと、進んでいない
+    // のに足が振られて立脚の足が滑る。歩きながらは常に進路を微調整しているので、
+    // わずかな係数でも効いてしまう。その場で回っているときだけ足を動かす。
+    advanceGait(moved > 0 ? moved : Math.abs(turned) * 0.2, dt, moved > 0 ? 1 : 0.55);
     return distance - moved < 0.02;
   }
 
@@ -501,8 +578,80 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   }
 
   /**
-   * 歩きを重ねる。位相 1 本から、腿・膝・足首・腕・腰の上下と傾きを作る。
-   * 膝は遊脚のあいだだけ曲げる（接地しているほうを曲げると膝が抜けて見える）。
+   * 足 1 本の、腰から見た着地点を返す。位相 u は 0 で接地、π で離地。
+   *
+   * 立脚（u < π）では、体が進むぶんだけ足を真後ろへ **等速で** 送る。
+   * こうすると足は地面に対して静止する。以前は腿の角度を sin で振っていたが、
+   * それだと足の移動量が歩幅と一致せず（脚長 0.62m × sin0.46 の往復 = 0.62m に
+   * 対して歩幅は 0.34m）、1 歩ごとに 28cm ぶん足が滑っていた。
+   */
+  function footPlan(p) {
+    const u = ((p % TAU) + TAU) % TAU;
+
+    if (u < Math.PI) {
+      const t = u / Math.PI;
+      return { offset: stride * (0.5 - t), lift: 0, stance: t };
+    }
+
+    // 遊脚。前へ運びながら持ち上げる
+    const t = (u - Math.PI) / Math.PI;
+    const eased = t * t * (3 - 2 * t);
+    return { offset: stride * (eased - 0.5), lift: Math.sin(t * Math.PI) * stride * GAIT.lift, stance: -1 };
+  }
+
+  /**
+   * 足 1 本を、与えた着地点に届くよう腿と膝で解く（2 関節の逆運動学）。
+   *
+   * 腰から足首までの距離 d が分かれば、余弦定理で膝の角度が出る。膝は
+   * 前へ突き出るので、腿は腰-足首を結ぶ線より α だけ前に倒す。
+   */
+  function solveLeg(leg, p, hipY, amount) {
+    const upper = bones[`${leg}UpperLeg`];
+    const lower = bones[`${leg}LowerLeg`];
+    const foot = bones[`${leg}Foot`];
+    if (!upper || !lower) return;
+
+    const plan = footPlan(p);
+    const dz = plan.offset;
+    const dy = (ankleRestY + plan.lift) - hipY;   // 足首は腰より下なので負
+    const reach = Math.min(
+      Math.max(Math.hypot(dy, dz), Math.abs(thighLen - shinLen) + 0.001),
+      thighLen + shinLen - 0.001,
+    );
+
+    const beta = Math.atan2(dz, -dy);             // 真下からの角度（前が +）
+    const alpha = Math.acos(clamp(
+      (thighLen * thighLen + reach * reach - shinLen * shinLen) / (2 * thighLen * reach), -1, 1,
+    ));
+    const knee = Math.PI - Math.acos(clamp(
+      (thighLen * thighLen + shinLen * shinLen - reach * reach) / (2 * thighLen * shinLen), -1, 1,
+    ));
+    const thigh = beta + alpha;
+
+    // 足裏を床と平行に保つ。そのうえで蹴り出しと着地の足首を足す
+    let ankle = thigh - knee;
+    if (plan.stance >= 0) {
+      // 後半で踵が上がり（つま先で蹴る）、着地直後はわずかにつま先が上を向く
+      ankle += GAIT.ankle * smoothstep(0.55, 1, plan.stance);
+      ankle -= GAIT.ankle * 0.45 * (1 - smoothstep(0, 0.18, plan.stance));
+    } else {
+      // 遊脚はつま先を上げておく。下げたままだと床を擦って見える
+      ankle -= GAIT.ankle * 0.35;
+    }
+
+    // 立ち / 座りポーズからの混ぜ込み。amount が 0 ならそのまま
+    upper.rotation.x += (-thigh - upper.rotation.x) * amount;
+    lower.rotation.x += (knee - lower.rotation.x) * amount;
+    if (foot) foot.rotation.x += (ankle - foot.rotation.x) * amount;
+  }
+
+  /**
+   * 歩きを重ねる。
+   *
+   * 腰の高さは腕まかせの sin ではなく、立脚の幾何から決める。脚を伸ばした
+   * まま前に振り出すと、腰は脚が真下に来たとき最も高く、両足が前後に開いた
+   * 着地の瞬間に最も低くなる（コンパス歩行）。以前の実装はこれが逆位相で、
+   * 着地の瞬間に腰が持ち上がっていたので、踏んだ手ごたえが出なかった。
    */
   function applyGait() {
     const amount = gait * (1 - sitAmount);
@@ -511,29 +660,33 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     const s = Math.sin(phase);
     const c = Math.cos(phase);
 
-    const swing = (leg, sign) => {
-      const upper = bones[`${leg}UpperLeg`];
-      const lower = bones[`${leg}LowerLeg`];
-      const foot = bones[`${leg}Foot`];
-      const p = sign > 0 ? phase : phase + Math.PI;
-      const thigh = -GAIT.upperLeg * Math.cos(p) * amount;
-      const knee = GAIT.knee * Math.max(0, -Math.sin(p)) * amount;
-      if (upper) upper.rotation.x += thigh;
-      if (lower) lower.rotation.x += knee;
-      if (foot) foot.rotation.x += (-(thigh + knee) * 0.5 + GAIT.foot * Math.sin(p) * amount);
-    };
-    swing('left', 1);
-    swing('right', -1);
+    // 立脚している側の脚から腰の高さを決める（同時に接地するのは片脚だけ）
+    const legs = [['left', phase], ['right', phase + Math.PI]];
+    let hipY = hipsRestY;
+    let dip = 0;
+    for (const [, p] of legs) {
+      const plan = footPlan(p);
+      if (plan.stance < 0) continue;
+      hipY = ankleRestY + Math.sqrt(Math.max(0, legLength * legLength - plan.offset * plan.offset));
+      // 接地直後の沈み込み。実際の歩行でも立脚初期に膝が曲がって体重を受ける
+      dip = GAIT.dip * Math.sin(Math.PI * clamp01(plan.stance / 0.38));
+    }
+    hipY -= dip;
+
+    if (bones.hips) {
+      bones.hips.position.y += (hipY - bones.hips.position.y) * amount;
+      // 脚は **実際に置いた腰の高さ** で解く。理想値のまま解くと、立ち上がりの
+      // 混ぜ込み中に腰と足の辻褄が合わず、接地した足が浮いたり沈んだりする
+      hipY = bones.hips.position.y;
+      bones.hips.rotation.z = GAIT.roll * s * amount;
+    }
+
+    for (const [leg, p] of legs) solveLeg(leg, p, hipY, amount);
 
     // 腕は脚と逆位相。肩を上げずに前後に振る
     if (bones.leftUpperArm) bones.leftUpperArm.rotation.x += GAIT.arm * c * amount;
     if (bones.rightUpperArm) bones.rightUpperArm.rotation.x -= GAIT.arm * c * amount;
 
-    // 腰は 1 歩ごとに上下し（位相 2 倍）、左右に傾く
-    if (bones.hips) {
-      bones.hips.position.y = hipsRestY + GAIT.bob * (Math.abs(c) - 0.5) * 2 * amount;
-      bones.hips.rotation.z = GAIT.roll * s * amount;
-    }
     if (bones.chest) bones.chest.rotation.y = -GAIT.twist * s * amount;
   }
 
@@ -549,7 +702,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     const drift = Math.sin(elapsed * 0.27 + 1.1) * (1 - gait);
 
     if (bones.hips) {
-      bones.hips.position.y += breath * 0.006;
+      // 呼吸で腰を上下させるのは立ち止まっているときだけ。歩行中に動かすと、
+      // せっかく地面に固定した足が腰ごと持ち上がって滑る
+      bones.hips.position.y += breath * 0.006 * (1 - gait);
       bones.hips.rotation.z += sway * 0.02;
       bones.hips.rotation.y = drift * 0.03;
     }
@@ -570,12 +725,50 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     expressions.setValue('blink', blink <= 1 ? blink : 2 - blink);
   }
 
+  /**
+   * 足の接地影を置く。
+   *
+   * 足のワールド座標はボーンから取らず、歩容の計画値（前後のオフセット）と
+   * 体の向きから直に出す。update はレンダリングの前に走るのでボーンの
+   * ワールド行列がまだ更新されておらず、わざわざ更新するより安い。
+   */
+  function updateFootShadows() {
+    const amount = gait * (1 - sitAmount);
+    const sin = Math.sin(yaw);
+    const cos = Math.cos(yaw);
+    const legs = [['left', phase, -1], ['right', phase + Math.PI, 1]];
+
+    legs.forEach(([, p, side], index) => {
+      const shadow = footShadows[index];
+      const plan = amount > 0.001 ? footPlan(p) : { offset: 0, lift: 0 };
+      // 歩容ぶんは amount で薄めて、立ち止まっているときは足元に戻す
+      const forward = plan.offset * amount;
+      const lift = plan.lift * amount;
+      const lateral = side * hipWidth;
+
+      shadow.position.set(
+        group.position.x + lateral * cos + forward * sin,
+        // ラグ（y = 0.006）と同じ高さに置くと Z ファイティングで消える
+        0.014,
+        group.position.z - lateral * sin + forward * cos,
+      );
+
+      // 浮くほど大きく薄くなる。接地の瞬間がいちばん濃い
+      const height = clamp01(lift / 0.12);
+      const scale = 0.60 * (1 + height * 0.6);
+      shadow.scale.set(scale, scale, 1);
+      shadow.material.opacity = (1 - height * 0.75) * (1 - sitAmount);
+      shadow.visible = shadow.material.opacity > 0.02;
+    });
+  }
+
   function update(dt) {
     if (!vrm) return;
     if (wander) updateBehavior(dt);
     applyPose();
     applyGait();
     applyIdle(dt);
+    updateFootShadows();
     // スプリングボーン（髪・服）、視線、表情をまとめて進める
     vrm.update(dt);
   }

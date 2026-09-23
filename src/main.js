@@ -56,7 +56,27 @@ function describeSession(stats) {
 }
 
 window.addEventListener('error', (event) => fail('スクリプトエラー', event.error ?? event.message));
-window.addEventListener('unhandledrejection', (event) => fail('非同期処理', event.reason));
+
+/** ENTER VR を押して、まだ返事が来ていない状態か */
+let requestingSession = false;
+
+window.addEventListener('unhandledrejection', (event) => {
+  const message = String(event.reason?.message ?? event.reason ?? '');
+  // VRButton は requestSession に catch を付けていないので、VR に入れなかった
+  // ときはここに落ちてくる。「すでにセッションがある」は原因がはっきりして
+  // いるので、例外の文面ではなく対処を出す。
+  if (/already an active/i.test(message)) {
+    requestingSession = false;
+    report(
+      'VR セッションがすでに開いています。別のタブやウィンドウでこのページ'
+      + '（や他の WebXR サイト）を開いていないか確認し、そちらで VR を終了する'
+      + 'と入れるようになります。VR 中にリロードしたあとは、ブラウザを開き直すと戻ります。',
+      true,
+    );
+    return;
+  }
+  fail('非同期処理', event.reason);
+});
 
 // `?safe` は原因の切り分け用。影を切り、テクスチャを最小にし、
 // XR の解像度も落として「重すぎて開けない」のかどうかを見る。
@@ -117,7 +137,24 @@ renderer.domElement.addEventListener('webglcontextlost', (event) => {
 
 // 「ENTER VR」ボタンは重い初期化より **先** に出す。
 // 後ろに置くと、シーン構築でこけたときにボタンごと出なくなる。
-document.body.appendChild(VRButton.createButton(renderer));
+const vrButton = VRButton.createButton(renderer);
+document.body.appendChild(vrButton);
+
+// 二度押しよけ。VRButton は requestSession が返るまで内部の currentSession が
+// null のままなので、返事を待たずにもう一度押すとセッションを 2 本要求してしまい
+// 「There is already an active, immersive XRSession」で落ちる。
+// capture で聞いて、VRButton 自身のハンドラより先に握りつぶす。
+vrButton.addEventListener('click', (event) => {
+  if (renderer.xr.isPresenting) return;   // 終了のクリックはそのまま通す
+  if (requestingSession) {
+    event.stopImmediatePropagation();
+    event.preventDefault();
+    return;
+  }
+  requestingSession = true;
+  // ランタイムが無反応のまま返ってこないこともあるので、保険で戻す
+  setTimeout(() => { requestingSession = false; }, 10000);
+}, true);
 
 const scene = new THREE.Scene();
 // 天球が半径 300 あるので far はそれより外に取る
@@ -202,6 +239,7 @@ async function start() {
   let stats = null;
 
   renderer.xr.addEventListener('sessionstart', () => {
+    requestingSession = false;
     document.body.classList.add('xr-presenting');
     player.reset(); // VR に入るときはリグを原点に戻す
     player.player.position.set(0, 0, 0.9);

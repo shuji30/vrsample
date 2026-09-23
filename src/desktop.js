@@ -127,6 +127,64 @@ export function createDesktopControls(renderer, camera, world) {
     controls.target.z += dz;
   }
 
+  // --- PC でのキャッチボール ---------------------------------------------
+  // ヘッドセットが無くても女の子とボールをやりとりできるように、F で近くの
+  // ボールを拾う / 見ている方へ投げる。こちらへ飛んできた球は、顔の前を
+  // 通るときに自動で受ける（マウスで捕る操作は難しすぎるため）。
+  const ball = world.ball;
+  const HOLD = new THREE.Vector3(0.20, -0.30, -0.45);   // カメラから見た持つ位置
+  const PICK_RANGE = 1.8;
+  const CATCH_RANGE = 0.6;
+  let holding = false;
+  const eye = new THREE.Vector3();
+  const look = new THREE.Vector3();
+
+  function ballFree() {
+    return ball && !ball.userData.held;
+  }
+
+  function takeBall() {
+    holding = true;
+    ball.userData.held = true;
+    ball.userData.heldBy = 'desktop';
+    ball.userData.velocity.set(0, 0, 0);
+    ball.userData.spin.set(0, 0, 0);
+  }
+
+  function throwBall() {
+    camera.getWorldPosition(eye);
+    camera.getWorldDirection(look);
+    holding = false;
+    ball.userData.held = false;
+    ball.userData.heldBy = null;
+    ball.position.copy(camera.localToWorld(HOLD.clone()));
+    // 見ている向きへ山なりに。水平を見て投げると 5m 先で胸の高さに届く
+    ball.userData.velocity.copy(look).multiplyScalar(7.0).add(new THREE.Vector3(0, 2.2, 0));
+    ball.userData.spin.set(-look.z, 0, look.x).multiplyScalar(40);
+  }
+
+  window.addEventListener('keydown', (event) => {
+    if (event.code !== 'KeyF' || renderer.xr.isPresenting || !ball) return;
+    if (holding) { throwBall(); return; }
+    camera.getWorldPosition(eye);
+    if (ballFree() && ball.position.distanceTo(eye) < PICK_RANGE + 1.0
+      && Math.hypot(ball.position.x - eye.x, ball.position.z - eye.z) < PICK_RANGE) takeBall();
+  });
+
+  function updateBall() {
+    if (!ball) return;
+    if (holding) {
+      if (ball.userData.heldBy !== 'desktop') { holding = false; return; }
+      ball.position.copy(camera.localToWorld(HOLD.clone()));
+      return;
+    }
+    if (!ballFree()) return;
+    camera.getWorldPosition(eye);
+    const v = ball.userData.velocity;
+    const toEye = look.subVectors(eye, ball.position);
+    if (v.length() > 1.5 && toEye.dot(v) > 0 && toEye.length() < CATCH_RANGE) takeBall();
+  }
+
   let last = performance.now();
 
   return {
@@ -139,6 +197,7 @@ export function createDesktopControls(renderer, camera, world) {
       last = now;
       walk(seconds);
       controls.update();
+      updateBall();
     },
   };
 }

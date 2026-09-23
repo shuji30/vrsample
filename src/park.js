@@ -756,6 +756,31 @@ function createBackdrop(tex, seed = 11) {
  * @param {THREE.Scene} scene
  * @param {ReturnType<import('./textures.js').createTextures>} tex
  */
+/**
+ * 庭の配置。女の子がキャッチボールで走りまわるときに避けるものと、柵の位置。
+ * createPark の中の配置もこれを使うので、見た目と当たりがずれない。
+ */
+export const PARK = {
+  fence: { z: ROOM.minZ - ROOM.wall - 2.2, length: 13, gap: 2.2, gapX: 0 },
+  bench: { x: -2.4, z: -6.8, yaw: Math.PI + 0.35 },
+  tree: { x: -1.6, z: -9.2 },
+  smallTree: { x: -6.4, z: -12.6 },
+  slide: { x: 2.35, z: -9.4, yaw: -0.52 },
+  sand: { x: 1.95, z: -7.5, r: 2.3 },
+  /**
+   * 歩くときに避ける円。tall は「ボールの通り道も塞ぐ」もの（木の幹と
+   * 滑り台）。ベンチは低いので、ボールはその上を越えていける。
+   */
+  obstacles: [
+    { x: -2.4, z: -6.8, r: 0.95, tall: false },   // ベンチ
+    { x: -1.6, z: -9.2, r: 0.75, tall: true },    // さるすべり
+    { x: -6.4, z: -12.6, r: 0.6, tall: true },    // 小さいさるすべり
+    // 滑り台は 1 つの円で囲う。階段と滑走面を別々の円にすると、あいだの
+    // 通れない隙間へ道順が入り込み、そこで行き来して動けなくなった
+    { x: 2.1, z: -9.35, r: 1.3, tall: true },
+  ],
+};
+
 export function createPark(scene, tex) {
   const group = new THREE.Group();
   group.name = 'park';
@@ -784,8 +809,8 @@ export function createPark(scene, tex) {
   group.add(terrace);
 
   // 掃き出し窓の正面を 2.2m 空けて、庭へ出る通り道にする
-  const fence = createFence(13, { gap: 2.2 });
-  fence.position.set(0, 0, ROOM.minZ - ROOM.wall - 2.2);
+  const fence = createFence(PARK.fence.length, { gap: PARK.fence.gap });
+  fence.position.set(PARK.fence.gapX, 0, PARK.fence.z);
   group.add(fence);
 
   // --- さるすべり ---------------------------------------------------------
@@ -794,27 +819,27 @@ export function createPark(scene, tex) {
   // 5m の木だと花の付く上半分が枠で切れてしまう。実物としても 4m 前後は
   // ありふれた大きさなので、そちらに合わせた。
   const tree = createCrapeMyrtle(tex, { height: 4.0, trunks: 4, seed: 19 });
-  tree.position.set(-1.6, 0, -9.2);
+  tree.position.set(PARK.tree.x, 0, PARK.tree.z);
   group.add(tree);
 
   const smallTree = createCrapeMyrtle(tex, { height: 3.2, trunks: 3, seed: 91 });
-  smallTree.position.set(-6.4, 0, -12.6);
+  smallTree.position.set(PARK.smallTree.x, 0, PARK.smallTree.z);
   smallTree.rotation.y = 1.1;
   group.add(smallTree);
 
   // --- 滑り台 -------------------------------------------------------------
   const slide = createSlide();
-  slide.position.set(2.35, 0, -9.4);
-  slide.rotation.y = -0.52;
+  slide.position.set(PARK.slide.x, 0, PARK.slide.z);
+  slide.rotation.y = PARK.slide.yaw;
   group.add(slide);
 
   // 滑り降りた先の砂場
   const sand = new THREE.Mesh(
-    new THREE.CircleGeometry(2.3, 28),
+    new THREE.CircleGeometry(PARK.sand.r, 28),
     new THREE.MeshStandardMaterial({ color: 0xcdb794, roughness: 0.98, metalness: 0 }),
   );
   sand.rotation.x = -Math.PI / 2;
-  sand.position.set(1.95, 0.012, -7.5);
+  sand.position.set(PARK.sand.x, 0.012, PARK.sand.z);
   sand.receiveShadow = true;
   group.add(sand);
 
@@ -830,9 +855,11 @@ export function createPark(scene, tex) {
     group.add(slab);
   }
 
+  // ベンチは柵の切れ目の正面から外して置く。以前は切れ目のすぐ先にあり、
+  // 庭へ出る通り道をふさいでいた
   const bench = createBench(tex);
-  bench.position.set(-0.3, 0, -6.2);
-  bench.rotation.y = Math.PI + 0.25;
+  bench.position.set(PARK.bench.x, 0, PARK.bench.z);
+  bench.rotation.y = PARK.bench.yaw;
   group.add(bench);
 
   group.add(createBackdrop(tex));

@@ -167,11 +167,22 @@ function addWindowTrim(group, frameMaterial, sillMaterial, spec) {
   }
 
   if (spec.doorway) {
-    // 引き戸を左右に寄せて開けた状態。中央が通り抜けられることが形で分かる
-    const panel = width * 0.33;
-    for (const side of [-1, 1]) {
-      box(0.04, height, 0.035, side * (width / 2 - panel), 0, 0.018, frameMaterial);
-      box(panel, 0.04, 0.035, side * (width / 2 - panel / 2), height / 2 - height * 0.30, 0.018, frameMaterial);
+    // 引き戸は 2 枚とも片側へ寄せて「全開」にしてある。
+    //
+    // 前は左右に 1 枚ずつ寄せて中央を空けていたが、縦框が左右対称に立つと
+    // 方立にしか見えず、閉じた窓と区別がつかなかった（実際「外に出られない」
+    // と言われた）。2 枚を重ねて片側に寄せ、残りを丸ごと空けると、
+    // どこが通り抜けられるのかがひと目で分かる。
+    // 鴨居（上のレール）
+    box(width + T * 2, 0.045, 0.11, 0, height / 2 - 0.0225, 0.055, frameMaterial);
+    for (const sash of spec.sashes) {
+      const w = sash.width;
+      const z = sash.z;
+      box(w, 0.055, 0.038, sash.x, height / 2 - 0.0775, z, frameMaterial);            // 上框
+      box(w, 0.075, 0.038, sash.x, -height / 2 + 0.0575, z, frameMaterial);           // 下框
+      box(0.048, height - 0.15, 0.038, sash.x - w / 2 + 0.024, -0.01, z, frameMaterial); // 縦框
+      box(0.048, height - 0.15, 0.038, sash.x + w / 2 - 0.024, -0.01, z, frameMaterial); // 縦框
+      box(w, 0.032, 0.036, sash.x, height / 2 - height * 0.30, z, frameMaterial);     // 中桟
     }
   } else {
     // 方立と無目。ガラスの割り付けがあると一気に「窓」になる
@@ -303,6 +314,19 @@ export function createRoom(scene, tex) {
   // ライティング側が面光源を置くために、開口の実座標を返す
   const front = OPENINGS.front;
   const left = OPENINGS.left;
+
+  // 掃き出し窓の引き戸。2 枚を -X 側へ寄せ、わずかにずらして重ねて置く。
+  // 残った側が実際に通り抜けられる開口で、歩ける範囲もここから決める。
+  const SASH_WIDTH = 0.82;
+  const SASH_STACK = 0.20;      // 重なった 2 枚の見えるずれ
+  const sashX = -front.width / 2 + SASH_WIDTH / 2;
+  const sashes = [
+    { x: sashX, width: SASH_WIDTH, z: 0.020 },            // 外レール
+    { x: sashX + SASH_STACK, width: SASH_WIDTH, z: 0.078 }, // 内レール
+  ];
+  const openMin = sashX + SASH_STACK + SASH_WIDTH / 2;
+  const openMax = front.width / 2;
+
   const windows = [
     {
       name: 'front',
@@ -312,6 +336,7 @@ export function createRoom(scene, tex) {
       height: front.head - front.sill,
       normal: new THREE.Vector3(0, 0, 1),
       doorway: Boolean(front.doorway),
+      sashes,
     },
     {
       name: 'left',
@@ -339,21 +364,25 @@ export function createRoom(scene, tex) {
   });
   for (const spec of windows) {
     // 掃き出し窓は左右に寄せた戸のぶんだけガラスを張る。中央は開いている
+    // 掃き出し窓は引き戸の枠の中だけにガラスを張る。戸と同じ奥行きに置かないと
+    // 枠から浮いて見えるので、レールのぶんだけ室内側へ寄せる。
     const panes = spec.doorway
-      ? [[-spec.width * 0.335, spec.width * 0.33], [spec.width * 0.335, spec.width * 0.33]]
-      : [[0, spec.width]];
+      ? spec.sashes.map((sash) => [sash.x, sash.width - 0.09, sash.z, spec.height - 0.14])
+      : [[0, spec.width, 0.02, spec.height]];
 
-    for (const [offset, paneWidth] of panes) {
+    for (const [offset, paneWidth, depth, paneHeight] of panes) {
       const glass = new THREE.Mesh(
-        new THREE.PlaneGeometry(paneWidth, spec.height),
+        new THREE.PlaneGeometry(paneWidth, paneHeight),
         glassMaterial,
       );
       glass.position.copy(spec.center);
       if (spec.axis === 'x') {
         glass.rotation.y = Math.PI / 2;
         glass.position.z -= offset;
+        glass.position.x += depth;
       } else {
         glass.position.x += offset;
+        glass.position.z += depth;
       }
       glass.renderOrder = 2;
       group.add(glass);
@@ -386,5 +415,5 @@ export function createRoom(scene, tex) {
   knob.castShadow = true;
   group.add(knob);
 
-  return { group, floor, windows, doorway: { x: front.x, width: front.width }, materials: { wallMaterial, ceilingMaterial, floorMaterial, trimMaterial } };
+  return { group, floor, windows, doorway: { x: front.x + (openMin + openMax) / 2, width: openMax - openMin, frameWidth: front.width }, materials: { wallMaterial, ceilingMaterial, floorMaterial, trimMaterial } };
 }

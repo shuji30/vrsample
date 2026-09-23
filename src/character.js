@@ -86,13 +86,18 @@ const SIT_POSE = {
   rightLowerArm: [-0.10, 1.05, 0.30],
   leftHand: [0, 0, -0.10],
   rightHand: [0, 0, 0.10],
-  // 膝は閉じ気味に。腿を水平まで上げないので、スカートの裾も上がりすぎない
-  leftUpperLeg: [-1.14, 0.04, 0.03],
-  rightUpperLeg: [-1.14, -0.04, -0.03],
-  leftLowerLeg: [1.06, 0, 0],
-  rightLowerLeg: [1.06, 0, 0],
-  leftFoot: [0.30, 0, 0],
-  rightFoot: [0.30, 0, 0],
+  // 腿は水平から 24 度の下り。ここが浅い（水平に近い）とスカートの裾が腿に
+  // 乗り上げてめくれ、深い（下げすぎ）と腿が座面クッションにめり込む。
+  // 座る位置は placeSeats がこの角度から逆算して前寄りに取るので、
+  // 膝は座面の前縁を越え、腿の下面がちょうど座面をなぞる。
+  leftUpperLeg: [-1.15, 0.04, 0.03],
+  rightUpperLeg: [-1.15, -0.04, -0.03],
+  // 脛はほぼ真下。身長 1.4m のモデルに座面 61cm のソファなので足は床に
+  // 届かない。無理に届かせようとすると腰を沈めるしかなくなる。
+  leftLowerLeg: [1.10, 0, 0],
+  rightLowerLeg: [1.10, 0, 0],
+  leftFoot: [0.20, 0, 0],
+  rightFoot: [0.20, 0, 0],
   spine: [-0.06, 0, 0],
   chest: [-0.05, 0, 0],
 };
@@ -112,12 +117,14 @@ const FINGERS = ['Index', 'Middle', 'Ring', 'Little'].flatMap((finger) =>
  * 地面を滑る。いまは歩幅と脚の長さから毎フレーム逆算している（solveLeg）。
  */
 const GAIT = {
-  arm: 0.34,        // 腕は脚と逆位相
+  arm: 0.46,        // 腕は脚と逆位相
+  elbow: 0.34,      // 前に振れた側だけ肘を曲げる。腕振りはこれが無いと棒に見える
   ankle: 0.30,      // 蹴り出し / 着地の足首
   lift: 0.30,       // 遊脚で足を持ち上げる高さ（歩幅に対する比）
   dip: 0.014,       // 接地直後に体重が乗って沈む量（m）
-  roll: 0.035,      // 腰の左右の傾き
-  twist: 0.05,      // 胸の捻り
+  roll: 0.050,      // 腰の左右の傾き（遊脚側が下がる）
+  twist: 0.075,     // 胸の捻り。骨盤と逆に回る
+  lean: 0.050,      // 歩くときの前傾
 };
 
 const TAU = Math.PI * 2;
@@ -225,7 +232,7 @@ function buildContactShadow() {
   return mesh;
 }
 
-export function createCharacter(scene, { url = CHARACTER.url, camera = null, wander = true } = {}) {
+export function createCharacter(scene, { url = CHARACTER.url, camera = null, wander = true, sit = true } = {}) {
   const group = new THREE.Group();
   group.name = 'character';
   group.position.set(ROUTE[0].x, 0, ROUTE[0].y);
@@ -254,8 +261,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   // 脚の寸法。歩幅と辻褄の合う脚の角度を逆算するのに要る
   let thighLen = 0.34;    // 腰から膝
   let shinLen = 0.34;     // 膝から足首
-  let legLength = 0.67;   // 伸ばしきらない脚長（特異点を避けて 98.5%）
-  let ankleRestY = 0.06;  // 足首の床からの高さ
+  let legLength = 0.67;   // 腰の付け根から足首までの、立ちポーズでの高さ
+  let ankleRestY = 0.06;  // 足首の床からの高さ（実測）
+  let legTopOffset = -0.05; // 腰のボーンから見た脚の付け根の高さ（負）
   let hipWidth = 0.06;    // 左右の脚の間隔（片側）
 
   // --- ふるまいの状態 -----------------------------------------------------
@@ -278,6 +286,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let elapsed = 0;        // 呼吸とまばたきの時計
   let blinkAt = 2.5;
   let blink = 0;
+  let settleSprings = 0;  // スプリングボーンを落ち着かせる残りフレーム数
 
   const ready = loader
     .loadAsync(url)
@@ -312,14 +321,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       // 正規化ボーンのローカル位置は、そのまま骨の長さになっている
       thighLen = bones.leftLowerLeg ? bones.leftLowerLeg.position.length() : thighLen;
       shinLen = bones.leftFoot ? bones.leftFoot.position.length() : shinLen;
-      // 脚は伸ばしきらない。腰の高さを脚長ちょうどに置くと、踏み出した足が
-      // 届く / 届かないの境目に乗ってしまい、前半分だけクランプされて歩容が
-      // 前後非対称になる。2% 残しておくと膝もわずかに曲がって自然に見える。
-      legLength = (thighLen + shinLen) * 0.98;
-      ankleRestY = Math.max(0.02, hipsRestY - (thighLen + shinLen));
       hipWidth = bones.leftUpperLeg ? Math.abs(bones.leftUpperLeg.position.x) : hipWidth;
-      // 歩幅は脚長の半分まで。これ以上広げると腰の沈み込みが大きくなりすぎる
-      stride = Math.min(stride, legLength * 0.5);
       placeSeats(measureThigh(vrm) * Math.sin(-SIT_POSE.leftUpperLeg[0]));
 
       // 視線でこちらを追わせる。XR 中も camera の matrixWorld は
@@ -327,6 +329,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       if (camera && vrm.lookAt) vrm.lookAt.target = camera;
 
       group.add(vrm.scene);
+      measureLegs();
       return vrm;
     })
     .catch((error) => {
@@ -334,6 +337,30 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       console.warn(`[character] ${url} を読み込めませんでした:`, error.message ?? error);
       return null;
     });
+
+  /**
+   * 脚の寸法を、立ちポーズの実体から測る。
+   *
+   * 腿と脛の長さを足したものを「腰から足首までの高さ」として使ってはいけない。
+   * 脚は真下に一直線に伸びているわけではない（付け根が外へ開いている）ので、
+   * 合計は実際の高さより 1〜2cm 長くなる。それを足首の基準にすると、歩き
+   * はじめた瞬間に靴がそのぶん床へめり込む。実際に一度これで沈めた。
+   */
+  function measureLegs() {
+    const legTop = new THREE.Vector3();
+    const ankle = new THREE.Vector3();
+    group.updateMatrixWorld(true);
+    if (!bones.leftUpperLeg || !bones.leftFoot) return;
+    bones.leftUpperLeg.getWorldPosition(legTop);
+    bones.leftFoot.getWorldPosition(ankle);
+
+    ankleRestY = ankle.y;
+    legTopOffset = legTop.y - hipsRestY;
+    // 立ちポーズの脚の伸び具合をそのまま基準にする。offset = 0 のときに
+    // 腰がちょうど元の高さに戻るので、歩いても中腰にならない
+    legLength = Math.min(legTop.y - ankle.y, thighLen + shinLen - 0.001);
+    stride = Math.min(stride, legLength * 0.5);
+  }
 
   /** 腿の長さ（腰から膝まで）を実体のボーンから測る */
   function measureThigh(model) {
@@ -383,8 +410,10 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       state = 'walk';
       return;
     }
-    // ソファが空いていて、前に座ってからしばらく経っていたら座りにいく
-    if (clock > nextSitAt && Math.random() < 0.6) {
+    // ソファが空いていて、前に座ってからしばらく経っていたら座りにいく。
+    // ?sit=off で座らせないようにもできる（座り姿勢はスカートの裾が
+    // 腿に乗り上げてしまうモデルがあるため、切れるようにしてある）
+    if (sit && clock > nextSitAt && Math.random() < 0.6) {
       planSit(SEATS[Math.floor(Math.random() * SEATS.length)]);
       return;
     }
@@ -499,7 +528,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
       // 後ろ向きに下がって腰を下ろす
       case 'sitDown': {
-        transition = Math.min(1, transition + dt / 1.6);
+        // ゆっくり座る。急に腿を上げるとスプリングボーン（スカート）が
+        // 跳ね上がって裾がめくれる
+        transition = Math.min(1, transition + dt / 2.6);
         const back = smoothstep(0, 0.75, transition);
         const before = new THREE.Vector2(group.position.x, group.position.z);
         group.position.x = lerp(seated.approach.x, seated.seat.x, back);
@@ -512,6 +543,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
         if (transition >= 1) {
           state = 'sit';
           stateUntil = clock + 12 + Math.random() * 14;
+          // 腰かけ終わったらスカートの揺れを一度落ち着かせる。遷移中に
+          // 溜まった勢いがそのまま残ると、裾が持ち上がったままになる
+          settleSprings = 2;
         }
         break;
       }
@@ -548,8 +582,11 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
   /** 腰を座面に乗せるためのルートの高さ（床より下がることもある） */
   function sitRootY() {
-    // 腰の関節は尻の面より 8cm ほど上にある
-    return seated.top + 0.08 - hipsRestY;
+    // 「脚の付け根が座面より 13cm 上」に来るようルートを置く。腰のボーンでは
+    // なく脚の付け根を基準にするのが要点で、ここを間違えると腿が座面に沈む
+    // （+0.08 を腰のボーン基準で取っていたときは、膝が座面より 7cm 下だった）。
+    // 13cm は腿の太さぶんの逃げも含んだ値。
+    return seated.top + 0.13 - hipsRestY - legTopOffset;
   }
 
   // ------------------------------------------------------------------------
@@ -613,7 +650,11 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
     const plan = footPlan(p);
     const dz = plan.offset;
-    const dy = (ankleRestY + plan.lift) - hipY;   // 足首は腰より下なので負
+    // 脚の付け根は腰のボーンより少し下にあり、腰を左右に傾けるとさらに上下する。
+    // これを無視すると、傾いたぶんだけ足が床にめり込んだり浮いたりする。
+    const roll = bones.hips ? bones.hips.rotation.z : 0;
+    const rootY = hipY + legTopOffset * Math.cos(roll) + upper.position.x * Math.sin(roll);
+    const dy = (ankleRestY + plan.lift) - rootY;
     const reach = Math.min(
       Math.max(Math.hypot(dy, dz), Math.abs(thighLen - shinLen) + 0.001),
       thighLen + shinLen - 0.001,
@@ -667,7 +708,8 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     for (const [, p] of legs) {
       const plan = footPlan(p);
       if (plan.stance < 0) continue;
-      hipY = ankleRestY + Math.sqrt(Math.max(0, legLength * legLength - plan.offset * plan.offset));
+      hipY = ankleRestY - legTopOffset
+        + Math.sqrt(Math.max(0, legLength * legLength - plan.offset * plan.offset));
       // 接地直後の沈み込み。実際の歩行でも立脚初期に膝が曲がって体重を受ける
       dip = GAIT.dip * Math.sin(Math.PI * clamp01(plan.stance / 0.38));
     }
@@ -683,11 +725,28 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
     for (const [leg, p] of legs) solveLeg(leg, p, hipY, amount);
 
-    // 腕は脚と逆位相。肩を上げずに前後に振る
+    // 腕は脚と逆位相。肩を上げずに前後に振り、前へ出た側だけ肘を曲げる。
+    // 肘が伸びたままだと腕が棒のように見え、上半身が止まって感じられる。
     if (bones.leftUpperArm) bones.leftUpperArm.rotation.x += GAIT.arm * c * amount;
     if (bones.rightUpperArm) bones.rightUpperArm.rotation.x -= GAIT.arm * c * amount;
+    if (bones.leftLowerArm) bones.leftLowerArm.rotation.y -= GAIT.elbow * Math.max(0, c) * amount;
+    if (bones.rightLowerArm) bones.rightLowerArm.rotation.y += GAIT.elbow * Math.max(0, -c) * amount;
 
+    // 体幹。骨盤と胸を逆に捻り、わずかに前傾させる。ここが完全に静止していると、
+    // 脚だけが動いて体は引きずられているように見える（「ふわふわ」の主因）。
+    if (bones.spine) {
+      bones.spine.rotation.x -= GAIT.lean * amount;
+      bones.spine.rotation.y = GAIT.twist * 0.5 * s * amount;
+    }
     if (bones.chest) bones.chest.rotation.y = -GAIT.twist * s * amount;
+
+    // 頭は水平に保つ。腰が揺れても頭が揺れないことで、体が地面を捉えている
+    // ように見える（実際の歩行でも頭の揺れは腰よりずっと小さい）
+    if (bones.neck) {
+      bones.neck.rotation.z = -GAIT.roll * s * amount * 0.8;
+      bones.neck.rotation.y = GAIT.twist * s * amount * 0.6;
+      bones.neck.rotation.x = GAIT.lean * amount * 0.7;
+    }
   }
 
   /**
@@ -771,6 +830,17 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     updateFootShadows();
     // スプリングボーン（髪・服）、視線、表情をまとめて進める
     vrm.update(dt);
+
+    // 座っているあいだはスカートの揺れを毎フレーム初期状態へ戻す。
+    //
+    // 腿をほぼ水平まで上げると、スプリングボーンだけでは裾が腿に乗り上げて
+    // めくれ上がってしまう（スカートのコライダーは立ち姿勢を前提に作られて
+    // いることがほとんど）。揺れを止めると、モデルが作られたときの「垂れた」
+    // 形に落ち着く。腿にわずかに食い込むが、めくれるよりはずっとよい。
+    if (sitAmount > 0.5 || settleSprings > 0) {
+      if (settleSprings > 0) settleSprings--;
+      vrm.springBoneManager?.reset?.();
+    }
   }
 
   return {

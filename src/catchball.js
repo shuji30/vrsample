@@ -18,8 +18,17 @@ import { createThrow } from './throwing.js';
  * リリース → フォロースルー）で、手を離す瞬間に相手の胸へ届く初速を解く。
  */
 
-/** 投げ合う距離（m）。子どもとのキャッチボールで無理のない 5m を基準にする */
-const PLAY_DISTANCE = 5.0;
+/**
+ * 投げ合う距離（m）。子どもとのキャッチボールで無理のない 4.5m から始め、
+ * ラリーが続くと 1 往復ごとに 20cm ずつ離れていく（最大 6.3m）。
+ * 取りこぼしたら最初の距離に戻る。
+ */
+const PLAY_DISTANCE = 4.5;
+const DISTANCE_STEP = 0.2;
+const DISTANCE_STEPS = 9;
+/** 女の子の送球のばらつき（5m での標準偏差、m）。距離に比例させる */
+const SCATTER_SIDE = 0.16;
+const SCATTER_HEIGHT = 0.10;
 /** 小走りの速さ（m/s）。ふだんの歩き 0.5m/s の倍ちょっと */
 const HURRY = 1.25;
 /** 庭へ出る / 位置を変えるときの歩く速さ */
@@ -48,6 +57,9 @@ const GAP = {
   max: PARK.fence.gapX + PARK.fence.gap / 2 - 0.3,
 };
 const BODY_RADIUS = 0.22;
+/** この距離までの位置直しは、相手を向いたまま寄る（m） */
+const ADJUST_RANGE = 1.6;
+const ADJUST_SPEED = 0.6;
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const angleDelta = (to, from) => {
@@ -215,7 +227,81 @@ export function createCatchGame({ character, ball, camera, scene }) {
   const holdAt = new THREE.Vector3();   // 持っている球の位置（捕った所から胸元へ寄せる）
 
   /** 捕った数・落とした数（検証用） */
-  const stats = { caught: 0, missed: 0, pickedUp: 0, tossed: 0 };
+  const stats = { caught: 0, missed: 0, fumbled: 0, pickedUp: 0, tossed: 0, rally: 0, best: 0 };
+
+  // --- ラリー ---------------------------------------------------------------
+  // 地面に落とさずに何回やりとりできたか。いま飛んでいる球を誰が投げたかを
+  // 覚えておき、相手が手で受けたら +1、地面に着いたら 0 に戻す。
+  let flight = null;          // 'girl' | 'player' | null
+  let lastHeldBy = data.heldBy ?? null;
+  const preferredDistance = () => PLAY_DISTANCE + Math.min(stats.rally, DISTANCE_STEPS) * DISTANCE_STEP;
+
+  const board = createRallyBoard();
+  scene.add(board.sprite);
+
+  function bumpRally() {
+    stats.rally++;
+    stats.best = Math.max(stats.best, stats.rally);
+    board.show(stats.rally, stats.best);
+  }
+  function breakRally() {
+    if (stats.rally > 0) board.show(0, stats.best, true);
+    stats.rally = 0;
+  }
+
+  /** 誰が投げた / 受けたかを見て、ラリーを数える */
+  function trackRally() {
+    const heldBy = data.heldBy ?? null;
+    const byPlayer = (who) => who === 'player' || who === 'desktop';
+    if (heldBy !== lastHeldBy) {
+      // プレイヤーの手から離れて飛んでいった
+      if (byPlayer(lastHeldBy) && !heldBy && data.velocity.length() > 1.5) flight = 'player';
+      // 女の子の球をプレイヤーが受けた
+      if (byPlayer(heldBy) && flight === 'girl') { bumpRally(); flight = null; }
+      lastHeldBy = heldBy;
+    }
+    // 地面に着いた（ワンバウンドも途切れたことにする）
+    if (flight && ballFree() && ball.position.y <= data.halfSize + 0.004) {
+      breakRally();
+      flight = null;
+    }
+  }
+
+  // 乱数は差し替えられるようにしておく（検証で再現できるように）
+  let random = Math.random;
+  const gauss = () => {
+    const u = Math.max(1e-9, random());
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * random());
+  };
+
+  /**
+   * 捕れる見込み。胸の高さで正面に入れた球はほぼ捕るが、速い球・高い / 低い球・
+   * 走り込みが間に合わず手だけ伸ばした球は、ときどき手からこぼす。
+   * 何でも捕れてしまうと、相手が人形のように見える。
+   */
+  function catchChance() {
+    const h = body.headHeight;
+    let p = 0.97;
+    const speed = data.velocity.length();
+    if (speed > 8) p -= (speed - 8) * 0.07;
+    const dh = Math.abs(ball.position.y - h * 0.72) / h;
+    p -= Math.max(0, dh - 0.25) * 0.8;
+    if (plan) {
+      const off = Math.hypot(plan.stand.x - body.position.x, plan.stand.y - body.position.z);
+      p -= clamp((off - 0.1) * 0.8, 0, 0.35);
+    }
+    return clamp(p, 0.25, 0.97);
+  }
+
+  /** 手に当ててこぼす。少し上に弾んで、足元へ落ちる */
+  function fumble() {
+    const v = data.velocity;
+    const side = (random() - 0.5) * 1.2;
+    v.set(-v.x * 0.15 + Math.cos(body.yaw) * side, 1.1 + random() * 0.6, -v.z * 0.15 - Math.sin(body.yaw) * side);
+    data.spin.set(random() - 0.5, random() - 0.5, random() - 0.5).multiplyScalar(30);
+    cooldown = 0.5;
+    stats.fumbled++;
+  }
 
   // 持っているあいだは、姿勢が決まった直後に手のあいだへ置く。
   // 投球中は右手のひらに付ける
@@ -248,7 +334,8 @@ export function createCatchGame({ character, ball, camera, scene }) {
     let best = null;
     let bestScore = Infinity;
     const here = body.position;
-    for (const distance of [PLAY_DISTANCE, PLAY_DISTANCE - 1, PLAY_DISTANCE + 1]) {
+    const want = preferredDistance();
+    for (const distance of [want, want - 1, want + 1]) {
       for (let i = 0; i < 32; i++) {
         const angle = (i / 32) * Math.PI * 2;
         const x = player.x + Math.sin(angle) * distance;
@@ -259,7 +346,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
         if (!lineClear(player.x, player.z, x, z)) continue;
         const facing = Math.abs(angleDelta(angle, Math.atan2(playerForward.x, playerForward.z)));
         const score = facing * 1.2 + Math.hypot(x - here.x, z - here.z) * 0.12
-          + Math.abs(distance - PLAY_DISTANCE) * 0.4;
+          + Math.abs(distance - want) * 0.4;
         if (score < bestScore) { bestScore = score; best = new THREE.Vector2(x, z); }
       }
       if (best) break;
@@ -267,15 +354,43 @@ export function createCatchGame({ character, ball, camera, scene }) {
     return best;
   }
 
+  /**
+   * 立ち位置を直すべきか。投げるたびに踏み込みで 30cm、捕るたびに前へ
+   * 出るぶんが積み重なり、放っておくと 1 往復ごとに間合いが縮んで、
+   * 20 往復でプレイヤーの目の前まで来てしまった。望む間合いから 0.5m、
+   * 決めた立ち位置から 0.6m ずれたら戻る。ラリーが続いて望む間合いが
+   * 広がったときも、これで下がる。
+   */
+  function needsSpot() {
+    const gap = Math.hypot(player.x - body.position.x, player.z - body.position.z);
+    if (gap < 2.5 || Math.abs(gap - preferredDistance()) > 0.5) return true;
+    return Boolean(spot && Math.hypot(spot.x - body.position.x, spot.y - body.position.z) > 0.6);
+  }
+
   /** プレイヤーの方を向いて立つ位置へ向かう */
   function goToSpot() {
     if (spotRetry > 0) return;
     spotRetry = 1.0;
-    spot = chooseSpot();
+    const next = chooseSpot();
     spotFor = player.clone();
-    if (!spot) { state = 'ready'; return; }
+    if (!next) { state = 'ready'; return; }
+    spot = next;
+    // 近ければ、相手を向いたまま寄る（背を向けて歩いて行って振り返るのは大げさ）
+    if (Math.hypot(spot.x - body.position.x, spot.y - body.position.z) < ADJUST_RANGE) {
+      path = [];
+      state = 'adjust';
+      return;
+    }
     path = gardenPath(new THREE.Vector2(body.position.x, body.position.z), spot);
     state = 'reposition';
+  }
+
+  /** 相手を向いたまま立ち位置へ寄る。着いたら true */
+  function adjustToSpot(dt) {
+    if (!spot) return true;
+    const faceYaw = Math.atan2(player.x - body.position.x, player.z - body.position.z);
+    if (Math.hypot(spot.x - body.position.x, spot.y - body.position.z) > ADJUST_RANGE) return true;
+    return body.stepFacing(spot, dt, ADJUST_SPEED, faceYaw);
   }
 
   /** 決めた道順を歩く。着いたら true */
@@ -377,6 +492,15 @@ export function createCatchGame({ character, ball, camera, scene }) {
    */
   function release(from) {
     const to = tmp.set(player.x, player.y - 0.35, player.z);
+    // 毎回ぴったり胸には来ない。距離に比例して左右と高さがばらつく
+    const ax = to.x - from.x;
+    const az = to.z - from.z;
+    const reach = Math.hypot(ax, az) || 1;
+    const k = reach / 5;
+    const side = gauss() * SCATTER_SIDE * k;
+    to.x += (az / reach) * side;      // 投げる向きに直角な方向へずらす
+    to.z -= (ax / reach) * side;
+    to.y += gauss() * SCATTER_HEIGHT * k;
     const dx = to.x - from.x;
     const dz = to.z - from.z;
     const distance = Math.hypot(dx, dz);
@@ -388,6 +512,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
     data.heldBy = null;
     cooldown = COOLDOWN;
     stats.tossed++;
+    flight = 'girl';
   }
 
   /** 持っていたボールをその場に置いて手を離す */
@@ -426,6 +551,9 @@ export function createCatchGame({ character, ball, camera, scene }) {
     // プレイヤーが持っていったら、こちらは手を離す（奪われた）
     if (data.heldBy === 'character' && !restParents.has(ball.parent)) data.heldBy = null;
 
+    trackRally();
+    board.update(dt, body);
+
     const ballMoved = lastBall.distanceTo(ball.position);
     const speed = data.velocity.length();
     restFor = ballFree() && speed < 0.05 && ballMoved < 1e-3 ? restFor + dt : 0;
@@ -452,6 +580,15 @@ export function createCatchGame({ character, ball, camera, scene }) {
         break;
       }
 
+      case 'adjust': {
+        if (incoming()) { beginField(); break; }
+        body.setCrouch(0.10);
+        body.setBend(0.10);
+        body.reach(readyPoint(ready), 0.55, 0.12);
+        if (adjustToSpot(dt)) state = 'ready';
+        break;
+      }
+
       case 'ready': {
         const faceYaw = Math.atan2(player.x - body.position.x, player.z - body.position.z);
         body.turnTowards(faceYaw, dt);
@@ -475,11 +612,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
         // 部屋へ戻りかけたプレイヤーを基準に選ぶと、家の壁ぎわへ寄っていく）
         if (!playerOutside) break;
         if (spotFor && Math.hypot(player.x - spotFor.x, player.z - spotFor.z) > 1.6) goToSpot();
-        const gap = Math.hypot(player.x - body.position.x, player.z - body.position.z);
-        if (gap < 2.5 || gap > 6.8) goToSpot();
-        // 拾いにいった先から、元の立ち位置へ戻る
-        // 投げるたびに踏み込んだぶん（約 30cm）前へ出るので、1m ずれたら下がる
-        else if (spot && Math.hypot(spot.x - body.position.x, spot.y - body.position.z) > 1.0) goToSpot();
+        if (needsSpot()) goToSpot();
         break;
       }
 
@@ -511,10 +644,17 @@ export function createCatchGame({ character, ball, camera, scene }) {
         body.setBend(0.12);
 
         if (ballFree() && segmentDistance3D(lastBall, ball.position, body.catchPoint) < CATCH_RADIUS) {
-          takeBall();
-          stats.caught++;
-          timer = 0;
-          state = 'hold';
+          if (random() < catchChance()) {
+            takeBall();
+            stats.caught++;
+            if (flight === 'player') bumpRally();
+            flight = null;
+            timer = 0;
+            state = 'hold';
+          } else {
+            fumble();
+            state = 'chase';
+          }
           break;
         }
         // 落ちた / 通り過ぎた
@@ -621,13 +761,21 @@ export function createCatchGame({ character, ball, camera, scene }) {
         body.setCrouch(0.06);
         body.setBend(0);
         const faceYaw = Math.atan2(player.x - body.position.x, player.z - body.position.z);
-        const facing = body.turnTowards(faceYaw, dt);
+        // 捕ったら、持ったまま相手を向いて 2〜3 歩下がり、間合いを直してから投げる。
+        // 投げるたびの踏み込みと、捕りに前へ出たぶんを、ここで取り返す
+        if (timer < dt * 1.5 && needsSpot()) {
+          spotRetry = 0;
+          const next = chooseSpot();
+          if (next) spot = next;
+        }
+        const placed = adjustToSpot(dt);
+        const facing = placed && body.turnTowards(faceYaw, dt);
         // 捕った手をそのまま胸元へ引き寄せる。いきなり胸の前へ持っていくと、
         // 伸ばしていた腕が 1 フレームで縮んで見える
         holdAt.lerp(readyPoint(ready, 0.62), Math.min(1, dt * 5));
         body.reach(holdAt, 1, 0.07);
         // 胸の前で持って、相手のほうを向いてから投げる
-        if (timer > 1.2 && facing && playerOutside) {
+        if (timer > 1.2 && placed && facing && playerOutside) {
           throwing = createThrow(body, player, { onRelease: release });
           state = 'throw';
         }
@@ -646,6 +794,8 @@ export function createCatchGame({ character, ball, camera, scene }) {
           throwing = null;
           timer = 0;
           state = 'ready';
+          // 投げ終わったら、球が相手へ飛んでいるうちに立ち位置へ戻る
+          if (needsSpot()) goToSpot();
         }
         break;
       }
@@ -688,12 +838,105 @@ export function createCatchGame({ character, ball, camera, scene }) {
     state = 'field';
   }
 
+  /**
+   * プレイヤーの送球の手助け。女の子のほうへ投げたと分かる球だけ、向きを
+   * 相手へ寄せる。strength 1 は PC 用で、届く初速まで解き直す（マウスでは
+   * 強さを加減できないため）。VR は 0.5 で、向きと高さを半分寄せるだけにして、
+   * 横の速さ（＝届くまでの時間）は腕の振りのまま残す。
+   */
+  function assistThrow(from, velocity, strength = 0.5) {
+    if (state === 'off' || state === 'goIn' || !body.loaded) return velocity;
+    const tx = body.position.x - from.x;
+    const tz = body.position.z - from.z;
+    const d = Math.hypot(tx, tz);
+    const h = Math.hypot(velocity.x, velocity.z);
+    if (d < 1 || h < 1) return velocity;
+    const want = Math.atan2(tx, tz);
+    const have = Math.atan2(velocity.x, velocity.z);
+    const off = angleDelta(want, have);
+    if (Math.abs(off) > (strength >= 1 ? 0.45 : 0.3)) return velocity;
+    if (strength >= 1) {
+      const t = clamp(0.4 + d * 0.085, 0.5, 1.0);
+      const toY = body.headHeight * 0.72;
+      velocity.set(tx / t, (toY - from.y - 0.5 * GRAVITY * t * t) / t, tz / t);
+      return velocity;
+    }
+    const yaw = have + off * strength;
+    velocity.x = Math.sin(yaw) * h;
+    velocity.z = Math.cos(yaw) * h;
+    // 高さも同じだけ寄せる。横の速さはそのまま（届く時間は腕の振りで決まる）で、
+    // その時間に相手の胸の高さへ来る縦の速さへ半分近づける。VR の振りは
+    // 上下の角度がばらつきやすく、膝下へ落ちたり頭上を越えたりしがち
+    const t = d / h;
+    if (t > 0.35 && t < 1.8) {
+      const need = (body.headHeight * 0.72 - from.y - 0.5 * GRAVITY * t * t) / t;
+      velocity.y += (need - velocity.y) * strength;
+    }
+    return velocity;
+  }
+
   return {
     update,
+    assistThrow,
     get state() { return state; },
     get plan() { return plan; },
     stats,
+    /** 検証用：乱数を差し替える */
+    setRandom(fn) { random = fn; },
     /** 検証用 */
     predictFlight: (p, v) => predictFlight(p, v, data.drag ?? 0.02, data.halfSize),
+  };
+}
+
+/**
+ * ラリー回数の看板。女の子の頭の上に出て、数秒で消える。
+ * VR でも読めるよう、DOM ではなくシーンの中のスプライトにする。
+ */
+function createRallyBoard() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 192;
+  const ctx = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(1.0, 0.375, 1);   // 6m 先でも読める大きさ（VR で視角 9 度ほど）
+  sprite.visible = false;
+  sprite.renderOrder = 3;
+  let showFor = 0;
+
+  function draw(rally, best, broke) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(20, 24, 32, 0.62)';
+    const r = 40;
+    ctx.beginPath();
+    ctx.roundRect(8, 8, canvas.width - 16, canvas.height - 16, r);
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = broke ? '#ffd6a0' : '#ffffff';
+    ctx.font = 'bold 84px sans-serif';
+    ctx.fillText(broke ? 'おしい！' : `ラリー ${rally}`, canvas.width / 2, 78);
+    ctx.fillStyle = '#b9d7ff';
+    ctx.font = 'bold 44px sans-serif';
+    ctx.fillText(`ベスト ${best}`, canvas.width / 2, 148);
+    texture.needsUpdate = true;
+  }
+
+  return {
+    sprite,
+    show(rally, best, broke = false) {
+      draw(rally, best, broke);
+      showFor = 2.6;
+      sprite.visible = true;
+    },
+    update(dt, body) {
+      if (!sprite.visible) return;
+      showFor -= dt;
+      if (showFor <= 0) { sprite.visible = false; return; }
+      material.opacity = Math.min(1, showFor / 0.5);
+      sprite.position.set(body.position.x, body.headHeight + 0.5, body.position.z);
+    },
   };
 }

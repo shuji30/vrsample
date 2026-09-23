@@ -1300,6 +1300,24 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     },
     get driven() { return driver !== null; },
     stepTowards(point, dt, speed) { return stepTowards(point, dt, speed); },
+    /**
+     * 体の向き（faceYaw）を保ったまま point へ寄る。後ろへ下がるときは位相を
+     * 逆に回すので、足は後ろ向きに運ばれる（座るときの下がり方と同じ）。
+     * 短い距離の位置直し用。着いたら true
+     */
+    stepFacing(point, dt, speed, faceYaw) {
+      turnTowards(faceYaw, dt);
+      const dx = point.x - group.position.x;
+      const dz = point.y - group.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d < 0.03) { advanceGait(0, dt, 0); return true; }
+      const moved = Math.min(speed * dt, d);
+      group.position.x += (dx / d) * moved;
+      group.position.z += (dz / d) * moved;
+      const along = (dx * Math.sin(yaw) + dz * Math.cos(yaw)) / d;
+      advanceGait(along >= 0 ? moved : -moved, dt, 1);
+      return d - moved < 0.03;
+    },
     turnTowards(angle, dt) {
       const turned = turnTowards(angle, dt);
       advanceGait(Math.abs(turned) * 0.2, dt, Math.abs(turned) > 1e-3 ? 0.5 : 0);

@@ -66,6 +66,17 @@ Pimax は PC に繋いで使うヘッドセットなので、Quest のように�
   常用はしないこと）。
 - `chrome://gpu` で WebGL / ANGLE が有効か確認する。
 
+**「There is already an active, immersive XRSession」と出るとき**は、そのブラウザで
+すでに VR セッションが開いています。別のタブ / ウィンドウで同じページ（や他の
+WebXR サイト）を開いていないか確認し、そちらで VR を終了してください。VR 中に
+リロードしたあとにも起きることがあり、その場合はブラウザを開き直すと戻ります。
+
+> ちなみに three.js の `VRButton` は `requestSession` が返るまで内部の
+> `currentSession` が null のままなので、**返事を待たずに ENTER VR をもう一度押すと
+> 自分で 2 本目のセッションを要求して**この状態になります。`src/main.js` で
+> 二度押しを握りつぶし、失敗も拾って画面に出すようにしてあります（`VRButton` 側に
+> `catch` が無く、そのままだと未処理の Promise 拒否として出るだけなので）。
+
 ### Parallel Projections は ON にしなくてよい
 
 Pimax は左右のディスプレイが内向きに傾いています（canted display）。three.js の

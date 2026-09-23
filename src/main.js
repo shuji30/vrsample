@@ -83,7 +83,38 @@ window.addEventListener('keydown', (event) => {
 });
 
 // 「ENTER VR」ボタン（WebXR 非対応ならその旨を表示してくれる）
-document.body.appendChild(VRButton.createButton(renderer));
+const vrButton = VRButton.createButton(renderer);
+document.body.appendChild(vrButton);
+
+// 二度押しよけ。VRButton は requestSession が返るまで currentSession が null の
+// ままなので、返事を待たずにもう一度押すとセッションを 2 本要求してしまい
+// 「There is already an active, immersive XRSession」で落ちる。しかも
+// VRButton 側に catch が無いので、未処理の Promise 拒否として表に出る。
+let requestingSession = false;
+vrButton.addEventListener('click', (event) => {
+  if (renderer.xr.isPresenting) return;   // 終了のクリックはそのまま通す
+  if (requestingSession) {
+    // VRButton 自身のハンドラより先に握りつぶす（capture で聞いている）
+    event.stopImmediatePropagation();
+    event.preventDefault();
+    return;
+  }
+  requestingSession = true;
+  // ランタイムが無反応のまま返ってこないこともあるので、保険で戻す
+  setTimeout(() => { requestingSession = false; }, 10000);
+}, true);
+
+// requestSession の失敗を拾って、何が起きたのかを画面に出す
+window.addEventListener('unhandledrejection', (event) => {
+  const message = String(event.reason?.message ?? event.reason ?? '');
+  if (!/XRSession|requestSession|immersive/i.test(message)) return;
+  requestingSession = false;
+  statusEl.textContent = /already an active/i.test(message)
+    ? 'VR セッションがすでに開いています。別のタブやウィンドウでこのページを開いていないか確認し、'
+      + 'そちらで VR を終了する（またはブラウザを開き直す）と入れるようになります。'
+    : `VR を開始できませんでした: ${message}`;
+  event.preventDefault();
+});
 
 renderer.xr.addEventListener('sessionstart', () => {
   document.body.classList.add('xr-presenting');

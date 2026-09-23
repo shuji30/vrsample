@@ -4,6 +4,7 @@ import { createWorld } from './world.js';
 import { createPlayer } from './controllers.js';
 import { createDesktopControls } from './desktop.js';
 import { createDebugPanel } from './debug.js';
+import { createMusic } from './music.js';
 
 const statusEl = document.getElementById('status');
 const perfEl = document.getElementById('perf');
@@ -267,9 +268,17 @@ async function start() {
   const debugPanel = createDebugPanel(renderer, player);
   debugPanel.setVisible(params.has('debug'));
 
+  // BGM。?bgm=off で最初から切る、?bgm=0.3 のように数字なら音量。M キーでオン / オフ
+  const bgmParam = params.get('bgm');
+  const music = createMusic({
+    enabled: bgmParam !== 'off',
+    volume: bgmParam && !Number.isNaN(Number(bgmParam)) ? Math.min(1, Number(bgmParam)) : 0.35,
+  });
+
   window.addEventListener('keydown', (event) => {
     if (event.key === 'd' || event.key === 'D') debugPanel.toggle();
     if (event.key === 'r' || event.key === 'R') world.resetProps();
+    if (event.key === 'm' || event.key === 'M') music.toggle();
   });
 
   // VR 中の実測。ヘッドセットを被っている間は画面の文字が読めないので、
@@ -280,6 +289,7 @@ async function start() {
 
   renderer.xr.addEventListener('sessionstart', () => {
     requestingSession = false;
+    music.unlock();   // ENTER VR を押した操作の続きなので、ここで鳴らし始められる
     document.body.classList.add('xr-presenting');
     player.reset(); // VR に入るときはリグを原点に戻す
     player.player.position.set(0, 0, 0.9);
@@ -321,6 +331,8 @@ async function start() {
       player.update(dt);
       desktop.update(dt);
       world.update(dt);
+      // 女の子がしゃべっているあいだは BGM を下げる
+      music.update(dt, { ducked: Boolean(world.voice?.speaking) });
       debugPanel.update(elapsed);
       updatePerf(elapsed);
 
@@ -331,7 +343,7 @@ async function start() {
     }
   });
 
-  Object.assign(window.__vrsample, { world, player, desktop, debugPanel });
+  Object.assign(window.__vrsample, { world, player, desktop, debugPanel, music });
 
   // 実測表示（?perf / ?debug）
   const showPerf = params.has('perf') || params.has('debug');

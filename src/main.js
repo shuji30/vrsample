@@ -318,7 +318,7 @@ async function start() {
       }
 
       player.update(dt);
-      desktop.update();
+      desktop.update(dt);
       world.update(dt);
       debugPanel.update(elapsed);
       updatePerf(elapsed);

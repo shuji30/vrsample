@@ -662,8 +662,10 @@ export function createFurniture(scene, tex, onSelectTheme) {
     label: '野球ボール',
     home: ballHome,
     halfSize: BALL_RADIUS,
-    // 革のボールなので小物より弾む
+    // 革のボールなので小物より弾み、よく転がり、空気抵抗は小さい
     restitution: 0.55,
+    rolls: true,
+    drag: 0.006,
     velocity: new THREE.Vector3(),
     spin: new THREE.Vector3(),
     held: false,

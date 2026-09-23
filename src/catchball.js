@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { ROOM } from './room.js';
 import { PARK } from './park.js';
+import { createThrow } from './throwing.js';
 
 /**
  * 庭でのキャッチボール（女の子の側）。
@@ -13,8 +14,8 @@ import { PARK } from './park.js';
  * 体の動かし方（歩く・しゃがむ・腕を伸ばす）は character.js の body に任せ、
  * ここは「どこへ行って何をするか」だけを決める。
  *
- * 投げ返しは段階 4 で振りかぶりの動きを付けるまでの仮のもので、
- * 両手で持ったまま下からふわっと放るだけ。
+ * 投げ返しは throwing.js の投球モーション（振りかぶり → 踏み込み →
+ * リリース → フォロースルー）で、手を離す瞬間に相手の胸へ届く初速を解く。
  */
 
 /** 投げ合う距離（m）。子どもとのキャッチボールで無理のない 5m を基準にする */
@@ -34,8 +35,13 @@ const GRAVITY = -9.8;
 const OUTSIDE_Z = ROOM.minZ - ROOM.wall - 0.25;   // これより外なら庭にいる
 const INSIDE_Z = ROOM.minZ + 0.1;
 
-/** 女の子が動ける庭の範囲。家の壁と庭の縁から少し離す */
+/** 待つ場所を選ぶ範囲。家の壁と庭の縁から離して、投げ合う余裕を残す */
 const PLAY_AREA = { minX: -5.4, maxX: 5.4, minZ: -12.4, maxZ: OUTSIDE_Z - 0.35 };
+/**
+ * 歩ける範囲。庭の縁（world.js の GARDEN）ぎりぎりまで。待つ場所の範囲と
+ * 共用していたときは、縁へ転がった球の 50cm 手前で止まって拾えなかった
+ */
+const MOVE_AREA = { minX: -5.75, maxX: 5.75, minZ: -12.75, maxZ: OUTSIDE_Z - 0.35 };
 /** 柵の切れ目（通り抜けられる x の範囲） */
 const GAP = {
   min: PARK.fence.gapX - PARK.fence.gap / 2 + 0.3,
@@ -92,8 +98,8 @@ function segmentDistance3D(a, b, c) {
 
 /** 点を動ける範囲に入れ、障害物の外へ押し出す */
 function settle(point, fromZ = point.y) {
-  point.x = clamp(point.x, PLAY_AREA.minX, PLAY_AREA.maxX);
-  point.y = clamp(point.y, PLAY_AREA.minZ, PLAY_AREA.maxZ);
+  point.x = clamp(point.x, MOVE_AREA.minX, MOVE_AREA.maxX);
+  point.y = clamp(point.y, MOVE_AREA.minZ, MOVE_AREA.maxZ);
   for (const o of PARK.obstacles) {
     const dx = point.x - o.x;
     const dz = point.y - o.z;
@@ -143,8 +149,13 @@ function gardenPath(from, to) {
   for (let i = 0; i < points.length - 1 && inserted < 4; i++) {
     const a = points[i];
     const b = points[i + 1];
+    const last = i === points.length - 2;
     for (const o of PARK.obstacles) {
       const r = o.r + BODY_RADIUS + 0.1;
+      // 行き先そのものが障害物に寄り添っている（木の根元の球を拾う）ときは、
+      // 最後の区間でその障害物をよけない。よけると、余白の内側にある行き先へ
+      // いつまでも入れず、まわりを回り続ける
+      if (last && Math.hypot(b.x - o.x, b.y - o.z) < r + 0.05) continue;
       const hit = segmentDistance2D(a.x, a.y, b.x, b.y, o.x, o.z);
       if (hit.distance >= r) continue;
       let nx = hit.x - o.x;
@@ -192,6 +203,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
   let planAge = 0;
   let replan = 0;            // 拾いにいく道順を引き直すまで
   let spotRetry = 0;         // 立ち位置を選び直すまでの待ち（毎フレーム探さない）
+  let throwing = null;       // 投球中のモーション
   let giveUp = 0;            // 届かない球を前に立っている時間
   const ignored = new THREE.Vector3(1e6, 0, 0);   // あきらめた球の位置
   const lastBall = new THREE.Vector3().copy(ball.position);
@@ -205,10 +217,13 @@ export function createCatchGame({ character, ball, camera, scene }) {
   /** 捕った数・落とした数（検証用） */
   const stats = { caught: 0, missed: 0, pickedUp: 0, tossed: 0 };
 
-  // 持っているあいだは、姿勢が決まった直後に手のあいだへ置く
+  // 持っているあいだは、姿勢が決まった直後に手のあいだへ置く。
+  // 投球中は右手のひらに付ける
+  const palm = new THREE.Vector3();
   body.onPosed = () => {
     if (data.heldBy !== 'character') return;
-    ball.position.copy(body.catchPoint);
+    if (throwing) ball.position.copy(body.palm('right', palm));
+    else ball.position.copy(body.catchPoint);
   };
 
   function readPlayer() {
@@ -357,13 +372,10 @@ export function createCatchGame({ character, ball, camera, scene }) {
   }
 
   /**
-   * 仮の投げ返し（段階 4 で振りかぶりの動きに置き換える）。
-   * プレイヤーの胸へ、距離に応じた山なりで届く初速を解いて放る。
+   * 手を離す。プレイヤーの胸へ、距離に応じた山なりで届く初速を解いて放る。
+   * 空気抵抗は 5m で 1.5% ほどしか効かないので、解くときは無視している。
    */
-  function tossBack() {
-    const from = body.catchPoint.clone();
-    from.x += Math.sin(body.yaw) * 0.08;
-    from.z += Math.cos(body.yaw) * 0.08;
+  function release(from) {
     const to = tmp.set(player.x, player.y - 0.35, player.z);
     const dx = to.x - from.x;
     const dz = to.z - from.z;
@@ -387,6 +399,8 @@ export function createCatchGame({ character, ball, camera, scene }) {
   }
 
   function startGoingIn() {
+    throwing?.cancel();
+    throwing = null;
     dropBall();
     body.reach(null);
     body.setCrouch(0);
@@ -464,7 +478,8 @@ export function createCatchGame({ character, ball, camera, scene }) {
         const gap = Math.hypot(player.x - body.position.x, player.z - body.position.z);
         if (gap < 2.5 || gap > 6.8) goToSpot();
         // 拾いにいった先から、元の立ち位置へ戻る
-        else if (spot && Math.hypot(spot.x - body.position.x, spot.y - body.position.z) > 1.8) goToSpot();
+        // 投げるたびに踏み込んだぶん（約 30cm）前へ出るので、1m ずれたら下がる
+        else if (spot && Math.hypot(spot.x - body.position.x, spot.y - body.position.z) > 1.0) goToSpot();
         break;
       }
 
@@ -551,9 +566,14 @@ export function createCatchGame({ character, ball, camera, scene }) {
         const dx = target2.x - body.position.x;
         const dz = target2.y - body.position.z;
         const d = Math.hypot(dx, dz);
+        let approach = false;
         if (d > stopAt + 0.02) {
           target2.set(body.position.x + dx * (1 - stopAt / d), body.position.z + dz * (1 - stopAt / d));
           settle(target2, body.position.z);
+          // 障害物の縁へ押し出されて、もうこれ以上は近づけないなら着いたことにする
+          approach = Math.hypot(target2.x - body.position.x, target2.y - body.position.z) > 0.05;
+        }
+        if (approach) {
           // 滑り台や木の向こうへ転がったら回り込む。まっすぐ向かうと障害物に
           // 押し戻され続けて、2 つの円のあいだに挟まって動けなくなる
           replan -= dt;
@@ -606,9 +626,24 @@ export function createCatchGame({ character, ball, camera, scene }) {
         // 伸ばしていた腕が 1 フレームで縮んで見える
         holdAt.lerp(readyPoint(ready, 0.62), Math.min(1, dt * 5));
         body.reach(holdAt, 1, 0.07);
-        // 胸の前で持って、相手のほうを向いてから返す
-        if (timer > 1.5 && facing && playerOutside) {
-          tossBack();
+        // 胸の前で持って、相手のほうを向いてから投げる
+        if (timer > 1.2 && facing && playerOutside) {
+          throwing = createThrow(body, player, { onRelease: release });
+          state = 'throw';
+        }
+        break;
+      }
+
+      case 'throw': {
+        body.setCrouch(0);
+        body.setBend(0);
+        throwing.update(dt);
+        if (!throwing.released && data.heldBy !== 'character') {
+          // 投げる前に奪われた
+          throwing.cancel();
+        }
+        if (throwing.done) {
+          throwing = null;
           timer = 0;
           state = 'ready';
         }
@@ -629,7 +664,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
     // 障害物と柵は歩いていてもすり抜けない
     // （動ける範囲の縁より家側、つまり掃き出し窓を出入りしているあいだは触らない。
     // 押し戻すと窓を出た瞬間に 30cm 跳ぶ）
-    if (state !== 'off' && state !== 'goIn' && body.position.z < PLAY_AREA.maxZ) {
+    if (state !== 'off' && state !== 'goIn' && body.position.z < MOVE_AREA.maxZ) {
       const p = new THREE.Vector2(body.position.x, body.position.z);
       settle(p, lastZ);
       body.position.x = p.x;

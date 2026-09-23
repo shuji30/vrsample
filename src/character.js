@@ -323,7 +323,19 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let armSpread = 0.08;                     // 手首どうしの間隔の半分
   const catchPoint = new THREE.Vector3();  // 両手のあいだの点。毎フレーム更新
   let onPosed = null;
-  let focus = false;                        // 止まっているボールでも目で追う                       // 姿勢が決まったあとに呼ぶ（持ったボールを手に付ける）
+  let focus = false;                        // 止まっているボールでも目で追う
+  /**
+   * 投球の姿勢（throwing.js が毎フレーム入れる）。null なら何もしない。
+   * { weight, hipsYaw, chestYaw, bend, hipShift, hipDrop,
+   *   left: {forward, lift}, right: {forward, lift} }
+   */
+  let throwPose = null;
+  /** 片手ずつの目標。投球中は両手で 1 点ではなく、左右が別々に動く */
+  const hands = {
+    left: { target: new THREE.Vector3(), amount: 0, pole: null },
+    right: { target: new THREE.Vector3(), amount: 0, pole: null },
+    active: false,
+  };                       // 姿勢が決まったあとに呼ぶ（持ったボールを手に付ける）
 
   // --- 視線 ---------------------------------------------------------------
   let watched = null;      // 投げられたら目で追うもの（野球ボール）
@@ -779,7 +791,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
    * 腰から足首までの距離 d が分かれば、余弦定理で膝の角度が出る。膝は
    * 前へ突き出るので、腿は腰-足首を結ぶ線より α だけ前に倒す。
    */
-  function solveLeg(leg, p, hipY, amount, { forward = 0, pitch = 0 } = {}) {
+  function solveLeg(leg, p, hipY, amount, { forward = 0, pitch = 0, lift = 0 } = {}) {
     const upper = bones[`${leg}UpperLeg`];
     const lower = bones[`${leg}LowerLeg`];
     const foot = bones[`${leg}Foot`];
@@ -791,7 +803,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     // これを無視すると、傾いたぶんだけ足が床にめり込んだり浮いたりする。
     const roll = bones.hips ? bones.hips.rotation.z : 0;
     const rootY = hipY + legTopOffset * Math.cos(roll) + upper.position.x * Math.sin(roll);
-    const dy = (ankleRestY + plan.lift) - rootY;
+    const dy = (ankleRestY + plan.lift + lift) - rootY;
     const reach = Math.min(
       Math.max(Math.hypot(dy, dz), Math.abs(thighLen - shinLen) + 0.001),
       thighLen + shinLen - 0.001,
@@ -1077,6 +1089,48 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     }
   }
 
+  /**
+   * 投球の体幹と脚。throwing.js が決めた値をそのまま骨に入れる。
+   *
+   * 捻りは腰・背骨・胸に分ける（腰だけで回すと、脚ごと回って足が滑る）。
+   * 脚は「体の正面方向に何 m 踏み出すか」で受け取り、腰を捻っているぶんは
+   * cos で割り引いて腰の向きの中で解く。横ずれ（sin 側）は無視している。
+   * 捻りは 0.35rad 程度なので、踏み出し 0.3m に対して 10cm 以内に収まる。
+   */
+  function applyThrow() {
+    const p = throwPose;
+    if (!p || p.weight < 0.001 || !bones.hips) return;
+    const w = p.weight * (1 - sitAmount);
+
+    bones.hips.rotation.y += p.hipsYaw * w;
+    if (bones.spine) {
+      bones.spine.rotation.y += p.chestYaw * 0.45 * w;
+      bones.spine.rotation.x += p.bend * 0.55 * w;
+    }
+    if (bones.chest) {
+      bones.chest.rotation.y += p.chestYaw * 0.55 * w;
+      bones.chest.rotation.x += p.bend * 0.45 * w;
+    }
+    // 顔は投げる相手へ向けたまま。体を捻ったぶん首で戻す
+    if (bones.neck) {
+      bones.neck.rotation.y -= (p.hipsYaw + p.chestYaw) * 0.6 * w;
+      bones.neck.rotation.x -= p.bend * 0.4 * w;
+    }
+    if (bones.head) bones.head.rotation.y -= (p.hipsYaw + p.chestYaw) * 0.3 * w;
+
+    const hipY = hipsRestY - p.hipDrop;
+    bones.hips.position.y += (hipY - bones.hips.position.y) * w;
+    bones.hips.position.z = hipsRestZ + p.hipShift * w;
+    const c = Math.cos(p.hipsYaw * w);
+    for (const side of ['left', 'right']) {
+      const foot = p[side];
+      solveLeg(side, Math.PI / 2, bones.hips.position.y, w, {
+        forward: (foot.forward - p.hipShift) * c,
+        lift: foot.lift,
+      });
+    }
+  }
+
   // --- 腕の逆運動学 ---------------------------------------------------------
   const _pq = new THREE.Quaternion();
   const _bq = new THREE.Quaternion();
@@ -1112,7 +1166,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
    * 肘は下・外・少し後ろへ逃がす。ボールを受ける腕は肘が体の脇へ下がって
    * いるので、そちらに曲がるように極（pole）を置く。
    */
-  function solveArm(side, target, amount) {
+  function solveArm(side, target, amount, poleOverride = null) {
     const upper = bones[`${side}UpperArm`];
     const lower = bones[`${side}LowerArm`];
     const hand = bones[`${side}Hand`];
@@ -1129,7 +1183,8 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
     // モデルは +Z を向き、左手が +X にある。これをいまの体の向きへ回す
     const outward = side === 'left' ? 1 : -1;
-    _pole.set(Math.cos(yaw) * outward * 0.55 - Math.sin(yaw) * 0.25, -1, -Math.sin(yaw) * outward * 0.55 - Math.cos(yaw) * 0.25);
+    if (poleOverride) _pole.copy(poleOverride);
+    else _pole.set(Math.cos(yaw) * outward * 0.55 - Math.sin(yaw) * 0.25, -1, -Math.sin(yaw) * outward * 0.55 - Math.cos(yaw) * 0.25);
     _pole.addScaledVector(_dir, -_pole.dot(_dir));
     if (_pole.lengthSq() < 1e-6) _pole.set(0, -1, 0);
     _pole.normalize();
@@ -1148,6 +1203,13 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
    * 両手のひらのあいだの点。手首から前腕の向きに 7cm 先が手のひらの中心。
    * 手首どうしの中点だと、下へ手を伸ばしたときに 7cm 届かない計算になる。
    */
+  function palmOf(side, out) {
+    bones[`${side}Hand`].getWorldPosition(_a);
+    bones[`${side}LowerArm`].getWorldPosition(_b);
+    _b.subVectors(_a, _b).normalize();
+    return out.copy(_a).addScaledVector(_b, 0.07);
+  }
+
   function palmCenter(out) {
     out.set(0, 0, 0);
     for (const side of ['left', 'right']) {
@@ -1161,6 +1223,15 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
   /** 両手を armTarget へ伸ばし、両手のあいだの点（catchPoint）を出す */
   function applyArms(dt) {
+    if (hands.active) {
+      group.updateMatrixWorld(true);
+      for (const side of ['left', 'right']) {
+        const hand = hands[side];
+        if (hand.amount > 0.001) solveArm(side, hand.target, hand.amount, hand.pole);
+      }
+      palmCenter(catchPoint);
+      return;
+    }
     armAmount += (armWant - armAmount) * Math.min(1, dt * 7);
     if (armAmount < 0.002 || !bones.leftHand || !bones.rightHand) {
       armAmount = Math.max(0, armAmount);
@@ -1248,6 +1319,26 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     set onPosed(fn) { onPosed = fn; },
     /** 止まっているボールでも見続ける（拾いにいくとき） */
     setFocus(value) { focus = Boolean(value); },
+    /** 投球の体幹・脚の姿勢。null で解除 */
+    setThrowPose(pose) { throwPose = pose; },
+    /**
+     * 左右の手を別々の点へ伸ばす（投球用）。null を渡すと両手で 1 点へ伸ばす
+     * ふだんの reach に戻る。pole は肘を逃がす向き（ワールド）
+     */
+    reachHands(spec) {
+      if (!spec) { hands.active = false; return; }
+      hands.active = true;
+      for (const side of ['left', 'right']) {
+        const src = spec[side];
+        hands[side].amount = src ? clamp01(src.amount ?? 1) : 0;
+        if (src?.target) hands[side].target.copy(src.target);
+        hands[side].pole = src?.pole ?? null;
+      }
+    },
+    /** 片手の手のひらの中心（ワールド） */
+    palm(side, out = new THREE.Vector3()) { return palmOf(side, out); },
+    /** 体の向きを直接決める（投球中に体の正面を相手へ固定する） */
+    setYaw(value) { yaw = value; group.rotation.y = yaw; },
     /** 部屋から掃き出し窓までの道順（経路の節点をたどってソファの前から出る） */
     exitRoute() {
       const size = ROUTE.length;
@@ -1278,6 +1369,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     applyIdle(dt);
     applyGaze(dt);
     applyCrouch(dt);
+    applyThrow();
     applyArms(dt);
     onPosed?.();
     updateFootShadows();

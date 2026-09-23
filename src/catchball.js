@@ -57,9 +57,12 @@ const GAP = {
   max: PARK.fence.gapX + PARK.fence.gap / 2 - 0.3,
 };
 const BODY_RADIUS = 0.22;
-/** この距離までの位置直しは、相手を向いたまま寄る（m） */
-const ADJUST_RANGE = 1.6;
-const ADJUST_SPEED = 0.6;
+/**
+ * この距離までの位置直しは、相手を向いたまま寄る（m）。背を向けて歩いて
+ * 行って振り返ると、こちらが捕った瞬間に横を向いているように見える
+ */
+const ADJUST_RANGE = 2.6;
+const ADJUST_SPEED = 0.7;
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const angleDelta = (to, from) => {
@@ -225,6 +228,21 @@ export function createCatchGame({ character, ball, camera, scene }) {
   const ready = new THREE.Vector3();
   const target2 = new THREE.Vector2();
   const holdAt = new THREE.Vector3();   // 持っている球の位置（捕った所から胸元へ寄せる）
+  // holdAt は体から見た位置（前 z・上 y・左 x）で持つ。ワールドのまま持つと、
+  // 持ったまま下がったり向きを変えたりしたときに手が取り残される
+  const holdLocal = new THREE.Vector3();
+  const toLocal = (p, out) => {
+    const dx = p.x - body.position.x;
+    const dz = p.z - body.position.z;
+    const c = Math.cos(body.yaw);
+    const sn = Math.sin(body.yaw);
+    return out.set(dx * c - dz * sn, p.y, dx * sn + dz * c);
+  };
+  const toWorldPoint = (l, out) => {
+    const c = Math.cos(body.yaw);
+    const sn = Math.sin(body.yaw);
+    return out.set(body.position.x + l.x * c + l.z * sn, l.y, body.position.z - l.x * sn + l.z * c);
+  };
 
   /** 捕った数・落とした数（検証用） */
   const stats = { caught: 0, missed: 0, fumbled: 0, pickedUp: 0, tossed: 0, rally: 0, best: 0 };
@@ -233,6 +251,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
   // 地面に落とさずに何回やりとりできたか。いま飛んでいる球を誰が投げたかを
   // 覚えておき、相手が手で受けたら +1、地面に着いたら 0 に戻す。
   let flight = null;          // 'girl' | 'player' | null
+  let cheerFor = 0;           // 受けてもらって喜んでいるあいだ（立ち位置を直さない）
   let lastHeldBy = data.heldBy ?? null;
   const preferredDistance = () => PLAY_DISTANCE + Math.min(stats.rally, DISTANCE_STEPS) * DISTANCE_STEP;
 
@@ -256,8 +275,13 @@ export function createCatchGame({ character, ball, camera, scene }) {
     if (heldBy !== lastHeldBy) {
       // プレイヤーの手から離れて飛んでいった
       if (byPlayer(lastHeldBy) && !heldBy && data.velocity.length() > 1.5) flight = 'player';
-      // 女の子の球をプレイヤーが受けた
-      if (byPlayer(heldBy) && flight === 'girl') { bumpRally(); flight = null; }
+      // 女の子の球をプレイヤーが受けた。こちらを向いたまま、にっこり笑う
+      if (byPlayer(heldBy) && flight === 'girl') {
+        bumpRally();
+        flight = null;
+        body.smile(2.4, 1);
+        cheerFor = 1.8;
+      }
       lastHeldBy = heldBy;
     }
     // 地面に着いた（ワンバウンドも途切れたことにする）
@@ -482,7 +506,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
     data.velocity.set(0, 0, 0);
     data.spin.set(0, 0, 0);
     ball.position.copy(body.catchPoint);
-    holdAt.copy(body.catchPoint);
+    toLocal(body.catchPoint, holdLocal);
     body.setFocus(false);
   }
 
@@ -553,6 +577,8 @@ export function createCatchGame({ character, ball, camera, scene }) {
 
     trackRally();
     board.update(dt, body);
+    cheerFor = Math.max(0, cheerFor - dt);
+    body.setHandOpen(0);   // 指は field のときだけ開く
 
     const ballMoved = lastBall.distanceTo(ball.position);
     const speed = data.velocity.length();
@@ -563,6 +589,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
         if (outsideFor < 0.8) break;
         if (!body.free) { body.requestStand(); break; }
         body.drive({ get state() { return state; } });
+        body.setAttend(true);
         const route = body.exitRoute();
         const terrace = route[route.length - 1];
         spot = chooseSpot();
@@ -574,6 +601,11 @@ export function createCatchGame({ character, ball, camera, scene }) {
 
       case 'goOut':
       case 'reposition': {
+        // 歩くときは腕を下ろす。構えの目標点を残したまま振り返って歩くと、
+        // 背中側に残った目標点へ両腕が引っぱられた（歩きながら腕を後ろへ突き出す）
+        body.reach(null);
+        body.setCrouch(0);
+        body.setBend(0);
         const outside = body.position.z < OUTSIDE_Z;
         if (outside && incoming()) { beginField(); break; }
         if (followPath(dt, state === 'goOut' && !outside ? 0.6 : WALK)) state = 'ready';
@@ -611,8 +643,8 @@ export function createCatchGame({ character, ball, camera, scene }) {
         // プレイヤーが大きく動いたら立ち位置を取り直す（庭にいるときだけ。
         // 部屋へ戻りかけたプレイヤーを基準に選ぶと、家の壁ぎわへ寄っていく）
         if (!playerOutside) break;
-        if (spotFor && Math.hypot(player.x - spotFor.x, player.z - spotFor.z) > 1.6) goToSpot();
-        if (needsSpot()) goToSpot();
+        if (flight !== 'girl' && cheerFor <= 0 && spotFor && Math.hypot(player.x - spotFor.x, player.z - spotFor.z) > 1.6) goToSpot();
+        if (flight !== 'girl' && cheerFor <= 0 && needsSpot()) goToSpot();
         break;
       }
 
@@ -638,8 +670,13 @@ export function createCatchGame({ character, ball, camera, scene }) {
         // 近づいてきたら手を球へ。遠いうちは構えのまま
         const reachIn = clamp(1 - (dist - 0.4) / 1.6, 0, 1);
         const handsAt = readyPoint(ready);
-        if (ballFree()) handsAt.lerp(ball.position, reachIn * 0.85);
+        // 手を寄せるのは、球が体の前にあるときだけ。横や後ろへ抜けていく球へ
+        // 手を伸ばすと、腕が体の後ろへねじれる
+        const ahead = (ball.position.x - body.position.x) * Math.sin(body.yaw)
+          + (ball.position.z - body.position.z) * Math.cos(body.yaw);
+        if (ballFree() && ahead > 0) handsAt.lerp(ball.position, reachIn * 0.85);
         body.reach(handsAt, 0.55 + reachIn * 0.45, 0.075 + (1 - reachIn) * 0.05);
+        body.setHandOpen(reachIn * 0.9);   // 受ける手は開く
         body.setCrouch(0.14);
         body.setBend(0.12);
 
@@ -647,6 +684,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
           if (random() < catchChance()) {
             takeBall();
             stats.caught++;
+            body.smile(1.0, 0.5);
             if (flight === 'player') bumpRally();
             flight = null;
             timer = 0;
@@ -772,8 +810,8 @@ export function createCatchGame({ character, ball, camera, scene }) {
         const facing = placed && body.turnTowards(faceYaw, dt);
         // 捕った手をそのまま胸元へ引き寄せる。いきなり胸の前へ持っていくと、
         // 伸ばしていた腕が 1 フレームで縮んで見える
-        holdAt.lerp(readyPoint(ready, 0.62), Math.min(1, dt * 5));
-        body.reach(holdAt, 1, 0.07);
+        holdLocal.lerp(toLocal(readyPoint(ready, 0.62), tmp), Math.min(1, dt * 5));
+        body.reach(toWorldPoint(holdLocal, holdAt), 1, 0.07);
         // 胸の前で持って、相手のほうを向いてから投げる
         if (timer > 1.2 && placed && facing && playerOutside) {
           throwing = createThrow(body, player, { onRelease: release });
@@ -794,8 +832,8 @@ export function createCatchGame({ character, ball, camera, scene }) {
           throwing = null;
           timer = 0;
           state = 'ready';
-          // 投げ終わったら、球が相手へ飛んでいるうちに立ち位置へ戻る
-          if (needsSpot()) goToSpot();
+          // 立ち位置は、相手が捕るのを見届けてから直す（ready で）。飛んでいる
+          // うちに動くと、相手が捕った瞬間に横を向いて歩いていることがある
         }
         break;
       }

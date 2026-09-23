@@ -15,6 +15,16 @@ const BOB_SWAY = 0.008;         // m 左右の振れ（VR では大きくする�
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+// 投げる。手の速度は 1 フレームの差分だとぶれが大きく、離す瞬間には手が
+// もう減速しはじめていることが多い（実際に投げると弱く、方向もばらつく）。
+// 直近のフレームを覚えておき、いちばん速かった 3 フレームの平均を使う。
+const VELOCITY_FRAMES = 12;   // 90Hz で 0.13 秒。振り切ってから離しても、いちばん速いところが残る
+/** 手に重さが無いぶん、実際の腕の振りより弱く感じる。そのぶんを少し足す */
+const THROW_GAIN = 1.15;
+const THROW_MAX = 14;
+/** 飛んできたボールがこの距離より手の近くを通れば、その手に収まる（m） */
+const HAND_CATCH_RADIUS = 0.2;
+
 /**
  * コントローラーの見た目（簡単なグリップ形状）。
  * 外部アセットを読み込まずに済むよう自前で組み立てる。
@@ -179,6 +189,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
         if (other.userData.held === object) other.userData.held = null;
       }
       object.userData.held = true;
+      object.userData.heldBy = 'player';
       object.userData.velocity.set(0, 0, 0);
       object.userData.spin.set(0, 0, 0);
       setHover(object, false);
@@ -198,9 +209,13 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
 
     scene.attach(object); // シーン直下に戻す（ワールド変換は保持）
     object.userData.held = false;
+    object.userData.heldBy = null;
 
-    // 手の移動量からそのまま投げる速度にする
-    object.userData.velocity.copy(controller.userData.velocity).clampLength(0, 12);
+    // 手の振りの速さから投げる速度にする。相手（女の子）のほうへ投げたときは
+    // 向きを少しだけ相手へ寄せる（catchball.js の assistThrow）
+    throwVelocity(controller, object.userData.velocity);
+    sinceRelease = 0;
+    world.catchGame?.assistThrow(object.position, object.userData.velocity, 0.5);
     object.userData.spin.set(
       (Math.random() - 0.5) * 6,
       (Math.random() - 0.5) * 6,
@@ -216,6 +231,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     controller.userData.hovered = null;
     controller.userData.handedness = null;
     controller.userData.velocity = new THREE.Vector3();
+    controller.userData.history = [];
     controller.userData.prevWorldPos = new THREE.Vector3();
     controller.userData.hasPrevPos = false;
     controller.userData.snapLatched = false;
@@ -232,6 +248,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     controller.addEventListener('disconnected', () => {
       controller.visible = false;
       controller.userData.hasPrevPos = false;
+      controller.userData.history.length = 0;
     });
 
     bob.add(controller);
@@ -410,6 +427,58 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     bob.position.x = Math.sin(phase * 0.5) * BOB_SWAY * gait * bobScale;
   }
 
+  /** 直近のフレームのうち、いちばん速かった 3 フレームの平均速度 */
+  function throwVelocity(controller, out) {
+    const history = controller.userData.history;
+    out.set(0, 0, 0);
+    if (history.length === 0) return out.copy(controller.userData.velocity);
+    let best = 0;
+    let bestSpeed = -1;
+    for (let i = 0; i + 2 < history.length; i++) {
+      const speed = history[i].length() + history[i + 1].length() + history[i + 2].length();
+      if (speed > bestSpeed) { bestSpeed = speed; best = i; }
+    }
+    const count = Math.min(3, history.length - best);
+    for (let i = 0; i < count; i++) out.add(history[best + i]);
+    return out.divideScalar(count).multiplyScalar(THROW_GAIN).clampLength(0, THROW_MAX);
+  }
+
+  /**
+   * 飛んできたボールを手で受ける。トリガーを引いていなくても、手の近くを
+   * 通れば手に収まる。投げるときは、トリガーを引いて離す。
+   * 1 フレームで 15cm 以上進む速い球もあるので、前のフレームからの線分で見る。
+   */
+  const lastBall = new THREE.Vector3();
+  let sinceRelease = Infinity;   // 投げてからの秒数。離した直後の球を受け直さない
+  const segment = new THREE.Line3();
+  const closest = new THREE.Vector3();
+  function handCatch(dt) {
+    sinceRelease += dt;
+    const ball = world.ball;
+    if (!ball || !renderer.xr.isPresenting) { if (ball) lastBall.copy(ball.position); return; }
+    const data = ball.userData;
+    if (!data.held && data.velocity.length() > 1.5 && sinceRelease > 0.5) {
+      segment.set(lastBall, ball.position);
+      for (const controller of controllers) {
+        if (controller.userData.held || !controller.visible) continue;
+        controller.getWorldPosition(worldPos);
+        segment.closestPointToPoint(worldPos, true, closest);
+        if (closest.distanceTo(worldPos) > HAND_CATCH_RADIUS) continue;
+        // 手へ向かってくる球だけ（手の横をすり抜けていった球を後ろから拾わない）
+        if (closest.subVectors(worldPos, lastBall).dot(data.velocity) <= 0) continue;
+        data.held = true;
+        data.heldBy = 'player';
+        data.velocity.set(0, 0, 0);
+        data.spin.set(0, 0, 0);
+        controller.attach(ball);
+        ball.position.set(0, 0, -0.12);
+        controller.userData.held = ball;
+        break;
+      }
+    }
+    lastBall.copy(ball.position);
+  }
+
   // --- 毎フレーム更新 -----------------------------------------------------
   const worldPos = new THREE.Vector3();
 
@@ -426,14 +495,18 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
       groundShadow.material.opacity = 0.8 + sink * 0.35;
     }
 
+    handCatch(dt);
+
     for (const controller of controllers) {
       // 手の速度を記録（投げる速度に使う）
       controller.getWorldPosition(worldPos);
       if (controller.userData.hasPrevPos && dt > 0) {
         controller.userData.velocity
           .subVectors(worldPos, controller.userData.prevWorldPos)
-          .divideScalar(dt)
-          .multiplyScalar(0.85); // 少し減衰させて暴発を防ぐ
+          .divideScalar(dt);
+        const history = controller.userData.history;
+        history.push(controller.userData.velocity.clone());
+        if (history.length > VELOCITY_FRAMES) history.shift();
       }
       controller.userData.prevWorldPos.copy(worldPos);
       controller.userData.hasPrevPos = true;
@@ -470,6 +543,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
       if (controller.userData.held) {
         scene.attach(controller.userData.held);
         controller.userData.held.userData.held = false;
+        controller.userData.held.userData.heldBy = null;
         controller.userData.held.userData.velocity.set(0, 0, 0);
         controller.userData.held = null;
       }

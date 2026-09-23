@@ -160,6 +160,8 @@ export function createDesktopControls(renderer, camera, world) {
     ball.position.copy(camera.localToWorld(HOLD.clone()));
     // 見ている向きへ山なりに。水平を見て投げると 5m 先で胸の高さに届く
     ball.userData.velocity.copy(look).multiplyScalar(7.0).add(new THREE.Vector3(0, 2.2, 0));
+    // 女の子のほうを見て投げたら、届く球筋に直す（マウスでは強さを加減できない）
+    world.catchGame?.assistThrow(ball.position, ball.userData.velocity, 1);
     ball.userData.spin.set(-look.z, 0, look.x).multiplyScalar(40);
   }
 

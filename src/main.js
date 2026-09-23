@@ -7,6 +7,7 @@ import { createDebugPanel } from './debug.js';
 
 const statusEl = document.getElementById('status');
 const perfEl = document.getElementById('perf');
+const creditEl = document.getElementById('credit');
 const params = new URLSearchParams(location.search);
 
 /**
@@ -140,8 +141,22 @@ async function start() {
     textureQuality: Number(params.get('quality')) || (safeMode ? 0.25 : 1),
     shadowMapSize: Number(params.get('shadow')) || 2048,
     environment: !safeMode,
+    // キャラクターの視線に追わせる。?vrm= で別の VRM に差し替えられる
+    camera,
+    characterUrl: params.get('vrm') ?? undefined,
+    wander: params.get('walk') !== 'off',
   });
   const buildMs = Math.round(performance.now() - started);
+
+  // VRM のライセンスはたいてい作者表示（creditNotation）を求めるので、
+  // 読み込めたら名前と作者を出しておく。
+  world.character?.ready?.then((vrm) => {
+    if (!vrm || !creditEl) return;
+    const meta = vrm.meta;
+    const name = meta.name ?? meta.title ?? 'VRM';
+    const authors = meta.authors?.join(', ') ?? meta.author ?? '';
+    creditEl.textContent = `キャラクター: ${name}${authors ? ` / ${authors}` : ''}`;
+  }).catch(() => {});
 
   report('操作の準備中…');
   const player = createPlayer(renderer, camera, scene, world, {

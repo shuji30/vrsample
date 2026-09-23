@@ -17,6 +17,7 @@ const MIME = {
   '.jpg': 'image/jpeg',
   '.svg': 'image/svg+xml',
   '.glb': 'model/gltf-binary',
+  '.vrm': 'model/gltf-binary',
   '.ico': 'image/x-icon',
 };
 

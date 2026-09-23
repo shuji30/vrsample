@@ -4,6 +4,7 @@ import { createRoom, ROOM } from './room.js';
 import { createPark } from './park.js';
 import { createFurniture, TABLE } from './furniture.js';
 import { createLighting } from './lighting.js';
+import { createCharacter } from './character.js';
 import { DEFAULT_THEME } from './themes.js';
 
 /**
@@ -25,8 +26,18 @@ const FRICTION = 0.78;
  * @param {object} [options]
  * @param {number} [options.textureQuality] 1 = 既定。軽くしたいときは 0.5
  * @param {number} [options.shadowMapSize]
+ * @param {THREE.Camera} [options.camera] キャラクターに視線で追わせる相手
+ * @param {string} [options.characterUrl] VRM ファイルの URL
+ * @param {boolean} [options.wander] キャラクターを歩きまわらせるか
  */
-export function createWorld(renderer, scene, { textureQuality = 1, shadowMapSize = 4096, environment = true } = {}) {
+export function createWorld(renderer, scene, {
+  textureQuality = 1,
+  shadowMapSize = 4096,
+  environment = true,
+  camera = null,
+  characterUrl,
+  wander = true,
+} = {}) {
   const tex = createTextures(renderer, { quality: textureQuality });
 
   const room = createRoom(scene, tex);
@@ -50,6 +61,9 @@ export function createWorld(renderer, scene, { textureQuality = 1, shadowMapSize
   lighting.setTheme(DEFAULT_THEME);
   lighting.refreshEnvironment();
 
+  // キャラクターは読み込みが非同期なので、部屋の生成はここで待たない
+  const character = createCharacter(scene, { url: characterUrl, camera, wander });
+
   const { grabbables, buttons } = furniture;
 
   // プレイヤーが壁を抜けないようにするための内寸
@@ -72,6 +86,8 @@ export function createWorld(renderer, scene, { textureQuality = 1, shadowMapSize
   }
 
   function update(dt) {
+    character.update(dt);
+
     // --- スイッチの押し込み ------------------------------------------------
     for (const button of buttons) {
       const data = button.userData;
@@ -150,6 +166,7 @@ export function createWorld(renderer, scene, { textureQuality = 1, shadowMapSize
     park,
     furniture,
     lighting,
+    character,
     update,
     setTheme: (key) => lighting.setTheme(key),
     getTheme: () => lighting.getTheme(),

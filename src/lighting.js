@@ -31,7 +31,7 @@ const ENV_PROBE = new THREE.Vector3(0, 1.5, -1.0);
  * @param {object} options.skyUniforms 天球シェーダーの uniforms
  * @param {number} [options.shadowMapSize]
  */
-export function createLighting(renderer, scene, { windows, lampSockets, skyUniforms, shadowMapSize = 4096 }) {
+export function createLighting(renderer, scene, { windows, lampSockets, skyUniforms, shadowMapSize = 4096, environment = true }) {
   RectAreaLightUniformsLib.init();
 
   // --- 太陽 ---------------------------------------------------------------
@@ -112,6 +112,9 @@ export function createLighting(renderer, scene, { windows, lampSockets, skyUnifo
    * 照明を変えたら呼ぶ。数フレームぶんのコストがかかるので毎フレームは不可。
    */
   function refreshEnvironment() {
+    // 切り分け用に丸ごと飛ばせるようにしておく（?safe）。
+    // ここはキューブマップを 6 面ぶん描くので、環境によっては最初に疑う場所。
+    if (!environment) return;
     const previous = envTarget;
     // 天球まで入るように far を大きく取る
     envTarget = pmrem.fromScene(scene, 0, 0.1, 1000, { size: ENV_SIZE, position: ENV_PROBE });

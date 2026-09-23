@@ -54,3 +54,22 @@ canvas { display: block; }
 
 /* VR セッション中はオーバーレイを隠す */
 body.xr-presenting #overlay { opacity: 0; }
+
+/* 実測表示（?perf / ?debug）。等幅で 2 台の PC を見比べるためのもの */
+#perf {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(10, 16, 34, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9fb3d9;
+  white-space: pre;
+  pointer-events: none;
+}
+
+body.xr-presenting #perf { opacity: 0; }

@@ -33,6 +33,7 @@ const FRICTION = 0.78;
 export function createWorld(renderer, scene, {
   textureQuality = 1,
   shadowMapSize = 4096,
+  environment = true,
   camera = null,
   characterUrl,
   wander = true,
@@ -52,6 +53,7 @@ export function createWorld(renderer, scene, {
     lampSockets: furniture.lampSockets,
     skyUniforms: park.skyUniforms,
     shadowMapSize,
+    environment,
   });
 
   // 初期テーマ。環境マップは「部屋を撮って部屋に返す」ので、

@@ -221,6 +221,7 @@ async function start() {
     characterUrl: params.get('vrm') ?? undefined,
     wander: params.get('walk') !== 'off',
     sit: params.get('sit') !== 'off',
+    voice: params.get('voice') !== 'off',
   });
   const buildMs = Math.round(performance.now() - started);
 

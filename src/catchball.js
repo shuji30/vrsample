@@ -239,7 +239,7 @@ function lineClear(ax, az, bx, bz) {
  * @param {THREE.Camera} options.camera プレイヤーの頭（XR 中も WebXRManager が更新する）
  * @param {THREE.Scene} options.scene
  */
-export function createCatchGame({ character, ball, camera, scene }) {
+export function createCatchGame({ character, ball, camera, scene, voice = null }) {
   const body = character.body;
   const data = ball.userData;
 
@@ -301,6 +301,10 @@ export function createCatchGame({ character, ball, camera, scene }) {
     stats.best = Math.max(stats.best, stats.rally);
     board.show(stats.rally, stats.best);
   }
+  /** 5 の倍数のラリーなら、その回数を言う。言ったら true */
+  function sayRally() {
+    return stats.rally >= 5 && stats.rally % 5 === 0 && Boolean(voice?.say('rally', { n: stats.rally }));
+  }
   function breakRally() {
     if (stats.rally > 0) board.show(0, stats.best, true);
     stats.rally = 0;
@@ -319,11 +323,14 @@ export function createCatchGame({ character, ball, camera, scene }) {
         flight = null;
         body.smile(2.4, 1);
         cheerFor = 1.8;
+        if (!sayRally()) voice?.say('playerCatch');
       }
       lastHeldBy = heldBy;
     }
     // 地面に着いた（ワンバウンドも途切れたことにする）
     if (flight && ballFree() && ball.position.y <= data.halfSize + 0.004) {
+      // 自分の送球をプレイヤーが受けられなかった
+      if (flight === 'girl') voice?.say('playerMiss', { chance: 0.7 });
       breakRally();
       flight = null;
     }
@@ -602,6 +609,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
   }
 
   function startGoingIn() {
+    voice?.say('goIn');
     throwing?.cancel();
     throwing = null;
     dropBall();
@@ -644,6 +652,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
         if (!body.free) { body.requestStand(); break; }
         body.drive({ get state() { return state; } });
         body.setAttend(true);
+        voice?.say('invite');
         const route = body.exitRoute();
         const terrace = route[route.length - 1];
         spot = chooseSpot();
@@ -743,12 +752,16 @@ export function createCatchGame({ character, ball, camera, scene }) {
             takeBall();
             stats.caught++;
             body.smile(1.0, 0.5);
-            if (flight === 'player') bumpRally();
+            if (flight === 'player') {
+              bumpRally();
+              if (!sayRally()) voice?.say('herCatch', { chance: 0.5 });
+            }
             flight = null;
             timer = 0;
             state = 'hold';
           } else {
             fumble();
+            voice?.say('fumble');
             state = 'chase';
           }
           break;
@@ -792,6 +805,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
           giveUp += dt;
           body.stand(dt);
           if (giveUp > 2.5) {
+            voice?.say('unreachable');
             ignored.copy(ball.position);
             body.setFocus(false);
             state = 'ready';

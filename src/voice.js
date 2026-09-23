@@ -1,0 +1,293 @@
+import * as THREE from 'three';
+
+/**
+ * 女の子の声。
+ *
+ * ブラウザの音声合成（Web Speech API）で短い台詞をしゃべらせ、台詞の仮名の
+ * 母音に合わせて口を動かす（VRM の aa / ih / ou / ee / oh）。頭の横に吹き出しも
+ * 出すので、日本語の声が入っていない端末や、音を出せない場面でも伝わる。
+ *
+ * 声の種類は端末しだい。Windows の Chrome なら Nanami / Haruka、Mac なら Kyoko
+ * などが入っている。女性の声を名前で優先し、高めの声にする。
+ *
+ * 台詞は仮名で書く。口の形を母音から決めるためで、漢字だと読みが分からない。
+ */
+
+/** 場面ごとの台詞。同じ場面でも毎回違うものを選ぶ */
+export const LINES = {
+  playerCatch: ['ナイスキャッチ！', 'じょうず！', 'やったね！', 'いいかんじ！', 'ばっちり！'],
+  herCatch: ['とった！', 'ナイスボール！', 'よしっ！', 'えいっ！'],
+  fumble: ['あっ、ごめん！', 'わわっ！', 'おとしちゃった…'],
+  playerMiss: ['ドンマイ！', 'ごめん、それちゃった！', 'あれれ？'],
+  rally: ['{n}かい、つづいたね！', '{n}かい！すごいすごい！', 'れんぞく{n}かい！'],
+  unreachable: ['とどかないよー', 'あそこにはいっちゃった…', 'とってきてー'],
+  invite: ['キャッチボールしよ！', 'おそとであそぼ！', 'まってー、いまいくね！'],
+  goIn: ['またあそぼうね！', 'たのしかったー！'],
+  wake: ['ふぁ…よくねた', 'んー…ねちゃってた', 'おはよ…'],
+  greet: ['なあに？', 'どうしたの？', 'えへへ', 'いいてんきだね'],
+};
+
+// --- 仮名 → 母音 -----------------------------------------------------------
+
+const VOWEL_ROWS = {
+  a: 'あかさたなはまやらわがざだばぱぁゃ',
+  i: 'いきしちにひみりぎじぢびぴぃ',
+  u: 'うくすつぬふむゆるぐずづぶぷぅゅゔ',
+  e: 'えけせてねへめれげぜでべぺぇ',
+  o: 'おこそとのほもよろをごぞどぼぽぉょ',
+};
+const VOWEL_OF = new Map();
+for (const [v, chars] of Object.entries(VOWEL_ROWS)) for (const c of chars) VOWEL_OF.set(c, v);
+const SMALL = new Set(['ゃ', 'ゅ', 'ょ', 'ぁ', 'ぃ', 'ぅ', 'ぇ', 'ぉ']);
+
+/** カタカナをひらがなへ */
+const toHiragana = (c) => {
+  const code = c.charCodeAt(0);
+  return code >= 0x30a1 && code <= 0x30f6 ? String.fromCharCode(code - 0x60) : c;
+};
+
+/** 口の形の重み。o や a は大きく、i や e は横に開く */
+const SHAPE = {
+  a: { aa: 0.85 },
+  i: { ih: 0.7 },
+  u: { ou: 0.7 },
+  e: { ee: 0.7 },
+  o: { oh: 0.8 },
+  n: { ou: 0.18 },
+};
+
+/**
+ * 台詞を拍（モーラ）の並びにする。1 拍 = { shape, length（拍の数） }。
+ * 小さい ゃゅょ は前の拍にくっつけて母音だけ差し替える。ー は前の母音を伸ばす。
+ * っ と句読点は口を閉じた間にする。
+ */
+export function toMorae(text) {
+  const morae = [];
+  for (const raw of text) {
+    const c = toHiragana(raw);
+    if (SMALL.has(c) && morae.length) {
+      const last = morae[morae.length - 1];
+      if (last.vowel) last.vowel = VOWEL_OF.get(c) ?? last.vowel;
+      continue;
+    }
+    if (c === 'ー' && morae.length) { morae[morae.length - 1].length += 1; continue; }
+    if (c === 'ん') { morae.push({ vowel: 'n', length: 1 }); continue; }
+    if (c === 'っ') { morae.push({ vowel: null, length: 0.7 }); continue; }
+    if ('、。！？!?…,. 　'.includes(c)) { morae.push({ vowel: null, length: c === '…' ? 2.2 : 1.4 }); continue; }
+    const v = VOWEL_OF.get(c);
+    // 漢字や記号は読みが分からないので「あ」の口にしておく
+    morae.push({ vowel: v ?? 'a', length: 1 });
+  }
+  return morae;
+}
+
+// --- 吹き出し ----------------------------------------------------------------
+
+function createBubble() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 160;
+  const ctx = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(0.72, 0.225, 1);
+  sprite.visible = false;
+  sprite.renderOrder = 4;
+
+  function draw(text) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.strokeStyle = 'rgba(40, 40, 60, 0.35)';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(10, 10, canvas.width - 20, canvas.height - 44, 40);
+    ctx.fill();
+    ctx.stroke();
+    // しっぽ（左下、女の子の顔のほうへ）
+    ctx.beginPath();
+    ctx.moveTo(70, canvas.height - 36);
+    ctx.lineTo(44, canvas.height - 8);
+    ctx.lineTo(110, canvas.height - 36);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#34303a';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    let size = 60;
+    ctx.font = `bold ${size}px sans-serif`;
+    while (ctx.measureText(text).width > canvas.width - 70 && size > 30) {
+      size -= 4;
+      ctx.font = `bold ${size}px sans-serif`;
+    }
+    ctx.fillText(text, canvas.width / 2, (canvas.height - 34) / 2 + 6);
+    texture.needsUpdate = true;
+  }
+
+  return { sprite, material, draw };
+}
+
+// --- 本体 --------------------------------------------------------------------
+
+/** 1 拍の長さ（秒）。日本語の会話は 1 秒に 7〜8 拍 */
+const MORA = 0.13;
+/** 同じ場面の台詞を続けて言わない間（秒） */
+const COOLDOWN = { default: 3, greet: 25, herCatch: 6, rally: 1 };
+
+/**
+ * @param {object} options
+ * @param {ReturnType<import('./character.js').createCharacter>} options.character
+ * @param {THREE.Scene} options.scene
+ * @param {THREE.Camera} options.camera
+ * @param {boolean} [options.muted] 声を出さない（吹き出しと口だけ）
+ */
+export function createVoice({ character, scene, camera, muted = false }) {
+  const body = character.body;
+  const synth = !muted && typeof window !== 'undefined' ? window.speechSynthesis ?? null : null;
+  const bubble = createBubble();
+  scene.add(bubble.sprite);
+
+  let voice = null;
+  function pickVoice() {
+    if (!synth) return;
+    const ja = synth.getVoices().filter((v) => /^ja/i.test(v.lang));
+    // 女性の声を名前で優先する（Windows / Mac / Android / Chrome の代表的なもの）
+    const female = /nanami|haruka|ayumi|sayaka|kyoko|o-ren|mizuki|female|女性|google/i;
+    voice = ja.find((v) => female.test(v.name)) ?? ja[0] ?? null;
+  }
+  pickVoice();
+  synth?.addEventListener?.('voiceschanged', pickVoice);
+
+  let morae = [];
+  let moraIndex = 0;
+  let moraTime = 0;
+  let speaking = false;
+  let showFor = 0;
+  let clock = 0;
+  const lastSaid = {};        // 場面ごとに最後にしゃべった時刻
+  const lastLine = {};        // 場面ごとに最後の台詞（続けて同じのを選ばない）
+  let prevState = '';
+  let greetNear = false;
+
+  /** 台詞を 1 つ言う。text はそのまま、kind は LINES から選ぶ */
+  function speak(text) {
+    morae = toMorae(text);
+    moraIndex = 0;
+    moraTime = 0;
+    speaking = true;
+    const duration = morae.reduce((t, m) => t + m.length * MORA, 0);
+    showFor = duration + 1.4;
+    bubble.draw(text);
+    bubble.sprite.visible = true;
+
+    if (synth && typeof SpeechSynthesisUtterance !== 'undefined') {
+      try {
+        synth.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'ja-JP';
+        // 声の指定だけ失敗しても（型の合わない声オブジェクトなど）、発声は続ける
+        try { if (voice) u.voice = voice; } catch { /* 既定の声でしゃべる */ }
+        u.pitch = 1.5;   // 子どもの声らしく高め
+        u.rate = 1.05;
+        u.volume = 1;
+        synth.speak(u);
+      } catch {
+        // 音声合成が使えなくても、吹き出しと口の動きは続ける
+      }
+    }
+  }
+
+  /**
+   * 場面に合った台詞を言う。直前に同じ場面でしゃべっていたら言わない。
+   * @param {keyof typeof LINES} kind
+   * @param {{ n?: number, chance?: number }} [options]
+   */
+  function say(kind, { n, chance = 1 } = {}) {
+    const lines = LINES[kind];
+    if (!lines || Math.random() > chance) return false;
+    const wait = COOLDOWN[kind] ?? COOLDOWN.default;
+    if (clock - (lastSaid[kind] ?? -Infinity) < wait) return false;
+    // ほかの台詞をしゃべっている最中は、大事でない台詞は割り込まない
+    if (speaking && (kind === 'greet' || kind === 'herCatch')) return false;
+    const choices = lines.length > 1 ? lines.filter((l) => l !== lastLine[kind]) : lines;
+    const line = choices[Math.floor(Math.random() * choices.length)];
+    lastLine[kind] = line;
+    lastSaid[kind] = clock;
+    speak(line.replace('{n}', String(n ?? '')));
+    return true;
+  }
+
+  const head = new THREE.Vector3();
+  const eye = new THREE.Vector3();
+
+  function update(dt) {
+    clock += dt;
+
+    // 口の動き。拍ごとに母音の形を入れ、拍の終わりで少し閉じる
+    if (speaking) {
+      moraTime += dt;
+      while (moraIndex < morae.length && moraTime >= morae[moraIndex].length * MORA) {
+        moraTime -= morae[moraIndex].length * MORA;
+        moraIndex++;
+      }
+      if (moraIndex >= morae.length) {
+        speaking = false;
+        body.setMouth(null);
+      } else {
+        const m = morae[moraIndex];
+        const u = moraTime / (m.length * MORA);
+        // 1 拍のなかで開いて閉じる。伸ばす音（ー）は開いたまま
+        const open = m.length > 1 ? Math.min(1, u * 4) : Math.sin(Math.PI * Math.min(1, u * 1.15));
+        const shape = m.vowel ? SHAPE[m.vowel] : null;
+        body.setMouth(shape ? Object.fromEntries(Object.entries(shape).map(([k, v]) => [k, v * (0.35 + 0.65 * open)])) : null);
+      }
+    }
+
+    // 吹き出しは顔の横、少し上
+    if (bubble.sprite.visible) {
+      showFor -= dt;
+      if (showFor <= 0) {
+        bubble.sprite.visible = false;
+      } else {
+        bubble.material.opacity = Math.min(1, showFor / 0.4);
+        const vrm = character.vrm;
+        const node = vrm?.humanoid?.getNormalizedBoneNode('head');
+        if (node) node.getWorldPosition(head);
+        else head.copy(body.position).setY(body.headHeight);
+        // 見ている人から見て右上に出す（顔に重ならないように）。遠いと読めないので、
+        // 1.8m より遠ければ距離に合わせて大きくする（最大 2.2 倍）。ずらす量も
+        // 同じだけ広げて、頭の上のラリー表示と重ならないようにする
+        camera.getWorldPosition(eye);
+        const dx = head.x - eye.x;
+        const dz = head.z - eye.z;
+        const d = Math.hypot(dx, dz) || 1;
+        const k = Math.min(2.2, Math.max(1, d / 1.8));
+        bubble.sprite.scale.set(0.72 * k, 0.225 * k, 1);
+        const side = 0.38 * k;
+        bubble.sprite.position.set(head.x - (dz / d) * side, head.y + 0.05 + 0.1 * k, head.z + (dx / d) * side);
+      }
+    }
+
+    // 室内の場面：昼寝から起きたとき、近くへ来て顔を見たとき
+    const state = character.state;
+    if (prevState === 'getUp' && state === 'sit') say('wake');
+    prevState = state;
+    if (!body.driven && body.loaded && state !== 'nap' && state !== 'lieDown') {
+      camera.getWorldPosition(eye);
+      const near = Math.hypot(eye.x - body.position.x, eye.z - body.position.z) < 1.3;
+      if (near && !greetNear) say('greet', { chance: 0.7 });
+      greetNear = near;
+    }
+  }
+
+  return {
+    say,
+    speak,
+    update,
+    get speaking() { return speaking; },
+    /** 検証用 */
+    get voiceName() { return voice?.name ?? null; },
+    bubble: bubble.sprite,
+  };
+}

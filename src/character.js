@@ -60,6 +60,17 @@ const ROUTE = [
   [0.75, -0.25],    // 6 ソファの前
 ].map(([x, z]) => new THREE.Vector2(x, z));
 
+/**
+ * 掃き出し窓から庭へ出る道順。経路のソファの前（節点 6）から、テーブルと
+ * 椅子の右脇を抜けて、引き戸の開いている側（x = -0.4..1.4）を通る。
+ */
+const EXIT_NODE = 6;
+const EXIT_PATH = [
+  [1.35, -1.4],
+  [1.15, -3.25],
+  [0.9, -4.5],
+].map(([x, z]) => new THREE.Vector2(x, z));
+
 /** 立ちポーズ。T ポーズからの差分。肩から先を段階的に曲げると自然に見える */
 const STAND_POSE = {
   leftUpperArm: [0, 0, -1.18],
@@ -130,6 +141,13 @@ const GAIT = {
 };
 
 const TAU = Math.PI * 2;
+/** crouch = 1 のときに腰を落とす量（m）。ボールを拾うときに膝を曲げるぶん */
+const CROUCH_DEPTH = 0.42;
+/** bend = 1 のときに上体を前へ倒す角度（rad）。背骨と胸で分ける */
+const BEND_ANGLE = 1.4;
+/** しゃがんだときに腰を後ろへ引く量（m）。上体を倒したぶんの釣り合いを取る */
+const CROUCH_BACK = 0.12;
+const IDENTITY = new THREE.Quaternion();
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -258,6 +276,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   /** @type {Record<string, THREE.Object3D>} */
   let bones = {};
   let hipsRestY = 0;      // 腰のボーンの、足元からの高さ
+  let hipsRestZ = 0;
   let stride = CHARACTER.stride;
 
   // 脚の寸法。歩幅と辻褄の合う脚の角度を逆算するのに要る
@@ -289,6 +308,22 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let blinkAt = 2.5;
   let blink = 0;
   let settleSprings = 0;  // スプリングボーンを落ち着かせる残りフレーム数
+
+  // --- 外から動かすとき（キャッチボール） -----------------------------------
+  /** 値が入っているあいだは、部屋をうろうろする状態機械を止めて任せる */
+  let driver = null;
+  let strideGain = 1;     // 歩幅の倍率。急ぐときは歩幅を広げて、回転数を上げすぎない
+  let crouch = 0;         // 膝を曲げて腰を落とす度合い（0..1）
+  let crouchWant = 0;
+  let bend = 0;           // 上体を前に倒す度合い（0..1）
+  let bendWant = 0;
+  let armAmount = 0;      // 腕を目標へ伸ばす度合い（0..1）
+  let armWant = 0;
+  const armTarget = new THREE.Vector3();   // 両手のあいだに来てほしい点（ワールド）
+  let armSpread = 0.08;                     // 手首どうしの間隔の半分
+  const catchPoint = new THREE.Vector3();  // 両手のあいだの点。毎フレーム更新
+  let onPosed = null;
+  let focus = false;                        // 止まっているボールでも目で追う                       // 姿勢が決まったあとに呼ぶ（持ったボールを手に付ける）
 
   // --- 視線 ---------------------------------------------------------------
   let watched = null;      // 投げられたら目で追うもの（野球ボール）
@@ -329,6 +364,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
       // 腰の高さと腿の長さは、座面に腰を乗せる位置に要る。歩幅も身体に合わせる
       hipsRestY = bones.hips ? bones.hips.position.y : 0.7;
+      hipsRestZ = bones.hips ? bones.hips.position.z : 0;
       stride = CHARACTER.stride * (hipsRestY / 0.70);
 
       // 正規化ボーンのローカル位置は、そのまま骨の長さになっている
@@ -472,7 +508,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     const names = [
       ...POSE_BONES, 'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
       'leftUpperLeg', 'rightUpperLeg', 'leftLowerLeg', 'rightLowerLeg', 'leftFoot', 'rightFoot',
-      'leftUpperArm', 'rightUpperArm',
+      'leftUpperArm', 'rightUpperArm', 'leftLowerArm', 'rightLowerArm', 'leftHand', 'rightHand',
     ];
     for (const name of new Set(names)) {
       const node = humanoid.getNormalizedBoneNode(name);
@@ -549,6 +585,11 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
   /** 目標に向かって 1 フレームぶん歩く。着いたら true */
   function stepTowards(target, dt, speed = CHARACTER.speed) {
+    // 速く歩くときは歩幅を広げる。歩幅そのままで速度だけ上げると、足が
+    // 小刻みにばたついて見える（人は速く歩くとき、回転数より先に歩幅を伸ばす）
+    const gainWant = 1 + 0.55 * clamp01((speed - CHARACTER.speed) / 0.8);
+    strideGain += (gainWant - strideGain) * Math.min(1, dt * 4);
+
     const dx = target.x - group.position.x;
     const dz = target.y - group.position.z;
     const distance = Math.hypot(dx, dz);
@@ -580,7 +621,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
   /** 歩きの位相と「歩いている度合い」を進める */
   function advanceGait(distance, dt, wanted) {
-    phase += (Math.PI * distance) / stride;
+    phase += (Math.PI * distance) / (stride * strideGain);
     gait += (wanted - gait) * Math.min(1, dt * 8);
   }
 
@@ -703,6 +744,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     if (bones.hips) {
       bones.hips.rotation.set(0, 0, 0);
       bones.hips.position.y = hipsRestY;
+      bones.hips.position.z = hipsRestZ;
     }
     if (bones.neck) bones.neck.rotation.set(0, 0, 0);
     if (bones.head) bones.head.rotation.set(0, 0, 0);
@@ -719,15 +761,16 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   function footPlan(p) {
     const u = ((p % TAU) + TAU) % TAU;
 
+    const step = stride * strideGain;
     if (u < Math.PI) {
       const t = u / Math.PI;
-      return { offset: stride * (0.5 - t), lift: 0, stance: t };
+      return { offset: step * (0.5 - t), lift: 0, stance: t };
     }
 
     // 遊脚。前へ運びながら持ち上げる
     const t = (u - Math.PI) / Math.PI;
     const eased = t * t * (3 - 2 * t);
-    return { offset: stride * (eased - 0.5), lift: Math.sin(t * Math.PI) * stride * GAIT.lift, stance: -1 };
+    return { offset: step * (eased - 0.5), lift: Math.sin(t * Math.PI) * step * GAIT.lift, stance: -1 };
   }
 
   /**
@@ -736,14 +779,14 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
    * 腰から足首までの距離 d が分かれば、余弦定理で膝の角度が出る。膝は
    * 前へ突き出るので、腿は腰-足首を結ぶ線より α だけ前に倒す。
    */
-  function solveLeg(leg, p, hipY, amount) {
+  function solveLeg(leg, p, hipY, amount, { forward = 0, pitch = 0 } = {}) {
     const upper = bones[`${leg}UpperLeg`];
     const lower = bones[`${leg}LowerLeg`];
     const foot = bones[`${leg}Foot`];
     if (!upper || !lower) return;
 
     const plan = footPlan(p);
-    const dz = plan.offset;
+    const dz = plan.offset + forward;
     // 脚の付け根は腰のボーンより少し下にあり、腰を左右に傾けるとさらに上下する。
     // これを無視すると、傾いたぶんだけ足が床にめり込んだり浮いたりする。
     const roll = bones.hips ? bones.hips.rotation.z : 0;
@@ -775,7 +818,8 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     }
 
     // 立ち / 座りポーズからの混ぜ込み。amount が 0 ならそのまま
-    upper.rotation.x += (-thigh - upper.rotation.x) * amount;
+    // 骨盤を前へ倒していれば（pitch）、そのぶん腿を戻して足の向きを保つ
+    upper.rotation.x += (-thigh - pitch - upper.rotation.x) * amount;
     lower.rotation.x += (knee - lower.rotation.x) * amount;
     if (foot) foot.rotation.x += (ankle - foot.rotation.x) * amount;
   }
@@ -807,7 +851,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       // 接地直後の沈み込み。実際の歩行でも立脚初期に膝が曲がって体重を受ける
       dip = GAIT.dip * Math.sin(Math.PI * clamp01(plan.stance / 0.38));
     }
-    hipY -= dip;
+    hipY -= dip + CROUCH_DEPTH * crouch;
 
     if (bones.hips) {
       bones.hips.position.y += (hipY - bones.hips.position.y) * amount;
@@ -829,7 +873,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     // 体幹。骨盤と胸を逆に捻り、わずかに前傾させる。ここが完全に静止していると、
     // 脚だけが動いて体は引きずられているように見える（「ふわふわ」の主因）。
     if (bones.spine) {
-      bones.spine.rotation.x -= GAIT.lean * amount;
+      // 前傾は +X まわり（モデルは +Z を向いている）。以前は -= で、前傾の
+      // つもりがわずかに反り返っていた（しゃがむ動きを作ったときに気づいた）
+      bones.spine.rotation.x += GAIT.lean * amount;
       bones.spine.rotation.y = GAIT.twist * 0.5 * s * amount;
     }
     if (bones.chest) bones.chest.rotation.y = -GAIT.twist * s * amount;
@@ -839,7 +885,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     if (bones.neck) {
       bones.neck.rotation.z = -GAIT.roll * s * amount * 0.8;
       bones.neck.rotation.y = GAIT.twist * s * amount * 0.6;
-      bones.neck.rotation.x = GAIT.lean * amount * 0.7;
+      bones.neck.rotation.x = -GAIT.lean * amount * 0.7;
     }
   }
 
@@ -857,7 +903,10 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     const data = watched?.userData;
     const speed = data?.velocity ? data.velocity.length() : 0;
     // 持たれている / 飛んでいるあいだは気にする
-    const interested = Boolean(data && (data.held || speed > 0.6));
+    // 自分で持っているときは相手（カメラ）を見る。拾いにいくときは止まっている
+    // ボールでも見続ける（focus）
+    const heldByMe = data?.heldBy === 'character';
+    const interested = Boolean(data && !heldByMe && (focus || data.held || speed > 0.6));
     gaze += ((interested ? 1 : 0) - gaze) * Math.min(1, dt * (interested ? 7 : 1.1));
 
     // --- 目標の向きを決める -----------------------------------------------
@@ -983,13 +1032,254 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     });
   }
 
+  /**
+   * しゃがむ・前かがみ。
+   *
+   * 腰を落とすだけだと足が床に沈むので、立ち止まっているあいだは両足を
+   * その場に置いたまま脚を解き直す（歩いているときは applyGait が同じ腰の
+   * 高さで解いている）。上体は背骨と胸に分けて倒す。1 か所で折ると
+   * 腰から上が板のように見える。
+   */
+  function applyCrouch(dt) {
+    const k = Math.min(1, dt * 6);
+    crouch += (crouchWant - crouch) * k;
+    bend += (bendWant - bend) * k;
+
+    // 前かがみは +X まわり（モデルは +Z を向いている）。
+    //
+    // 背骨だけを曲げても肩はほとんど下がらない。人は物を拾うとき、まず
+    // 骨盤ごと前へ倒し（股関節で曲げ）、腰を後ろへ引いて釣り合いを取る。
+    // それをしないと、このモデル（肩 1.1m・腕 0.38m）では手が地面から
+    // 40cm も上で止まった。骨盤の傾きは立ち止まっているときだけ入れる。
+    // 歩きながら骨盤を倒すと、歩容の脚の解き方と噛み合わない。
+    const standing = (1 - gait) * (1 - sitAmount);
+    const pitch = BEND_ANGLE * 0.5 * bend * standing;
+    const back = CROUCH_BACK * smoothstep(0, 1, Math.max(crouch, bend)) * standing;
+
+    const legWeight = standing * smoothstep(0, 0.08, Math.max(crouch, bend));
+    if (legWeight > 0.001 && bones.hips) {
+      const hipY = hipsRestY - CROUCH_DEPTH * crouch;
+      bones.hips.position.y += (hipY - bones.hips.position.y) * legWeight;
+      bones.hips.position.z = hipsRestZ - back;
+      bones.hips.rotation.x += pitch;
+      // 位相 π/2 は立脚のまん中で、足の前後のずれが 0 になる。腰を引いたぶん
+      // 足は腰より前にある
+      const options = { forward: back, pitch };
+      solveLeg('left', Math.PI / 2, bones.hips.position.y, legWeight, options);
+      solveLeg('right', Math.PI / 2, bones.hips.position.y, legWeight, options);
+    }
+
+    if (bend > 0.001) {
+      if (bones.spine) bones.spine.rotation.x += BEND_ANGLE * 0.3 * bend + BEND_ANGLE * 0.5 * bend * (1 - standing);
+      if (bones.chest) bones.chest.rotation.x += BEND_ANGLE * 0.2 * bend;
+      // 顔は少しだけ起こす。拾うときは手元を見るので起こしすぎない
+      if (bones.neck) bones.neck.rotation.x -= BEND_ANGLE * 0.2 * bend;
+    }
+  }
+
+  // --- 腕の逆運動学 ---------------------------------------------------------
+  const _pq = new THREE.Quaternion();
+  const _bq = new THREE.Quaternion();
+  const _dq = new THREE.Quaternion();
+  const _a = new THREE.Vector3();
+  const _b = new THREE.Vector3();
+  const _c = new THREE.Vector3();
+  const _dir = new THREE.Vector3();
+  const _pole = new THREE.Vector3();
+  const _goal = new THREE.Vector3();
+
+  /**
+   * ボーンを回して、子ボーンへ向かう向きを dir（ワールド、単位ベクトル）に
+   * 合わせる。いまの向きからの最小の回転を足すので、腕のねじれは元のまま残る。
+   * 正規化ボーンは休止姿勢で回転が 0 なので、子の位置がそのまま骨の向き。
+   */
+  function aimBone(bone, child, dir, amount) {
+    bone.parent.getWorldQuaternion(_pq);
+    _bq.copy(_pq).multiply(bone.quaternion);
+    _a.copy(child.position).normalize().applyQuaternion(_bq);
+    _dq.setFromUnitVectors(_a, dir);
+    // slerpQuaternions(IDENTITY, _dq, t) は先に自分を IDENTITY で上書きするので
+    // 使えない（実際それで腕がまったく動かなかった）。自分から IDENTITY へ寄せる
+    if (amount < 1) _dq.slerp(IDENTITY, 1 - amount);
+    _bq.premultiply(_dq);
+    bone.quaternion.copy(_pq.invert().multiply(_bq));
+    bone.updateMatrixWorld(true);
+  }
+
+  /**
+   * 片腕を、手首が target に来るように解く（肩-肘-手首の 2 関節）。
+   *
+   * 肘は下・外・少し後ろへ逃がす。ボールを受ける腕は肘が体の脇へ下がって
+   * いるので、そちらに曲がるように極（pole）を置く。
+   */
+  function solveArm(side, target, amount) {
+    const upper = bones[`${side}UpperArm`];
+    const lower = bones[`${side}LowerArm`];
+    const hand = bones[`${side}Hand`];
+    if (!upper || !lower || !hand) return;
+
+    const a = lower.position.length();
+    const b = hand.position.length();
+    upper.getWorldPosition(_a);
+    _dir.subVectors(target, _a);
+    // target は手のひらの中心。手首はそこから手のひらぶん（7cm）手前に置く
+    const d = clamp(_dir.length() - 0.07, Math.abs(a - b) + 0.01, (a + b) * 0.985);
+    _dir.normalize();
+    _goal.copy(_a).addScaledVector(_dir, d);
+
+    // モデルは +Z を向き、左手が +X にある。これをいまの体の向きへ回す
+    const outward = side === 'left' ? 1 : -1;
+    _pole.set(Math.cos(yaw) * outward * 0.55 - Math.sin(yaw) * 0.25, -1, -Math.sin(yaw) * outward * 0.55 - Math.cos(yaw) * 0.25);
+    _pole.addScaledVector(_dir, -_pole.dot(_dir));
+    if (_pole.lengthSq() < 1e-6) _pole.set(0, -1, 0);
+    _pole.normalize();
+
+    const cosA = clamp((a * a + d * d - b * b) / (2 * a * d), -1, 1);
+    const alpha = Math.acos(cosA);
+    _b.copy(_dir).multiplyScalar(Math.cos(alpha)).addScaledVector(_pole, Math.sin(alpha));
+    aimBone(upper, lower, _b, amount);
+
+    lower.getWorldPosition(_c);
+    _b.subVectors(_goal, _c).normalize();
+    aimBone(lower, hand, _b, amount);
+  }
+
+  /**
+   * 両手のひらのあいだの点。手首から前腕の向きに 7cm 先が手のひらの中心。
+   * 手首どうしの中点だと、下へ手を伸ばしたときに 7cm 届かない計算になる。
+   */
+  function palmCenter(out) {
+    out.set(0, 0, 0);
+    for (const side of ['left', 'right']) {
+      bones[`${side}Hand`].getWorldPosition(_a);
+      bones[`${side}LowerArm`].getWorldPosition(_b);
+      _b.subVectors(_a, _b).normalize();
+      out.add(_a).addScaledVector(_b, 0.07);
+    }
+    return out.multiplyScalar(0.5);
+  }
+
+  /** 両手を armTarget へ伸ばし、両手のあいだの点（catchPoint）を出す */
+  function applyArms(dt) {
+    armAmount += (armWant - armAmount) * Math.min(1, dt * 7);
+    if (armAmount < 0.002 || !bones.leftHand || !bones.rightHand) {
+      armAmount = Math.max(0, armAmount);
+      // 手の位置が要るのはキャッチボール中だけ。部屋を歩いているあいだは、
+      // 行列の更新ぶん（VR では毎フレーム効く）を省く
+      if (bones.leftHand && driver) {
+        group.updateMatrixWorld(true);
+        palmCenter(catchPoint);
+      }
+      return;
+    }
+    group.updateMatrixWorld(true);
+
+    // 左右の手のひらをボールの両脇に置く。体の左右方向に開く
+    const lx = Math.cos(yaw);
+    const lz = -Math.sin(yaw);
+    _c.set(armTarget.x + lx * armSpread, armTarget.y, armTarget.z + lz * armSpread);
+    solveArm('left', _c, armAmount);
+    _c.set(armTarget.x - lx * armSpread, armTarget.y, armTarget.z - lz * armSpread);
+    solveArm('right', _c, armAmount);
+
+    palmCenter(catchPoint);
+  }
+
+  /** 部屋の経路で、いまの場所からいちばん近い節点 */
+  function nearestNode() {
+    let best = 0;
+    let bestDistance = Infinity;
+    ROUTE.forEach((node, i) => {
+      const d = Math.hypot(node.x - group.position.x, node.y - group.position.z);
+      if (d < bestDistance) { bestDistance = d; best = i; }
+    });
+    return best;
+  }
+
+  /**
+   * 外から動かすための窓口。キャッチボールはこれ越しに体を動かす。
+   * うろうろの状態機械は driver が入っているあいだ止まる。
+   */
+  const body = {
+    get loaded() { return Boolean(vrm); },
+    get position() { return group.position; },
+    get yaw() { return yaw; },
+    /** 頭のボーンの高さ（身長の目安） */
+    get headHeight() { return headRestY; },
+    /** 腕の長さ（肩から手首） */
+    get armLength() {
+      return (bones.leftLowerArm?.position.length() ?? 0.22) + (bones.leftHand?.position.length() ?? 0.2);
+    },
+    /** 部屋の状態機械から引き取れるか（座っていない） */
+    get free() { return state === 'idle' || state === 'walk'; },
+    get sitting() { return state === 'sit' || state === 'sitDown' || state === 'turn' || state === 'standUp'; },
+    get catchPoint() { return catchPoint; },
+    /** 座っていたら早めに立たせる */
+    requestStand() { if (state === 'sit') stateUntil = Math.min(stateUntil, clock); },
+    /** 体を任せる。null で部屋のうろうろに戻す（node はそこから歩き出す節点） */
+    drive(next, node = null) {
+      driver = next;
+      if (!next) {
+        crouchWant = 0; bendWant = 0; armWant = 0;
+        nodeIndex = node ?? nearestNode();
+        queue.length = 0;
+        goal = { point: ROUTE[nodeIndex] };
+        state = 'walk';
+      }
+    },
+    get driven() { return driver !== null; },
+    stepTowards(point, dt, speed) { return stepTowards(point, dt, speed); },
+    turnTowards(angle, dt) {
+      const turned = turnTowards(angle, dt);
+      advanceGait(Math.abs(turned) * 0.2, dt, Math.abs(turned) > 1e-3 ? 0.5 : 0);
+      return Math.abs(angleDelta(angle, yaw)) < 0.06;
+    },
+    /** その場で立ち止まる（歩きの度合いを 0 へ戻す） */
+    stand(dt) { advanceGait(0, dt, 0); },
+    setCrouch(value) { crouchWant = clamp01(value); },
+    setBend(value) { bendWant = clamp01(value); },
+    /** 両手を point へ伸ばす。null なら腕を下ろす */
+    reach(point, amount = 1, spread = 0.08) {
+      if (!point) { armWant = 0; return; }
+      armTarget.copy(point);
+      armWant = clamp01(amount);
+      armSpread = spread;
+    },
+    set onPosed(fn) { onPosed = fn; },
+    /** 止まっているボールでも見続ける（拾いにいくとき） */
+    setFocus(value) { focus = Boolean(value); },
+    /** 部屋から掃き出し窓までの道順（経路の節点をたどってソファの前から出る） */
+    exitRoute() {
+      const size = ROUTE.length;
+      const from = nearestNode();
+      const forward = (EXIT_NODE - from + size) % size;
+      const backward = (from - EXIT_NODE + size) % size;
+      const step = forward <= backward ? 1 : -1;
+      const points = [ROUTE[from].clone()];
+      for (let i = from; i !== EXIT_NODE;) {
+        i = (i + step + size) % size;
+        points.push(ROUTE[i].clone());
+      }
+      return points.concat(EXIT_PATH.map((p) => p.clone()));
+    },
+    /** 掃き出し窓から部屋へ戻る道順（exitRoute の窓より先を逆にたどる） */
+    entryRoute() {
+      return [...EXIT_PATH].reverse().map((p) => p.clone()).concat([ROUTE[EXIT_NODE].clone()]);
+    },
+    exitNode: () => EXIT_NODE,
+  };
+
   function update(dt) {
     if (!vrm) return;
-    if (wander) updateBehavior(dt);
+    if (driver) clock += dt;
+    else if (wander) updateBehavior(dt);
     applyPose();
     applyGait();
     applyIdle(dt);
     applyGaze(dt);
+    applyCrouch(dt);
+    applyArms(dt);
+    onPosed?.();
     updateFootShadows();
     // スプリングボーン（髪・服）、視線、表情をまとめて進める
     vrm.update(dt);
@@ -1015,8 +1305,10 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     get vrm() { return vrm; },
     /** ライセンス表記用。読み込み前は null */
     get meta() { return vrm?.meta ?? null; },
+    /** キャッチボールなど、外から体を動かすための窓口 */
+    body,
     /** デバッグ用 */
-    get state() { return state; },
+    get state() { return driver ? `driven:${driver.state ?? ''}` : state; },
     route: ROUTE,
     seats: SEATS,
   };

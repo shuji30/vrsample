@@ -5,6 +5,7 @@ import { createPark } from './park.js';
 import { createFurniture, TABLE } from './furniture.js';
 import { createLighting } from './lighting.js';
 import { createCharacter } from './character.js';
+import { createCatchGame } from './catchball.js';
 import { DEFAULT_THEME } from './themes.js';
 
 /**
@@ -83,6 +84,10 @@ export function createWorld(renderer, scene, {
   const character = createCharacter(scene, { url: characterUrl, camera, wander, sit });
   // 投げられたボールを目で追わせる
   character.watch(furniture.ball);
+  // 庭に出るとキャッチボールが始まる（プレイヤーの頭 = camera の位置で判定）
+  const catchGame = camera
+    ? createCatchGame({ character, ball: furniture.ball, camera, scene })
+    : null;
 
   const { grabbables, buttons } = furniture;
 
@@ -148,6 +153,7 @@ export function createWorld(renderer, scene, {
   }
 
   function update(dt) {
+    catchGame?.update(dt);
     character.update(dt);
 
     // --- スイッチの押し込み ------------------------------------------------
@@ -287,6 +293,7 @@ export function createWorld(renderer, scene, {
     ball: furniture.ball,
     lighting,
     character,
+    catchGame,
     update,
     setTheme: (key) => lighting.setTheme(key),
     getTheme: () => lighting.getTheme(),

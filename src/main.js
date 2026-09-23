@@ -154,7 +154,12 @@ renderer.domElement.addEventListener('webglcontextlost', (event) => {
 if (navigator.xr?.requestSession) {
   const requestSession = navigator.xr.requestSession.bind(navigator.xr);
   navigator.xr.requestSession = (...args) => requestSession(...args).catch((error) => {
-    fail('VR セッションの要求', error);
+    requestingSession = false;
+    // 「すでにセッションがある」は上の unhandledrejection がもっと具体的な
+    // 案内を出すので、ここでは黙って投げ直す（二重に書くと上書き合戦になる）
+    if (!/already an active/i.test(String(error?.message ?? error))) {
+      fail('VR セッションの要求', error);
+    }
     throw error;
   });
 }
@@ -162,6 +167,7 @@ if (navigator.xr?.requestSession) {
   const setSession = renderer.xr.setSession.bind(renderer.xr);
   renderer.xr.setSession = (session) => Promise.resolve(setSession(session)).catch((error) => {
     // ここで投げ直しても VRButton は受けないので、報告して後始末だけする
+    requestingSession = false;
     fail('VR セッションの初期化', error);
     try { session?.end?.(); } catch { /* すでに終わっている */ }
   });

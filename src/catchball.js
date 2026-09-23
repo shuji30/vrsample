@@ -51,12 +51,18 @@ const PLAY_AREA = { minX: -5.4, maxX: 5.4, minZ: -12.4, maxZ: OUTSIDE_Z - 0.35 }
  * 共用していたときは、縁へ転がった球の 50cm 手前で止まって拾えなかった
  */
 const MOVE_AREA = { minX: -5.75, maxX: 5.75, minZ: -12.75, maxZ: OUTSIDE_Z - 0.35 };
-/** 柵の切れ目（通り抜けられる x の範囲） */
+/** 柵の切れ目のうち、体（半径 0.22m）が通り抜けられる x の範囲。押し戻しはこれで判定する */
 const GAP = {
-  min: PARK.fence.gapX - PARK.fence.gap / 2 + 0.3,
-  max: PARK.fence.gapX + PARK.fence.gap / 2 - 0.3,
+  min: PARK.fence.gapX - PARK.fence.gap / 2 + 0.22,
+  max: PARK.fence.gapX + PARK.fence.gap / 2 - 0.22,
 };
+/**
+ * 道順で切れ目を通る点は、さらに内側へ寄せる。通れる幅のちょうど端に
+ * 置くと、少し外へずれた瞬間に柵へ押し戻され、切れ目の端で動けなくなった
+ */
+const GAP_PATH = { min: GAP.min + 0.25, max: GAP.max - 0.25 };
 const BODY_RADIUS = 0.22;
+const FENCE_MARGIN = 0.18;
 /**
  * この距離までの位置直しは、相手を向いたまま寄る（m）。背を向けて歩いて
  * 行って振り返ると、こちらが捕った瞬間に横を向いているように見える
@@ -111,29 +117,54 @@ function segmentDistance3D(a, b, c) {
   return a.clone().addScaledVector(ab, t).distanceTo(c);
 }
 
+/**
+ * 障害物の芯（円なら中心、カプセルなら線分）の上で、点 (px, pz) にいちばん近い点
+ */
+function coreClosest(o, px, pz) {
+  if (o.x2 === undefined) return { x: o.x, z: o.z };
+  const hit = segmentDistance2D(o.x, o.z, o.x2, o.z2, px, pz);
+  return { x: hit.x, z: hit.z };
+}
+
+/** 線分 a-b と障害物の芯との最短距離。カプセルは芯を刻んで調べる */
+function segmentToObstacle(ax, az, bx, bz, o) {
+  if (o.x2 === undefined) return { ...segmentDistance2D(ax, az, bx, bz, o.x, o.z), cx: o.x, cz: o.z };
+  let best = null;
+  for (let i = 0; i <= 12; i++) {
+    const cx = o.x + (o.x2 - o.x) * (i / 12);
+    const cz = o.z + (o.z2 - o.z) * (i / 12);
+    const hit = segmentDistance2D(ax, az, bx, bz, cx, cz);
+    if (!best || hit.distance < best.distance) best = { ...hit, cx, cz };
+  }
+  return best;
+}
+
 /** 点を動ける範囲に入れ、障害物の外へ押し出す */
 function settle(point, fromZ = point.y) {
   point.x = clamp(point.x, MOVE_AREA.minX, MOVE_AREA.maxX);
   point.y = clamp(point.y, MOVE_AREA.minZ, MOVE_AREA.maxZ);
   for (const o of PARK.obstacles) {
-    const dx = point.x - o.x;
-    const dz = point.y - o.z;
+    const c = coreClosest(o, point.x, point.y);
+    const dx = point.x - c.x;
+    const dz = point.y - c.z;
     const r = o.r + BODY_RADIUS;
     const d = Math.hypot(dx, dz);
     if (d < r) {
       if (d > 1e-4) {
-        point.x = o.x + (dx / d) * r;
-        point.y = o.z + (dz / d) * r;
+        point.x = c.x + (dx / d) * r;
+        point.y = c.z + (dz / d) * r;
       } else {
-        point.x = o.x + r;
+        point.x = c.x + r;
       }
     }
   }
   // 柵。切れ目以外では、元いた側にとどめる
   const fz = PARK.fence.z;
+  // 余白は体の半径ぶん。広く取りすぎると、柵とシュートの端のあいだが
+  // 通れなくなり、柵ぎわに止まった球を取りに行けなかった
   if (point.x < GAP.min || point.x > GAP.max) {
-    if (fromZ > fz && point.y < fz + 0.3) point.y = fz + 0.3;
-    if (fromZ < fz && point.y > fz - 0.3) point.y = fz - 0.3;
+    if (fromZ > fz && point.y < fz + FENCE_MARGIN) point.y = fz + FENCE_MARGIN;
+    if (fromZ < fz && point.y > fz - FENCE_MARGIN) point.y = fz - FENCE_MARGIN;
   }
   return point;
 }
@@ -148,9 +179,15 @@ function gardenPath(from, to) {
   const sideA = Math.sign(from.y - fz);
   const sideB = Math.sign(to.y - fz);
   if (sideA !== sideB && sideA !== 0 && sideB !== 0) {
-    const gx = clamp((from.x + to.x) / 2, GAP.min, GAP.max);
-    points.push(new THREE.Vector2(gx, fz + sideA * 0.5));
-    points.push(new THREE.Vector2(gx, fz + sideB * 0.5));
+    const gx = clamp((from.x + to.x) / 2, GAP_PATH.min, GAP_PATH.max);
+    // すでに切れ目の中にいるなら、手前の点は入れない。道順は 0.3 秒ごとに
+    // 引き直すので、入れると少し進んだところで手前の点が背中側になり、
+    // 切れ目の前で行ったり来たりして抜けられなかった
+    const inGap = from.x >= GAP.min - 0.05 && from.x <= GAP.max + 0.05 && Math.abs(from.y - fz) < 0.6;
+    // 切れ目の前後の点も障害物の外へ出す。シュートの端が切れ目のすぐ先にあり、
+    // 抜けた先の点が余白の中へ入って、いつまでもそこへ着けなかった
+    if (!inGap) points.push(settle(new THREE.Vector2(gx, fz + sideA * 0.5), fz + sideA));
+    points.push(settle(new THREE.Vector2(inGap ? clamp(from.x, GAP_PATH.min, GAP_PATH.max) : gx, fz + sideB * 0.5), fz + sideB));
   }
   points.push(to.clone());
 
@@ -170,15 +207,16 @@ function gardenPath(from, to) {
       // 行き先そのものが障害物に寄り添っている（木の根元の球を拾う）ときは、
       // 最後の区間でその障害物をよけない。よけると、余白の内側にある行き先へ
       // いつまでも入れず、まわりを回り続ける
-      if (last && Math.hypot(b.x - o.x, b.y - o.z) < r + 0.05) continue;
-      const hit = segmentDistance2D(a.x, a.y, b.x, b.y, o.x, o.z);
+      const near = coreClosest(o, b.x, b.y);
+      if (last && Math.hypot(b.x - near.x, b.y - near.z) < r + 0.05) continue;
+      const hit = segmentToObstacle(a.x, a.y, b.x, b.y, o);
       if (hit.distance >= r) continue;
-      let nx = hit.x - o.x;
-      let nz = hit.z - o.z;
+      let nx = hit.x - hit.cx;
+      let nz = hit.z - hit.cz;
       let n = Math.hypot(nx, nz);
       if (n < 1e-3) { nx = -(b.y - a.y); nz = b.x - a.x; n = Math.hypot(nx, nz); }
       if (n < 1e-6) break;   // 始点と終点が同じ
-      const detour = new THREE.Vector2(o.x + (nx / n) * (r + 0.25), o.z + (nz / n) * (r + 0.25));
+      const detour = new THREE.Vector2(hit.cx + (nx / n) * (r + 0.25), hit.cz + (nz / n) * (r + 0.25));
       points.splice(i + 1, 0, settle(detour, a.y));
       inserted++;
       i--;                   // 足した点までの線分を、もう一度確かめる
@@ -191,7 +229,7 @@ function gardenPath(from, to) {
 /** 投げる側と受ける側の間に、木や滑り台がはさまっていないか */
 function lineClear(ax, az, bx, bz) {
   return PARK.obstacles.every((o) => !o.tall
-    || segmentDistance2D(ax, az, bx, bz, o.x, o.z).distance > o.r + 0.35);
+    || segmentToObstacle(ax, az, bx, bz, o).distance > o.r + 0.35);
 }
 
 /**
@@ -365,7 +403,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
         const x = player.x + Math.sin(angle) * distance;
         const z = player.z + Math.cos(angle) * distance;
         if (x < PLAY_AREA.minX || x > PLAY_AREA.maxX || z < PLAY_AREA.minZ || z > PLAY_AREA.maxZ) continue;
-        if (PARK.obstacles.some((o) => Math.hypot(x - o.x, z - o.z) < o.r + 0.5)) continue;
+        if (PARK.obstacles.some((o) => { const c = coreClosest(o, x, z); return Math.hypot(x - c.x, z - c.z) < o.r + 0.5; })) continue;
         if (Math.abs(z - PARK.fence.z) < 0.5) continue;
         if (!lineClear(player.x, player.z, x, z)) continue;
         const facing = Math.abs(angleDelta(angle, Math.atan2(playerForward.x, playerForward.z)));
@@ -399,13 +437,17 @@ export function createCatchGame({ character, ball, camera, scene }) {
     spotFor = player.clone();
     if (!next) { state = 'ready'; return; }
     spot = next;
-    // 近ければ、相手を向いたまま寄る（背を向けて歩いて行って振り返るのは大げさ）
-    if (Math.hypot(spot.x - body.position.x, spot.y - body.position.z) < ADJUST_RANGE) {
+    // 近くて、まっすぐ寄れる（柵や障害物をよけなくてよい）なら、相手を向いたまま寄る。
+    // 背を向けて歩いて行って振り返るのは大げさ。柵の向こうへ横歩きで寄ろうと
+    // すると柵に押し戻され続けるので、そのときは道順を引いて歩く
+    const route = gardenPath(new THREE.Vector2(body.position.x, body.position.z), spot);
+    if (route.length === 1 && Math.hypot(spot.x - body.position.x, spot.y - body.position.z) < ADJUST_RANGE) {
       path = [];
+      timer = 0;
       state = 'adjust';
       return;
     }
-    path = gardenPath(new THREE.Vector2(body.position.x, body.position.z), spot);
+    path = route;
     state = 'reposition';
   }
 
@@ -417,10 +459,22 @@ export function createCatchGame({ character, ball, camera, scene }) {
     return body.stepFacing(spot, dt, ADJUST_SPEED, faceYaw);
   }
 
-  /** 決めた道順を歩く。着いたら true */
+  /**
+   * 決めた道順を歩く。着いたら true。
+   * 押し戻されて点へ近づけないまま 0.8 秒たったら、その点は飛ばす
+   * （障害物の余白の中に点が入ると、いつまでも着けずに立ち尽くす）
+   */
+  let pathBest = Infinity;
+  let pathStuck = 0;
   function followPath(dt, speed) {
     if (path.length === 0) { body.stand(dt); return true; }
-    if (body.stepTowards(path[0], dt, speed)) path.shift();
+    const d = Math.hypot(path[0].x - body.position.x, path[0].y - body.position.z);
+    if (d < pathBest - 0.02) { pathBest = d; pathStuck = 0; } else pathStuck += dt;
+    if (body.stepTowards(path[0], dt, speed) || pathStuck > 0.8) {
+      path.shift();
+      pathBest = Infinity;
+      pathStuck = 0;
+    }
     return path.length === 0;
   }
 
@@ -614,10 +668,12 @@ export function createCatchGame({ character, ball, camera, scene }) {
 
       case 'adjust': {
         if (incoming()) { beginField(); break; }
+        timer += dt;
         body.setCrouch(0.10);
         body.setBend(0.10);
-        body.reach(readyPoint(ready), 0.55, 0.12);
-        if (adjustToSpot(dt)) state = 'ready';
+        body.reach(null);   // 構えでは手を出さない（胸の前に出すと小包を抱えて見える）
+        // 障害物に押し戻されて着けないこともある。2.5 秒で切り上げる
+        if (adjustToSpot(dt) || timer > 2.5) { timer = 0; state = 'ready'; }
         break;
       }
 
@@ -626,7 +682,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
         body.turnTowards(faceYaw, dt);
         body.setCrouch(0.10);
         body.setBend(0.10);
-        body.reach(readyPoint(ready), 0.55, 0.12);
+        body.reach(null);   // 構えでは手を出さない（胸の前に出すと小包を抱えて見える）
 
         if (incoming()) { beginField(); break; }
         if (incomingGrounder()) { body.setFocus(true); state = 'chase'; break; }
@@ -668,14 +724,16 @@ export function createCatchGame({ character, ball, camera, scene }) {
         }
 
         // 近づいてきたら手を球へ。遠いうちは構えのまま
-        const reachIn = clamp(1 - (dist - 0.4) / 1.6, 0, 1);
+        const reachIn = clamp(1 - (dist - 0.4) / 2.4, 0, 1);
         const handsAt = readyPoint(ready);
         // 手を寄せるのは、球が体の前にあるときだけ。横や後ろへ抜けていく球へ
         // 手を伸ばすと、腕が体の後ろへねじれる
         const ahead = (ball.position.x - body.position.x) * Math.sin(body.yaw)
           + (ball.position.z - body.position.z) * Math.cos(body.yaw);
         if (ballFree() && ahead > 0) handsAt.lerp(ball.position, reachIn * 0.85);
-        body.reach(handsAt, 0.55 + reachIn * 0.45, 0.075 + (1 - reachIn) * 0.05);
+        // 手を出すのは球が近づいてから。遠いうちは腕を下ろしたまま走る
+        if (reachIn > 0.02) body.reach(handsAt, reachIn, 0.075 + (1 - reachIn) * 0.05);
+        else body.reach(null);
         body.setHandOpen(reachIn * 0.9);   // 受ける手は開く
         body.setCrouch(0.14);
         body.setBend(0.12);
@@ -726,7 +784,9 @@ export function createCatchGame({ character, ball, camera, scene }) {
         }
         // 滑り台の下などに入った球は、障害物の縁までしか寄れない。そこから
         // 手が届けば拾い、届かなければしばらくしてあきらめる
-        const edge = settle(new THREE.Vector2(ball.position.x, ball.position.z), body.position.z);
+        // 柵の向こうへ転がった球も、球のある側で寄れる所を探す（道順は柵の切れ目を通る）。
+        // 自分のいる側へ押し戻すと、柵の向こうの球にいつまでも届かずあきらめていた
+        const edge = settle(new THREE.Vector2(ball.position.x, ball.position.z), ball.position.z);
         const gapToBall = Math.hypot(edge.x - ball.position.x, edge.y - ball.position.z);
         if (gapToBall > 0.5 && speed < 0.3 && ball.position.y < 0.2) {
           giveUp += dt;
@@ -747,7 +807,7 @@ export function createCatchGame({ character, ball, camera, scene }) {
         let approach = false;
         if (d > stopAt + 0.02) {
           target2.set(body.position.x + dx * (1 - stopAt / d), body.position.z + dz * (1 - stopAt / d));
-          settle(target2, body.position.z);
+          settle(target2, ball.position.z);
           // 障害物の縁へ押し出されて、もうこれ以上は近づけないなら着いたことにする
           approach = Math.hypot(target2.x - body.position.x, target2.y - body.position.z) > 0.05;
         }
@@ -778,7 +838,11 @@ export function createCatchGame({ character, ball, camera, scene }) {
         // 深くしゃがみ、骨盤ごと前へ倒して手を地面へ（character.js の applyCrouch）
         body.setCrouch(1);
         body.setBend(1);
-        body.reach(ball.position, Math.min(1, timer / 0.3), 0.07);
+        // 向き直るまでは手を出さない（後ろの球へ手を伸ばすと腕が背中側へ回る）
+        const aheadPick = (ball.position.x - body.position.x) * Math.sin(body.yaw)
+          + (ball.position.z - body.position.z) * Math.cos(body.yaw);
+        if (aheadPick > 0.05) body.reach(ball.position, Math.min(1, timer / 0.3), 0.07);
+        else { body.reach(null); timer = Math.min(timer, 0.1); }
         // 転がってくる球は手の間を通り過ぎる瞬間を捕る（1 フレームの移動を線分で見る）
         const reached = segmentDistance3D(lastBall, ball.position, body.catchPoint) < 0.2;
         if (timer > 0.45 && reached) {
@@ -804,9 +868,12 @@ export function createCatchGame({ character, ball, camera, scene }) {
         if (timer < dt * 1.5 && needsSpot()) {
           spotRetry = 0;
           const next = chooseSpot();
-          if (next) spot = next;
+          // 持ったまま寄るのは、まっすぐ寄れるときだけ
+          if (next && gardenPath(new THREE.Vector2(body.position.x, body.position.z), next).length === 1) spot = next;
         }
-        const placed = adjustToSpot(dt);
+        // 持ったまま寄れないとき（障害物に押し戻され続ける）は、2.5 秒でその場から投げる。
+        // これが無いと、滑り台の脇で着いたことにならず、いつまでも投げ返さなかった
+        const placed = adjustToSpot(dt) || timer > 2.5;
         const facing = placed && body.turnTowards(faceYaw, dt);
         // 捕った手をそのまま胸元へ引き寄せる。いきなり胸の前へ持っていくと、
         // 伸ばしていた腕が 1 フレームで縮んで見える

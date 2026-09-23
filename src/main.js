@@ -26,7 +26,20 @@ function report(message, isError = false) {
 
 function fail(stage, error) {
   console.error(`[vrsample] ${stage}`, error);
-  report(`${stage}で失敗しました。\n${error?.message ?? error}`, true);
+
+  // 例外の種類まで出す。DOMException は message だけだと
+  //「An attempt was made to use an object that is not, or is no longer, usable」
+  // のように、どこで何が起きたのかまったく分からない。
+  const name = error?.name ? `${error.name}: ` : '';
+  const lines = [`${stage}で失敗しました。`, `${name}${error?.message ?? error}`];
+
+  // XR セッションの確保に失敗する典型は、要求された解像度が大きすぎて
+  // フレームバッファを取れないケース。広視野のヘッドセットで起きやすい。
+  if (error?.name === 'InvalidStateError' || error?.name === 'OperationError' || error?.name === 'NotSupportedError') {
+    lines.push('?scale=0.6 か ?safe を付けて開き直すと通ることがあります。');
+  }
+
+  report(lines.join('\n'), true);
 }
 
 /**
@@ -134,6 +147,31 @@ renderer.domElement.addEventListener('webglcontextlost', (event) => {
   event.preventDefault();
   report('WebGL のコンテキストが失われました。?safe を付けて開き直してください。', true);
 });
+
+// VRButton は requestSession と setSession の失敗を握りつぶすので、
+// 先に包んでおく。ここを通さないと、セッションの確保に失敗したときに
+// 「非同期処理で失敗しました」という中身の無い表示にしかならない。
+if (navigator.xr?.requestSession) {
+  const requestSession = navigator.xr.requestSession.bind(navigator.xr);
+  navigator.xr.requestSession = (...args) => requestSession(...args).catch((error) => {
+    requestingSession = false;
+    // 「すでにセッションがある」は上の unhandledrejection がもっと具体的な
+    // 案内を出すので、ここでは黙って投げ直す（二重に書くと上書き合戦になる）
+    if (!/already an active/i.test(String(error?.message ?? error))) {
+      fail('VR セッションの要求', error);
+    }
+    throw error;
+  });
+}
+{
+  const setSession = renderer.xr.setSession.bind(renderer.xr);
+  renderer.xr.setSession = (session) => Promise.resolve(setSession(session)).catch((error) => {
+    // ここで投げ直しても VRButton は受けないので、報告して後始末だけする
+    requestingSession = false;
+    fail('VR セッションの初期化', error);
+    try { session?.end?.(); } catch { /* すでに終わっている */ }
+  });
+}
 
 // 「ENTER VR」ボタンは重い初期化より **先** に出す。
 // 後ろに置くと、シーン構築でこけたときにボタンごと出なくなる。

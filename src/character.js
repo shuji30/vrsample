@@ -65,6 +65,32 @@ const ROUTE = [
  * 椅子の右脇を抜けて、引き戸の開いている側（x = -0.4..1.4）を通る。
  */
 const EXIT_NODE = 6;
+
+/** 背もたれに預けて座るときの腰のソファローカル z（背もたれの前面は -0.22） */
+const LOUNGE_SEAT_Z = -0.11;
+/** そのときの脚の付け根の、座面からの高さ（m） */
+const LOUNGE_LIFT = 0.13;
+/** 横になるときの腰のソファローカル x / z と、座面からの高さ */
+const NAP_X = 0.10;
+const NAP_Z = 0.10;
+const NAP_LIFT = 0.24;
+/**
+ * 眠るときに腰かける位置（ソファローカル x）。クッションの真ん中（+0.5）に
+ * 座ってから体を倒すと、伸ばした足先が肘掛けに当たった。ソファの中ほどに
+ * 座れば、倒したあと頭は -X 側のクッション、足は肘掛けの手前に収まる
+ */
+const NAP_SEAT_X = 0.15;
+/**
+ * 座るとき / 立つときに、座面の縁まで下がる位置（腰のボーンのソファローカル z）。
+ * このモデルは小柄で、座面（61cm）がお尻より高い。まっすぐ後ろへ下がると
+ * お尻が座面の前側へ突っ込むので（12cm めり込んだ）、縁まで下がってから、
+ * 腰を持ち上げて奥へ乗る。
+ */
+const EDGE_Z = SOFA.frontZ + 0.16;
+/** 奥へ乗るときに腰を持ち上げる高さ（m） */
+const HOP = 0.10;
+/** 横になる / 起き上がる途中で腰を浮かせる高さ（m）。倒す途中で腰の横が沈む */
+const ROLL_LIFT = 0.12;
 const EXIT_PATH = [
   [1.35, -1.4],
   [1.15, -3.25],
@@ -72,11 +98,13 @@ const EXIT_PATH = [
 ].map(([x, z]) => new THREE.Vector2(x, z));
 
 /** 立ちポーズ。T ポーズからの差分。肩から先を段階的に曲げると自然に見える */
+// 腕は体の横へまっすぐ下ろす。肘を曲げて脇を開けていると、止まっているときに
+// 小包を抱えているように見え、歩くと肘を張って偉そうに見えた
 const STAND_POSE = {
-  leftUpperArm: [0, 0, -1.18],
-  rightUpperArm: [0, 0, 1.18],
-  leftLowerArm: [0, -0.22, -0.16],
-  rightLowerArm: [0, 0.22, 0.16],
+  leftUpperArm: [0, 0, -1.30],
+  rightUpperArm: [0, 0, 1.30],
+  leftLowerArm: [0, -0.08, -0.05],
+  rightLowerArm: [0, 0.08, 0.05],
   leftHand: [0, 0, -0.10],
   rightHand: [0, 0, 0.10],
 };
@@ -102,20 +130,129 @@ const SIT_POSE = {
   // 座る位置は placeSeats がこの角度から逆算して前寄りに取るので、
   // 膝は座面の前縁を越え、腿の下面がちょうど座面をなぞる。
   // 膝は閉じる。スカートが短いので、開くとどうしても中が見えてしまう
-  leftUpperLeg: [-1.15, 0.05, 0.11],
-  rightUpperLeg: [-1.15, -0.05, -0.11],
+  // 膝をそろえる向きは、左脚が -Z・右脚が +Z（両方の符号を描いて確かめた。
+  // 以前の +0.11 / -0.11 は膝が開いて、短いスカートの中が正面から見えていた）
+  leftUpperLeg: [-1.15, 0.05, -0.08],
+  rightUpperLeg: [-1.15, -0.05, 0.08],
   // 脛はほぼ真下。身長 1.4m のモデルに座面 61cm のソファなので足は床に
   // 届かない。無理に届かせようとすると腰を沈めるしかなくなる。
   leftLowerLeg: [1.10, 0, 0],
   rightLowerLeg: [1.10, 0, 0],
   leftFoot: [0.20, 0, 0],
   rightFoot: [0.20, 0, 0],
-  // やや前かがみ。裾が腿の上に垂れて、見た目が落ち着く
-  spine: [-0.15, 0, 0],
-  chest: [-0.10, 0, 0],
+  // 背すじを伸ばし、ほんの少しだけ前へ。前傾は +X まわり（モデルは +Z を向く）。
+  // 以前は -0.15 / -0.10 で「やや前かがみ」のつもりが、実際は後ろへ反り返っていた
+  spine: [0.06, 0, 0],
+  chest: [0.04, 0, 0],
 };
 
-const POSE_BONES = [...new Set([...Object.keys(STAND_POSE), ...Object.keys(SIT_POSE)])];
+/**
+ * 足を組む（右脚を左の腿に乗せる）。SIT_POSE との差ぶんだけ書く。
+ * 載せる右腿は深く上げて内へ寄せ、脛は下へ垂らす。
+ */
+const CROSS_LEGS = {
+  rightUpperLeg: [-1.42, -0.10, 0.34],
+  rightLowerLeg: [1.30, 0, 0],
+  rightFoot: [0.35, 0, 0],
+  leftUpperLeg: [-1.12, 0.05, -0.06],
+};
+
+/**
+ * 背もたれに背中をつけて、足を前へ伸ばす座り方。骨盤を後ろへ倒して
+ * 背もたれに預け、腿は座面に沿わせ、膝を伸ばして踵を床へ出す。
+ */
+const LOUNGE_POSE = {
+  hips: [-0.30, 0, 0],
+  spine: [-0.06, 0, 0],
+  chest: [0.02, 0, 0],
+  neck: [0.20, 0, 0],
+  head: [0.12, 0, 0],
+  leftUpperArm: [0.05, 0, -1.10],
+  rightUpperArm: [0.05, 0, 1.10],
+  leftLowerArm: [0, -0.40, -0.10],
+  rightLowerArm: [0, 0.40, 0.10],
+  leftHand: [0, 0, -0.10],
+  rightHand: [0, 0, 0.10],
+  // 脚は座面の上へまっすぐ伸ばし、足先を座面の縁から出す。小柄なので膝が
+  // 縁まで届かず、膝を曲げると脛が座面へ折れ込んでいた（5.5cm めり込み）
+  leftUpperLeg: [-1.24, 0.06, -0.07],
+  rightUpperLeg: [-1.24, -0.06, 0.07],
+  leftLowerLeg: [0.10, 0, 0],
+  rightLowerLeg: [0.10, 0, 0],
+  leftFoot: [-0.25, 0, 0],
+  rightFoot: [-0.25, 0, 0],
+};
+
+/**
+ * ソファに横になって眠る。座った向きのまま体を右へ倒し（腰を Z まわりに
+ * 90 度）、右半身を下にして、背中を背もたれへ向ける。膝は軽く曲げる。
+ */
+const NAP_POSE = {
+  hips: [0, 0, 1.5708],
+  spine: [0.12, 0, 0],
+  chest: [0.08, 0, 0],
+  neck: [0.10, 0, 0.18],
+  head: [0.05, 0, 0.12],
+  leftUpperArm: [0.3, 0, -1.2],
+  rightUpperArm: [0.3, 0, 1.2],
+  leftLowerArm: [0, -0.8, 0],
+  rightLowerArm: [0, 0.8, 0],
+  leftHand: [0, 0, -0.10],
+  rightHand: [0, 0, 0.10],
+  leftUpperLeg: [-0.62, 0, 0.02],
+  rightUpperLeg: [-0.48, 0, -0.02],
+  leftLowerLeg: [1.05, 0, 0],
+  rightLowerLeg: [0.95, 0, 0],
+  leftFoot: [0.35, 0, 0],
+  rightFoot: [0.35, 0, 0],
+};
+
+/**
+ * 横になる / 起き上がる途中だけ、脚を胸のほうへ引き寄せる。座面の縁から
+ * 垂れた脛をそのまま回すと、体を倒す途中で脛が座面をなでて沈む（9cm）。
+ */
+const TUCK_POSE = {
+  // 膝を深く曲げると足先がお尻の下（座面の中）へ入るので、腿を高く上げて
+  // 膝は浅めに曲げる。足先は座面より前・上に残る
+  leftUpperLeg: [-1.95, 0, -0.05],
+  rightUpperLeg: [-1.95, 0, 0.05],
+  leftLowerLeg: [1.35, 0, 0],
+  rightLowerLeg: [1.35, 0, 0],
+  leftFoot: [0.2, 0, 0],
+  rightFoot: [0.2, 0, 0],
+};
+
+/**
+ * 笑顔のリアクション。毎回同じ顔だと作り物に見えるので、いくつか用意して
+ * 前回と違うものを選ぶ。face は VRM の表情の重み、tilt / nod は首のかしげと
+ * 上下（rad）。steps があるものは、途中で顔が切り替わる（びっくり → にこっ）。
+ */
+const REACTIONS = {
+  // 目を細めて、にっこり
+  nikkori: { face: { happy: 0.9 }, tilt: 0.06 },
+  // 目は開けたまま、やわらかく微笑む
+  hohoemi: { face: { relaxed: 0.75, happy: 0.25 }, tilt: -0.08, nod: 0.05 },
+  // 口を開けて大よろこび。少し顔を上げる
+  yorokobi: { face: { happy: 1.0, aa: 0.55 }, tilt: 0.04, nod: -0.10 },
+  // ウインク
+  wink: { face: { blinkRight: 1.0, happy: 0.35, ee: 0.25 }, tilt: 0.16 },
+  // えへへ（照れ笑い）。首をかしげる
+  ehehe: { face: { happy: 0.6, ee: 0.35 }, tilt: -0.20, nod: 0.06 },
+  // びっくりしてから、にこっ
+  bikkuri: {
+    steps: [
+      { until: 0.35, face: { surprised: 0.85, oh: 0.45 }, nod: -0.08 },
+      { face: { happy: 0.85 }, tilt: 0.08 },
+    ],
+  },
+};
+const REACTION_NAMES = Object.keys(REACTIONS);
+const REACTION_FACES = ['happy', 'relaxed', 'surprised', 'aa', 'ee', 'oh', 'blinkRight'];
+
+const POSE_BONES = [...new Set([
+  ...Object.keys(STAND_POSE), ...Object.keys(SIT_POSE), ...Object.keys(CROSS_LEGS),
+  ...Object.keys(LOUNGE_POSE), ...Object.keys(NAP_POSE), 'hips', 'neck', 'head',
+])];
 
 /** 指を軽く握らせる。開いたままの手は VR で見ると妙に目につく */
 const FINGERS = ['Index', 'Middle', 'Ring', 'Little'].flatMap((finger) =>
@@ -143,7 +280,7 @@ const FINGER_CURL = {
  */
 const GAIT = {
   arm: 0.46,        // 腕は脚と逆位相
-  elbow: 0.34,      // 前に振れた側だけ肘を曲げる。腕振りはこれが無いと棒に見える
+  elbow: 0.12,      // 前に振れた側だけ肘をわずかに曲げる。深く曲げると肘を張って偉そうに見える
   ankle: 0.30,      // 蹴り出し / 着地の足首
   lift: 0.30,       // 遊脚で足を持ち上げる高さ（歩幅に対する比）
   dip: 0.014,       // 接地直後に体重が乗って沈む量（m）
@@ -203,6 +340,17 @@ const SEATS = SOFA.cushions.map((localX) => {
   return { localX, seat: sofaToWorld(localX, SOFA.seatZ), approach, via, top: SOFA.top, yaw: SOFA.yaw };
 });
 
+/** 眠るときの席。いちばん近い節点は +X 側のクッションと同じ */
+function napSeat() {
+  const base = SEATS.find((s) => s.localX > 0);
+  return {
+    ...base,
+    localX: NAP_SEAT_X,
+    seat: sofaToWorld(NAP_SEAT_X, base.localZ ?? SOFA.seatZ),
+    approach: sofaToWorld(NAP_SEAT_X, SOFA.frontZ + 0.30),
+  };
+}
+
 /**
  * 腰を下ろす点を、膝が座面の前縁あたりに来るように決める。
  * 腿が座面より短いモデル（子どもや小柄なキャラクター）が座面の奥に腰を下ろすと、
@@ -211,7 +359,10 @@ const SEATS = SOFA.cushions.map((localX) => {
 function placeSeats(thighReach) {
   // +0.08 は脛のぶんの逃げ。膝が座面の前縁より少し前に出るようにする
   const localZ = Math.max(SOFA.seatZ, SOFA.frontZ - thighReach + 0.08);
-  for (const seat of SEATS) seat.seat = sofaToWorld(seat.localX, localZ);
+  for (const seat of SEATS) {
+    seat.seat = sofaToWorld(seat.localX, localZ);
+    seat.localZ = localZ;
+  }
 }
 
 /**
@@ -316,6 +467,16 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let phase = 0;          // 歩きの位相。進んだ距離から進める
   let gait = 0;           // 歩いている度合い（0..1）。踏み出し / 止まりを滑らかに
   let sitAmount = 0;      // 座りポーズの混ざり具合（0..1）
+  // 座り方。upright（ふつう）/ lounge（背もたれに預けて足を伸ばす）/ nap（横になって眠る）
+  let lounge = 0;         // lounge の混ざり具合
+  let napAmount = 0;      // 横になっている度合い
+  let tuck = 0;           // 横になる途中で脚を引き寄せる度合い
+  let legCross = 0;       // 足を組んでいる度合い（ふつうの座りのとき）
+  let legCrossWant = 0;
+  let armCross = 0;       // 腕を組んでいる度合い
+  let armCrossWant = 0;
+  let fidgetAt = 0;       // 次に腕や足を組み替える時刻
+  const seatRoot = new THREE.Vector3();   // 腰を下ろしている（寝ている）ときのルート位置
   let elapsed = 0;        // 呼吸とまばたきの時計
   let blinkAt = 2.5;
   let blink = 0;
@@ -344,9 +505,12 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let attend = false;                       // ボールを見ていないときは相手（camera）の顔を見る
   let handOpen = 0;                         // 指の開き（0 = 軽く握る）
   let handOpenWant = 0;
-  let smile = 0;                            // にっこり（happy）の度合い
-  let smileUntil = -1;
-  let smileStrength = 1;
+  // 笑顔のリアクション。いまの顔の重みを faceNow に持って、目標へ寄せる
+  let reaction = null;                      // { recipe, start, until, strength }
+  let lastReaction = '';
+  const faceNow = Object.fromEntries(REACTION_FACES.map((n) => [n, 0]));
+  let tiltNow = 0;
+  let nodNow = 0;
   /**
    * 投球の姿勢（throwing.js が毎フレーム入れる）。null なら何もしない。
    * { weight, hipsYaw, chestYaw, bend, hipShift, hipDrop,
@@ -601,7 +765,12 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     // ?sit=off で座らせないようにもできる（座り姿勢はスカートの裾が
     // 腿に乗り上げてしまうモデルがあるため、切れるようにしてある）
     if (sit && clock > nextSitAt && Math.random() < 0.6) {
-      planSit(SEATS[Math.floor(Math.random() * SEATS.length)]);
+      // 座り方を選ぶ。ふつう 5 割、背もたれに預けて足を伸ばす 3 割、横になって眠る 2 割。
+      // 眠るときは右半身を下にして頭をソファの -X 側へ倒すので、+X 側のクッションに座る
+      const r = Math.random();
+      const style = r < 0.5 ? 'upright' : r < 0.8 ? 'lounge' : 'nap';
+      const seat = style === 'nap' ? napSeat() : SEATS[Math.floor(Math.random() * SEATS.length)];
+      planSit(seat, style);
       return;
     }
     // 4 割は立ち止まって少し休む
@@ -621,7 +790,8 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   }
 
   /** 席までの経路を積む。閉ループなので近いほうの回りで辿る */
-  function planSit(seat) {
+  function planSit(seat, style = 'upright') {
+    seat = { ...seat, style };
     const size = ROUTE.length;
     const forward = (seat.via - nodeIndex + size) % size;
     const backward = (nodeIndex - seat.via + size) % size;
@@ -718,23 +888,47 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
         break;
       }
 
-      // 後ろ向きに下がって腰を下ろす
+      // 後ろ向きに座面の縁まで下がり、腰を持ち上げて奥へ乗る
       case 'sitDown': {
         // ゆっくり座る。急に腿を上げるとスプリングボーン（スカート）が
         // 跳ね上がって裾がめくれる
         transition = Math.min(1, transition + dt / 2.6);
-        const back = smoothstep(0, 0.75, transition);
         const before = new THREE.Vector2(group.position.x, group.position.z);
-        group.position.x = lerp(seated.approach.x, seated.seat.x, back);
-        group.position.z = lerp(seated.approach.y, seated.seat.y, back);
-        group.position.y = lerp(0, sitRootY(), smoothstep(0.45, 1, transition));
-        sitAmount = smoothstep(0.3, 1, transition);
+        // 眠るときも、いったんふつうに腰かけてから横になる
+        const style = seated.style === 'lounge' ? 'lounge' : 'upright';
+        const target = seatPoint(style);
+        const edge = sofaToWorld(seated.localX, EDGE_Z);
+        const t = transition;
+        if (t < 0.35) {
+          const k = smoothstep(0, 1, t / 0.35);
+          group.position.x = lerp(seated.approach.x, edge.x, k);
+          group.position.z = lerp(seated.approach.y, edge.y, k);
+          group.position.y = 0;
+          sitAmount = 0.12 * k;
+        } else {
+          const u = (t - 0.35) / 0.65;
+          // 先に腿を上げ（sitAmount）、腰を浮かせながら奥へ滑り込む
+          sitAmount = 0.12 + 0.88 * smoothstep(0, 0.7, u);
+          const slide = smoothstep(0.2, 1, u);
+          group.position.x = lerp(edge.x, target.x, slide);
+          group.position.z = lerp(edge.y, target.y, slide);
+          group.position.y = lerp(0, sitRootY(style), smoothstep(0, 1, u)) + HOP * Math.sin(Math.PI * Math.min(1, u * 1.15));
+        }
+        lounge = style === 'lounge' ? smoothstep(0.6, 1, t) : 0;
         // 下がっているあいだは足も動く（位相は後ろ向きに進める）
         const moved = before.distanceTo(new THREE.Vector2(group.position.x, group.position.z));
-        advanceGait(-moved, dt, back < 1 ? 0.7 * (1 - sitAmount) : 0);
+        advanceGait(-moved, dt, t < 0.35 ? 0.7 : 0);
         if (transition >= 1) {
+          group.position.y = sitRootY(style);
+          seatRoot.copy(group.position);
+          fidgetAt = clock + 2 + Math.random() * 3;
+          if (seated.style === 'nap') {
+            transition = 0;
+            state = 'lieDown';
+            break;
+          }
           state = 'sit';
-          stateUntil = clock + 12 + Math.random() * 14;
+          stateUntil = clock + (seated.style === 'lounge' ? 16 + Math.random() * 14 : 14 + Math.random() * 14);
           // 腰かけ終わったらスカートの揺れを一度落ち着かせる。遷移中に
           // 溜まった勢いがそのまま残ると、裾が持ち上がったままになる
           settleSprings = 2;
@@ -742,27 +936,108 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
         break;
       }
 
-      case 'sit':
-        if (clock > stateUntil) {
+      case 'sit': {
+        // ふつうの座りのあいだは、ときどき腕を組んだり足を組んだりする
+        if (seated.style === 'upright' && clock > fidgetAt && clock < stateUntil - 2) {
+          fidgetAt = clock + 5 + Math.random() * 5;
+          if (Math.random() < 0.6) armCrossWant = armCrossWant > 0.5 ? 0 : 1;
+          if (Math.random() < 0.5) legCrossWant = legCrossWant > 0.5 ? 0 : 1;
+        }
+        // 立つ前に組んでいた腕と足をほどく
+        if (clock > stateUntil - 1.5) { armCrossWant = 0; legCrossWant = 0; }
+        const k = Math.min(1, dt * 1.6);
+        armCross += (armCrossWant - armCross) * k;
+        legCross += (legCrossWant - legCross) * k;
+        if (clock > stateUntil && armCross < 0.05 && legCross < 0.05) {
+          armCross = 0;
+          legCross = 0;
           transition = 0;
           state = 'standUp';
         }
         break;
+      }
 
-      // 立ち上がって、ソファの前に戻る
+      // 腰かけた姿勢から、右へ体を倒して横になる。腰は座面の中ほどへずらす
+      case 'lieDown': {
+        transition = Math.min(1, transition + dt / 2.6);
+        const t = transition;
+        // 先に体を倒して脚を座面の上へ上げ、それから奥（寝る位置）へずれる。
+        // 同時にずらすと、縁から垂れた脛が上がる前に座面へ入り込んだ（12cm）
+        napAmount = smoothstep(0, 0.7, t);
+        tuck = Math.sin(Math.PI * Math.min(1, t / 0.75)) * 0.85;
+        const slide = smoothstep(0.55, 1, t);
+        const lie = napPoint();
+        group.position.x = lerp(seatRoot.x, lie.x, slide);
+        group.position.z = lerp(seatRoot.z, lie.y, slide);
+        group.position.y = lerp(seatRoot.y, napRootY(), smoothstep(0, 0.8, t)) + ROLL_LIFT * Math.sin(Math.PI * Math.min(1, t / 0.8));
+        if (transition >= 1) {
+          tuck = 0;
+          state = 'nap';
+          stateUntil = clock + 25 + Math.random() * 20;
+          settleSprings = 2;
+        }
+        break;
+      }
+
+      case 'nap':
+        if (clock > stateUntil) {
+          transition = 0;
+          state = 'getUp';
+        }
+        break;
+
+      // 起き上がって、腰かけた姿勢へ戻る
+      case 'getUp': {
+        transition = Math.min(1, transition + dt / 2.4);
+        const t = transition;
+        // 横になるときの逆。先に手前へずれてから、体を起こして脚を下ろす
+        const slide = smoothstep(0, 0.45, t);
+        napAmount = 1 - smoothstep(0.3, 1, t);
+        tuck = Math.sin(Math.PI * Math.max(0, Math.min(1, (t - 0.25) / 0.75))) * 0.85;
+        const lie = napPoint();
+        group.position.x = lerp(lie.x, seatRoot.x, slide);
+        group.position.z = lerp(lie.y, seatRoot.z, slide);
+        const u = Math.max(0, (t - 0.2) / 0.8);
+        group.position.y = lerp(napRootY(), seatRoot.y, smoothstep(0, 1, u)) + ROLL_LIFT * Math.sin(Math.PI * u);
+        if (transition >= 1) {
+          napAmount = 0;
+          tuck = 0;
+          seated = { ...seated, style: 'upright' };
+          state = 'sit';
+          stateUntil = clock + 2.5;
+          settleSprings = 2;
+        }
+        break;
+      }
+
+      // 座面の縁まで滑り出て床に足をつき、立ち上がってソファの前に戻る
       case 'standUp': {
-        transition = Math.min(1, transition + dt / 1.3);
-        const out = smoothstep(0.2, 1, transition);
+        transition = Math.min(1, transition + dt / 1.8);
+        const t = transition;
         const before = new THREE.Vector2(group.position.x, group.position.z);
-        group.position.x = lerp(seated.seat.x, seated.approach.x, out);
-        group.position.z = lerp(seated.seat.y, seated.approach.y, out);
-        group.position.y = lerp(sitRootY(), 0, smoothstep(0, 0.5, transition));
-        sitAmount = 1 - smoothstep(0, 0.7, transition);
+        const edge = sofaToWorld(seated.localX, EDGE_Z);
+        if (t < 0.65) {
+          const u = t / 0.65;
+          const slide = smoothstep(0, 0.8, u);
+          group.position.x = lerp(seatRoot.x, edge.x, slide);
+          group.position.z = lerp(seatRoot.z, edge.y, slide);
+          group.position.y = lerp(seatRoot.y, 0, smoothstep(0, 1, u)) + HOP * Math.sin(Math.PI * Math.max(0, u * 1.15 - 0.15));
+          sitAmount = 0.12 + 0.88 * (1 - smoothstep(0.3, 1, u));
+          lounge *= 1 - smoothstep(0, 0.5, u);
+        } else {
+          const k = smoothstep(0, 1, (t - 0.65) / 0.35);
+          group.position.x = lerp(edge.x, seated.approach.x, k);
+          group.position.z = lerp(edge.y, seated.approach.y, k);
+          group.position.y = 0;
+          sitAmount = 0.12 * (1 - k);
+          lounge = 0;
+        }
         const moved = before.distanceTo(new THREE.Vector2(group.position.x, group.position.z));
-        advanceGait(moved, dt, out < 1 ? 0.7 : 0);
+        advanceGait(t >= 0.65 ? moved : 0, dt, t >= 0.65 && t < 1 ? 0.7 : 0);
         if (transition >= 1) {
           nodeIndex = seated.via;
           seated = null;
+          lounge = 0;
           nextSitAt = clock + 45 + Math.random() * 45;
           queue.push({ point: ROUTE[nodeIndex] });
           decide();
@@ -773,7 +1048,18 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   }
 
   /** 腰を座面に乗せるためのルートの高さ（床より下がることもある） */
-  function sitRootY() {
+  /** 腰を下ろす点（XZ）。背もたれに預けるときは奥へ、眠るときは座面の中ほど */
+  function seatPoint(style) {
+    if (style === 'lounge') return sofaToWorld(seated.localX, LOUNGE_SEAT_Z);
+    return seated.seat;
+  }
+  function napPoint() { return sofaToWorld(NAP_X, NAP_Z); }
+  /** 横になったときのルートの高さ。腰（横倒しの骨盤）の厚みの半分だけ座面から浮かす */
+  function napRootY() { return seated.top + NAP_LIFT - hipsRestY; }
+
+  function sitRootY(style = 'upright') {
+    // 背もたれに預けるときは少し沈む（骨盤を倒して座面の奥へ滑り込む）
+    if (style === 'lounge') return seated.top + LOUNGE_LIFT - hipsRestY - legTopOffset;
     // 「脚の付け根が座面より 13cm 上」に来るようルートを置く。腰のボーンでは
     // なく脚の付け根を基準にするのが要点で、ここを間違えると腿が座面に沈む
     // （+0.08 を腰のボーン基準で取っていたときは、膝が座面より 7cm 下だった）。
@@ -785,27 +1071,45 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   // 姿勢
   // ------------------------------------------------------------------------
 
+  /**
+   * 座っているときの 1 本ぶんの角度。ふつうの座り → 足組み → 背もたれに
+   * 預ける → 横になる、の順に重ねて混ぜる
+   */
+  const _seatValue = [0, 0, 0];
+  function seatValue(name) {
+    const up = SIT_POSE[name];
+    for (let i = 0; i < 3; i++) {
+      let v = up?.[i] ?? 0;
+      const cross = CROSS_LEGS[name];
+      if (cross) v = lerp(v, cross[i], legCross);
+      v = lerp(v, LOUNGE_POSE[name]?.[i] ?? 0, lounge);
+      v = lerp(v, NAP_POSE[name]?.[i] ?? 0, napAmount);
+      const tuckValue = TUCK_POSE[name];
+      if (tuckValue && tuck > 0) v = lerp(v, tuckValue[i], tuck);
+      _seatValue[i] = v;
+    }
+    return _seatValue;
+  }
+
   /** 立ちポーズと座りポーズを混ぜて入れる */
   function applyPose() {
     for (const name of POSE_BONES) {
       const node = bones[name];
       if (!node) continue;
       const a = STAND_POSE[name];
-      const b = SIT_POSE[name];
+      const b = sitAmount > 0 ? seatValue(name) : null;
       node.rotation.set(
         lerp(a?.[0] ?? 0, b?.[0] ?? 0, sitAmount),
         lerp(a?.[1] ?? 0, b?.[1] ?? 0, sitAmount),
         lerp(a?.[2] ?? 0, b?.[2] ?? 0, sitAmount),
       );
     }
-    // 腰と首は歩き / 呼吸が加算で触るので、毎フレームここで戻しておく
+    // 腰と首の角度は上の表で毎フレーム入れ直している（歩き / 呼吸は加算で触る）。
+    // 位置だけここで戻す
     if (bones.hips) {
-      bones.hips.rotation.set(0, 0, 0);
       bones.hips.position.y = hipsRestY;
       bones.hips.position.z = hipsRestZ;
     }
-    if (bones.neck) bones.neck.rotation.set(0, 0, 0);
-    if (bones.head) bones.head.rotation.set(0, 0, 0);
   }
 
   /**
@@ -1015,6 +1319,10 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     lookYaw += (wantYaw - lookYaw) * follow;
     lookPitch += (wantPitch - lookPitch) * follow;
 
+    // 眠っているあいだは首を動かさない
+    const awake = 1 - napAmount;
+    lookYaw *= awake > 0.99 ? 1 : awake;
+    lookPitch *= awake > 0.99 ? 1 : awake;
     // 首と頭で分担する
     if (bones.neck) {
       bones.neck.rotation.y += lookYaw * 0.55;
@@ -1047,7 +1355,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       // せっかく地面に固定した足が腰ごと持ち上がって滑る
       bones.hips.position.y += breath * 0.006 * (1 - gait);
       bones.hips.rotation.z += sway * 0.02;
-      bones.hips.rotation.y = drift * 0.03;
+      bones.hips.rotation.y += drift * 0.03 * (1 - sitAmount);
     }
     if (bones.spine) bones.spine.rotation.x += breath * 0.012;
     if (bones.chest) bones.chest.rotation.x += breath * 0.018;
@@ -1064,12 +1372,37 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       }
     }
     // にっこり。ふっと笑って、少し残してから戻す
-    const smiling = elapsed < smileUntil ? smileStrength : 0;
-    smile += (smiling - smile) * Math.min(1, dt * (smiling > smile ? 7 : 2.2));
-    expressions.setValue('happy', smile * 0.9);
+    // リアクションの顔。立ち上がりは速く、戻りはゆっくり
+    let want = null;
+    let tiltWant = 0;
+    let nodWant = 0;
+    if (reaction && elapsed < reaction.until) {
+      const t = elapsed - reaction.start;
+      const recipe = reaction.recipe;
+      const step = recipe.steps ? recipe.steps.find((q) => q.until === undefined || t < q.until) : recipe;
+      want = step.face;
+      tiltWant = (step.tilt ?? 0) * reaction.strength;
+      nodWant = (step.nod ?? 0) * reaction.strength;
+    }
+    for (const name of REACTION_FACES) {
+      const target = (want?.[name] ?? 0) * (reaction?.strength ?? 1);
+      faceNow[name] += (target - faceNow[name]) * Math.min(1, dt * (target > faceNow[name] ? 9 : 2.4));
+      expressions.setValue(name, faceNow[name]);
+    }
+    tiltNow += (tiltWant - tiltNow) * Math.min(1, dt * 5);
+    nodNow += (nodWant - nodNow) * Math.min(1, dt * 5);
+    if (bones.head) {
+      bones.head.rotation.z += tiltNow;
+      bones.head.rotation.x += nodNow;
+    }
+    // 目を細めた笑顔（happy）にまばたきを重ねると潰れすぎる
+    const smile = faceNow.happy;
     // 笑っている目（細めた目）に、まばたきを重ねると目が潰れすぎる
     const open = 1 - Math.min(1, smile * 1.4);
-    expressions.setValue('blink', (blink <= 1 ? blink : 2 - blink) * open);
+    // 眠っているあいだは目を閉じ、表情を少しゆるめる
+    const shut = Math.max((blink <= 1 ? blink : 2 - blink) * open, napAmount);
+    expressions.setValue('blink', shut);
+    expressions.setValue('relaxed', Math.max(faceNow.relaxed, napAmount * 0.35));
   }
 
   /**
@@ -1287,7 +1620,74 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   }
 
   /** 両手を armTarget へ伸ばし、両手のあいだの点（catchPoint）を出す */
+  /**
+   * 座っているときの腕。腕組み・お腹の上で手を重ねる・寝ている腕は、角度を
+   * 並べて合わせ込むより、手を置く場所を決めて IK で解くほうが体格に左右されない。
+   * 手の置き場所は胸・腰・頭のボーンから、体の向き（yaw）で前後左右を決める。
+   */
+  const _seatA = new THREE.Vector3();
+  const _seatB = new THREE.Vector3();
+  const _poleL = new THREE.Vector3();
+  const _poleR = new THREE.Vector3();
+  function applySeatedArms() {
+    if (driver || sitAmount < 0.01) return false;
+    const cross = armCross * (1 - lounge) * (1 - napAmount);
+    const belly = lounge * (1 - napAmount);
+    const nap = napAmount;
+    // 腕を組んでいないときは、両手を膝の上（スカートの前）にそろえて置く
+    const lap = (1 - armCross) * (1 - lounge) * (1 - napAmount);
+    const w = Math.max(cross, belly, nap, lap) * sitAmount;
+    if (w < 0.002 || !bones.leftHand) return false;
+    group.updateMatrixWorld(true);
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const lx = Math.cos(yaw);
+    const lz = -Math.sin(yaw);
+    const at = (base, f, l, u, out) => out.set(base.x + fx * f + lx * l, base.y + u, base.z + fz * f + lz * l);
+
+    let left;
+    let right;
+    if (nap > cross && nap > belly) {
+      // 下になった右手は顔の前、上の左手は胸の前の座面に置く
+      (bones.head ?? bones.chest).getWorldPosition(_a);
+      // 下になった腕は座面の上に置く。頭より下へ置くと前腕が座面へ沈む
+      right = at(_a, 0.20, 0.02, -0.02, _seatA);
+      // 上になった左手は腰の前（スカートの裾のあたり）に置く
+      bones.hips.getWorldPosition(_b);
+      left = at(_b, 0.16, 0.06, 0.02, _seatB);
+      _poleR.set(fx * 0.3, -1, fz * 0.3);
+      _poleL.set(fx * 0.3 + lx * 0.3, 1, fz * 0.3 + lz * 0.3);
+    } else if (lap > cross && lap > belly) {
+      bones.hips.getWorldPosition(_a);
+      // 手はそろえた腿の付け根の前に置く。短いスカートなので、低い目線からは
+      // ここが見えてしまう（実際の人も手で押さえる位置）
+      left = at(_a, 0.22, 0.045, -0.01, _seatA);
+      right = at(_a, 0.23, -0.045, 0.0, _seatB);
+      _poleL.set(lx, -0.8, lz);
+      _poleR.set(-lx, -0.8, -lz);
+    } else if (belly > cross) {
+      // 下腹の上で手を重ねる（スカートの前を押さえる位置）
+      bones.hips.getWorldPosition(_a);
+      left = at(_a, 0.24, 0.035, 0.0, _seatA);
+      right = at(_a, 0.25, -0.035, 0.02, _seatB);
+      _poleL.set(lx, -0.8, lz);
+      _poleR.set(-lx, -0.8, -lz);
+    } else {
+      // 腕を組む。左手は右の二の腕へ、右手は左の二の腕へ。前後に少しずらして重ねる
+      (bones.upperChest ?? bones.chest).getWorldPosition(_a);
+      left = at(_a, 0.15, -0.10, -0.08, _seatA);
+      right = at(_a, 0.19, 0.10, -0.06, _seatB);
+      _poleL.set(lx + fx * 0.25, -0.5, lz + fz * 0.25);
+      _poleR.set(-lx + fx * 0.25, -0.5, -lz + fz * 0.25);
+    }
+    solveArm('left', left, w, _poleL.normalize());
+    solveArm('right', right, w, _poleR.normalize());
+    palmCenter(catchPoint);
+    return true;
+  }
+
   function applyArms(dt) {
+    if (applySeatedArms()) return;
     if (armFollow) {
       // 下ろしている途中の目標点は体といっしょに動かす
       const c = Math.cos(yaw);
@@ -1358,10 +1758,10 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     },
     /** 部屋の状態機械から引き取れるか（座っていない） */
     get free() { return state === 'idle' || state === 'walk'; },
-    get sitting() { return state === 'sit' || state === 'sitDown' || state === 'turn' || state === 'standUp'; },
+    get sitting() { return ['sit', 'sitDown', 'turn', 'standUp', 'lieDown', 'nap', 'getUp'].includes(state); },
     get catchPoint() { return catchPoint; },
-    /** 座っていたら早めに立たせる */
-    requestStand() { if (state === 'sit') stateUntil = Math.min(stateUntil, clock); },
+    /** 座っていたら（眠っていたら）早めに立たせる */
+    requestStand() { if (state === 'sit' || state === 'nap') stateUntil = Math.min(stateUntil, clock); },
     /** 体を任せる。null で部屋のうろうろに戻す（node はそこから歩き出す節点） */
     drive(next, node = null) {
       driver = next;
@@ -1429,10 +1829,18 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     /** ボールを見ていないときは、相手（camera）の顔を見る */
     setAttend(value) { attend = Boolean(value); },
     /** にっこり笑う（seconds 秒、strength 0..1） */
-    smile(seconds = 2, strength = 1) {
-      smileUntil = Math.max(smileUntil, elapsed + seconds);
-      smileStrength = Math.max(elapsed < smileUntil - seconds ? smileStrength : 0, strength);
+    smile(seconds = 2, strength = 1, kind = null) {
+      // 前回と違う笑い方を選ぶ（kind を渡せばそれ）
+      let name = kind;
+      if (!name) {
+        const choices = REACTION_NAMES.filter((n) => n !== lastReaction);
+        name = choices[Math.floor(Math.random() * choices.length)];
+      }
+      lastReaction = name;
+      reaction = { recipe: REACTIONS[name], start: elapsed, until: elapsed + seconds, strength, name };
     },
+    /** 検証用：いまのリアクションの名前 */
+    get reactionName() { return reaction && elapsed < reaction.until ? reaction.name : null; },
     /** 指を開く度合い（0 = 軽く握る、1 = 開く） */
     setHandOpen(value) { handOpenWant = clamp01(value); },
     /** 投球の体幹・脚の姿勢。null で解除 */
@@ -1522,6 +1930,34 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     get meta() { return vrm?.meta ?? null; },
     /** キャッチボールなど、外から体を動かすための窓口 */
     body,
+    /**
+     * 検証用。指定の座り方でソファに座らせたまま止める（状態機械は動かさない）。
+     * style: 'upright' | 'lounge' | 'nap'、arms / legs: 腕組み・足組み（0..1）
+     */
+    /** 検証用。いまいる所から、指定の座り方で座りにいかせる（状態機械はそのまま動く） */
+    debugPlanSit(style = 'upright') {
+      const seat = style === 'nap' ? napSeat() : SEATS[0];
+      queue.length = 0;
+      planSit(seat, style);
+    },
+    debugSeat({ style = 'upright', seat = 0, arms = 0, legs = 0 } = {}) {
+      const base = style === 'nap' ? napSeat() : SEATS[seat];
+      seated = { ...base, style };
+      sitAmount = 1;
+      lounge = style === 'lounge' ? 1 : 0;
+      napAmount = style === 'nap' ? 1 : 0;
+      armCross = armCrossWant = arms;
+      legCross = legCrossWant = legs;
+      yaw = seated.yaw;
+      group.rotation.y = yaw;
+      const p = style === 'nap' ? napPoint() : seatPoint(style);
+      group.position.set(p.x, style === 'nap' ? napRootY() : sitRootY(style), p.y);
+      seatRoot.copy(group.position);
+      gait = 0;
+      state = style === 'nap' ? 'nap' : 'sit';
+      stateUntil = Infinity;
+      settleSprings = 2;
+    },
     /** デバッグ用 */
     get state() { return driver ? `driven:${driver.state ?? ''}` : state; },
     route: ROUTE,

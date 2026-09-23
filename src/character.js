@@ -123,6 +123,18 @@ const FINGERS = ['Index', 'Middle', 'Ring', 'Little'].flatMap((finger) =>
 );
 
 /**
+ * 力を抜いて軽く握った手（付け根・中・先の曲げ、rad）。小指側ほど深く曲がるのが
+ * 自然な形で、全部同じ角度だと作り物に見える。以前は全部 0.28rad で、ほとんど
+ * 開いた「パー」だったので、歩くとロボットのように見えた。
+ */
+const FINGER_CURL = {
+  Index: [0.50, 0.62, 0.42],
+  Middle: [0.62, 0.72, 0.48],
+  Ring: [0.72, 0.78, 0.50],
+  Little: [0.82, 0.82, 0.50],
+};
+
+/**
  * 歩きのパラメータ。
  *
  * 腿と膝の角度はここには無い。以前は腿の振り幅を角度で決め打ちしていたが、
@@ -320,10 +332,21 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let armAmount = 0;      // 腕を目標へ伸ばす度合い（0..1）
   let armWant = 0;
   const armTarget = new THREE.Vector3();   // 両手のあいだに来てほしい点（ワールド）
+  // 腕を下ろしはじめたときの目標点を、体から見た位置で覚えておく。
+  // ワールドのまま残すと、力を抜いているあいだに振り返って走り出したとき、
+  // 背中側に残った目標点へ両腕が引っぱられた（走りながら腕を後ろへ突き出す）
+  const armLocal = new THREE.Vector3();
+  let armFollow = false;
   let armSpread = 0.08;                     // 手首どうしの間隔の半分
   const catchPoint = new THREE.Vector3();  // 両手のあいだの点。毎フレーム更新
   let onPosed = null;
   let focus = false;                        // 止まっているボールでも目で追う
+  let attend = false;                       // ボールを見ていないときは相手（camera）の顔を見る
+  let handOpen = 0;                         // 指の開き（0 = 軽く握る）
+  let handOpenWant = 0;
+  let smile = 0;                            // にっこり（happy）の度合い
+  let smileUntil = -1;
+  let smileStrength = 1;
   /**
    * 投球の姿勢（throwing.js が毎フレーム入れる）。null なら何もしない。
    * { weight, hipsYaw, chestYaw, bend, hipShift, hipDrop,
@@ -529,14 +552,37 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     if (!bones.chest) bones.chest = bones.upperChest;
   }
 
+  /** 指のボーンを引いておく。姿勢は毎フレーム applyFingers が入れる */
+  const fingerNodes = [];
   function curlFingers(humanoid) {
     if (!humanoid) return;
     for (const side of ['left', 'right']) {
       const sign = side === 'left' ? -1 : 1;
-      for (const joint of FINGERS) {
-        humanoid.getNormalizedBoneNode(`${side}${joint}`)?.rotation.set(0, 0, sign * 0.28);
+      for (const [finger, curls] of Object.entries(FINGER_CURL)) {
+        ['Proximal', 'Intermediate', 'Distal'].forEach((joint, i) => {
+          const node = humanoid.getNormalizedBoneNode(`${side}${finger}${joint}`);
+          if (node) fingerNodes.push({ node, axis: 'z', angle: sign * curls[i] });
+        });
       }
-      humanoid.getNormalizedBoneNode(`${side}ThumbProximal`)?.rotation.set(0, sign * -0.3, 0);
+      // 親指は人差し指の脇へ寄せて、先を少し曲げる
+      const thumb = humanoid.getNormalizedBoneNode(`${side}ThumbProximal`);
+      if (thumb) fingerNodes.push({ node: thumb, axis: 'y', angle: sign * -0.45 });
+      const thumbTip = humanoid.getNormalizedBoneNode(`${side}ThumbDistal`);
+      if (thumbTip) fingerNodes.push({ node: thumbTip, axis: 'y', angle: sign * -0.35 });
+    }
+    applyFingers(0);
+  }
+
+  /**
+   * 指を入れる。open が 1 に近いほど開く。ボールを受けようと手を伸ばすときだけ
+   * 開き、ふだんは軽く握っておく。
+   */
+  function applyFingers(dt) {
+    handOpen += (handOpenWant - handOpen) * Math.min(1, dt * 8);
+    const k = 1 - handOpen * 0.7;
+    for (const f of fingerNodes) {
+      f.node.rotation.set(0, 0, 0);
+      f.node.rotation[f.axis] = f.angle * k;
     }
   }
 
@@ -911,6 +957,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
    * 首だけでなく頭にも配分するのは、片方だけだと可動域に対して曲がりすぎて
    * 不自然になるため。目玉は VRM の lookAt に任せる。
    */
+  const _gazeAt = new THREE.Vector3();
   function applyGaze(dt) {
     const data = watched?.userData;
     const speed = data?.velocity ? data.velocity.length() : 0;
@@ -918,7 +965,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     // 自分で持っているときは相手（カメラ）を見る。拾いにいくときは止まっている
     // ボールでも見続ける（focus）
     const heldByMe = data?.heldBy === 'character';
-    const interested = Boolean(data && !heldByMe && (focus || data.held || speed > 0.6));
+    // キャッチボール中は、相手が手に持っている球ではなく相手の顔を見る
+    const heldByOther = Boolean(data?.held && !heldByMe);
+    const interested = Boolean(data && !heldByMe && (focus || (heldByOther && !attend) || (!data.held && speed > 0.6)));
     gaze += ((interested ? 1 : 0) - gaze) * Math.min(1, dt * (interested ? 7 : 1.1));
 
     // --- 目標の向きを決める -----------------------------------------------
@@ -944,8 +993,18 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     const driftYaw = Math.sin(elapsed * 0.37) * 0.05 + Math.sin(elapsed * 0.83 + 1.7) * 0.03;
     const driftPitch = Math.sin(elapsed * 0.29 + 0.6) * 0.022;
 
-    wantYaw = lerp(idleYaw + driftYaw, wantYaw, gaze);
-    wantPitch = lerp(idlePitch + driftPitch, wantPitch, gaze);
+    // ふだんの見る先。キャッチボール中はきょろきょろせず相手の顔を見る
+    let baseYaw = idleYaw + driftYaw;
+    let basePitch = idlePitch + driftPitch;
+    if (attend && camera) {
+      camera.getWorldPosition(_gazeAt);
+      const dx = _gazeAt.x - group.position.x;
+      const dz = _gazeAt.z - group.position.z;
+      baseYaw = angleDelta(Math.atan2(dx, dz), yaw) + driftYaw * 0.3;
+      basePitch = Math.atan2(_gazeAt.y - (group.position.y + headRestY), Math.max(0.3, Math.hypot(dx, dz))) + driftPitch * 0.3;
+    }
+    wantYaw = lerp(baseYaw, wantYaw, gaze);
+    wantPitch = lerp(basePitch, wantPitch, gaze);
 
     // 首が回りきらないように抑える
     wantYaw = Math.max(-0.95, Math.min(0.95, wantYaw));
@@ -1004,7 +1063,13 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
         blinkAt = elapsed + 2 + Math.random() * 4;
       }
     }
-    expressions.setValue('blink', blink <= 1 ? blink : 2 - blink);
+    // にっこり。ふっと笑って、少し残してから戻す
+    const smiling = elapsed < smileUntil ? smileStrength : 0;
+    smile += (smiling - smile) * Math.min(1, dt * (smiling > smile ? 7 : 2.2));
+    expressions.setValue('happy', smile * 0.9);
+    // 笑っている目（細めた目）に、まばたきを重ねると目が潰れすぎる
+    const open = 1 - Math.min(1, smile * 1.4);
+    expressions.setValue('blink', (blink <= 1 ? blink : 2 - blink) * open);
   }
 
   /**
@@ -1223,6 +1288,16 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
   /** 両手を armTarget へ伸ばし、両手のあいだの点（catchPoint）を出す */
   function applyArms(dt) {
+    if (armFollow) {
+      // 下ろしている途中の目標点は体といっしょに動かす
+      const c = Math.cos(yaw);
+      const sn = Math.sin(yaw);
+      armTarget.set(
+        group.position.x + armLocal.x * c + armLocal.z * sn,
+        group.position.y + armLocal.y,
+        group.position.z - armLocal.x * sn + armLocal.z * c,
+      );
+    }
     if (hands.active) {
       group.updateMatrixWorld(true);
       for (const side of ['left', 'right']) {
@@ -1292,6 +1367,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       driver = next;
       if (!next) {
         crouchWant = 0; bendWant = 0; armWant = 0;
+        attend = false; handOpenWant = 0;
         nodeIndex = node ?? nearestNode();
         queue.length = 0;
         goal = { point: ROUTE[nodeIndex] };
@@ -1329,7 +1405,20 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     setBend(value) { bendWant = clamp01(value); },
     /** 両手を point へ伸ばす。null なら腕を下ろす */
     reach(point, amount = 1, spread = 0.08) {
-      if (!point) { armWant = 0; return; }
+      if (!point) {
+        if (!armFollow) {
+          // 体の向きで回して、体から見た位置にする
+          const dx = armTarget.x - group.position.x;
+          const dz = armTarget.z - group.position.z;
+          const c = Math.cos(yaw);
+          const sn = Math.sin(yaw);
+          armLocal.set(dx * c - dz * sn, armTarget.y - group.position.y, dx * sn + dz * c);
+          armFollow = true;
+        }
+        armWant = 0;
+        return;
+      }
+      armFollow = false;
       armTarget.copy(point);
       armWant = clamp01(amount);
       armSpread = spread;
@@ -1337,6 +1426,15 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     set onPosed(fn) { onPosed = fn; },
     /** 止まっているボールでも見続ける（拾いにいくとき） */
     setFocus(value) { focus = Boolean(value); },
+    /** ボールを見ていないときは、相手（camera）の顔を見る */
+    setAttend(value) { attend = Boolean(value); },
+    /** にっこり笑う（seconds 秒、strength 0..1） */
+    smile(seconds = 2, strength = 1) {
+      smileUntil = Math.max(smileUntil, elapsed + seconds);
+      smileStrength = Math.max(elapsed < smileUntil - seconds ? smileStrength : 0, strength);
+    },
+    /** 指を開く度合い（0 = 軽く握る、1 = 開く） */
+    setHandOpen(value) { handOpenWant = clamp01(value); },
     /** 投球の体幹・脚の姿勢。null で解除 */
     setThrowPose(pose) { throwPose = pose; },
     /**
@@ -1344,7 +1442,13 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
      * ふだんの reach に戻る。pole は肘を逃がす向き（ワールド）
      */
     reachHands(spec) {
-      if (!spec) { hands.active = false; return; }
+      if (!spec) {
+        // 抜けた瞬間は、いま手のある所（両手のあいだ）から両手の IK を続ける。
+        // 投げる前の古い目標と効き具合が戻ってくると、腕が一瞬でどこかへ飛ぶ
+        if (hands.active) { armTarget.copy(catchPoint); armAmount = 1; armWant = 1; armFollow = false; }
+        hands.active = false;
+        return;
+      }
       hands.active = true;
       for (const side of ['left', 'right']) {
         const src = spec[side];
@@ -1389,6 +1493,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     applyCrouch(dt);
     applyThrow();
     applyArms(dt);
+    applyFingers(dt);
     onPosed?.();
     updateFootShadows();
     // スプリングボーン（髪・服）、視線、表情をまとめて進める

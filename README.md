@@ -225,6 +225,8 @@ PC の Chrome で試すだけなら、[WebXR API Emulator](https://chromewebstor
 | 小物を跳ねさせる | — | クリック |
 | 小物を元に戻す | — | R キー |
 
+テーブルの上に**野球ボール**があります。つかんで投げると、キャラクターが目と首で追いかけます。
+
 右の壁のスイッチ 3 つで、時間帯（昼 / 夕 / 夜）が切り替わります。
 
 ### URL オプション
@@ -240,6 +242,7 @@ PC の Chrome で試すだけなら、[WebXR API Emulator](https://chromewebstor
 | `?cull=off` | 視錐台カリングを完全に切る（外縁が欠けるヘッドセット向け） |
 | `?bob=0.5` | 歩行時の頭の上下動の強さ（既定 1、`?bob=0` で切る） |
 | `?mute` | 足音を鳴らさない |
+| `?sit=off` | キャラクターをソファに座らせない |
 | `?debug` | VR 内にデバッグパネルを出す（PC では D キーでも切替） |
 | `?vrm=./models/other.vrm` | 読み込む VRM を差し替える（既定 `./models/character.vrm`） |
 | `?walk=off` | キャラクターを歩かせず、その場に立たせる |

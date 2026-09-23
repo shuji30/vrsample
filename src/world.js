@@ -29,6 +29,7 @@ const FRICTION = 0.78;
  * @param {THREE.Camera} [options.camera] キャラクターに視線で追わせる相手
  * @param {string} [options.characterUrl] VRM ファイルの URL
  * @param {boolean} [options.wander] キャラクターを歩きまわらせるか
+ * @param {boolean} [options.sit] ときどきソファに座らせるか
  */
 export function createWorld(renderer, scene, {
   textureQuality = 1,
@@ -37,6 +38,7 @@ export function createWorld(renderer, scene, {
   camera = null,
   characterUrl,
   wander = true,
+  sit = true,
 } = {}) {
   const tex = createTextures(renderer, { quality: textureQuality });
 
@@ -62,7 +64,9 @@ export function createWorld(renderer, scene, {
   lighting.refreshEnvironment();
 
   // キャラクターは読み込みが非同期なので、部屋の生成はここで待たない
-  const character = createCharacter(scene, { url: characterUrl, camera, wander });
+  const character = createCharacter(scene, { url: characterUrl, camera, wander, sit });
+  // 投げられたボールを目で追わせる
+  character.watch(furniture.ball);
 
   const { grabbables, buttons } = furniture;
 
@@ -122,7 +126,7 @@ export function createWorld(renderer, scene, {
       if (prop.position.y < surfaceY + data.halfSize) {
         prop.position.y = surfaceY + data.halfSize;
         if (data.velocity.y < 0) {
-          data.velocity.y = -data.velocity.y * RESTITUTION;
+          data.velocity.y = -data.velocity.y * (data.restitution ?? RESTITUTION);
           if (Math.abs(data.velocity.y) < 0.35) data.velocity.y = 0;
           data.velocity.x *= FRICTION;
           data.velocity.z *= FRICTION;
@@ -165,6 +169,7 @@ export function createWorld(renderer, scene, {
     room,
     park,
     furniture,
+    ball: furniture.ball,
     lighting,
     character,
     update,

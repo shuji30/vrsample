@@ -220,6 +220,7 @@ async function start() {
     camera,
     characterUrl: params.get('vrm') ?? undefined,
     wander: params.get('walk') !== 'off',
+    sit: params.get('sit') !== 'off',
   });
   const buildMs = Math.round(performance.now() - started);
 

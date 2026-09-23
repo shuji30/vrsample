@@ -272,14 +272,13 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
    * 制限しても、実空間で一歩踏み出せば頭は壁の外に出てしまう。
    */
   function clampToBounds() {
-    const bounds = world.bounds;
-    if (!bounds) return;
+    const clamp = world.clampToBounds;
+    if (!clamp) return;
 
     renderer.xr.getCamera().getWorldPosition(pivot);
-    if (pivot.x < bounds.minX) player.position.x += bounds.minX - pivot.x;
-    else if (pivot.x > bounds.maxX) player.position.x += bounds.maxX - pivot.x;
-    if (pivot.z < bounds.minZ) player.position.z += bounds.minZ - pivot.z;
-    else if (pivot.z > bounds.maxZ) player.position.z += bounds.maxZ - pivot.z;
+    const inside = clamp(pivot.x, pivot.z);
+    player.position.x += inside.x - pivot.x;
+    player.position.z += inside.z - pivot.z;
   }
 
   function applyDeadzone(value) {

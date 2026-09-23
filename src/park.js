@@ -610,27 +610,42 @@ function createBench(tex) {
   return group;
 }
 
-/** 横桟の低い柵。テラスと芝生の境目に置いて奥行きの層を作る。 */
-function createFence(length, seed = 3) {
+/**
+ * 横桟の低い柵。テラスと芝生の境目に置いて奥行きの層を作る。
+ * gap を渡すと中央をその幅だけ空ける（掃き出し窓から庭へ出る通り道）。
+ */
+function createFence(length, { gap = 0, seed = 3 } = {}) {
   const group = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({ color: 0xcfc6b4, roughness: 0.78, metalness: 0 });
   const rand = makeRandom(seed);
-  const spacing = 1.5;
-  const count = Math.round(length / spacing);
+  const half = gap / 2;
 
-  for (let i = 0; i <= count; i++) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.80, 0.075), material);
-    post.position.set(-length / 2 + i * spacing, 0.40, (rand() - 0.5) * 0.02);
-    post.rotation.y = (rand() - 0.5) * 0.05;
-    post.castShadow = true;
-    group.add(post);
+  const post = (x) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.80, 0.075), material);
+    mesh.position.set(x, 0.40, (rand() - 0.5) * 0.02);
+    mesh.rotation.y = (rand() - 0.5) * 0.05;
+    mesh.castShadow = true;
+    group.add(mesh);
+  };
+
+  // 通り道の左右に分けて桟を張る
+  const spans = gap > 0
+    ? [[-length / 2, -half], [half, length / 2]]
+    : [[-length / 2, length / 2]];
+
+  for (const [from, to] of spans) {
+    const span = to - from;
+    if (span <= 0.01) continue;
+    const count = Math.max(1, Math.round(span / 1.5));
+    for (let i = 0; i <= count; i++) post(from + (span * i) / count);
+    for (const y of [0.34, 0.66]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(span, 0.075, 0.035), material);
+      rail.position.set(from + span / 2, y, 0);
+      rail.castShadow = true;
+      group.add(rail);
+    }
   }
-  for (const y of [0.34, 0.66]) {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(length, 0.075, 0.035), material);
-    rail.position.set(0, y, 0);
-    rail.castShadow = true;
-    group.add(rail);
-  }
+
   return group;
 }
 
@@ -768,7 +783,8 @@ export function createPark(scene, tex) {
   terrace.receiveShadow = true;
   group.add(terrace);
 
-  const fence = createFence(13);
+  // 掃き出し窓の正面を 2.2m 空けて、庭へ出る通り道にする
+  const fence = createFence(13, { gap: 2.2 });
   fence.position.set(0, 0, ROOM.minZ - ROOM.wall - 2.2);
   group.add(fence);
 
@@ -803,6 +819,17 @@ export function createPark(scene, tex) {
   group.add(sand);
 
   // --- 小物 ---------------------------------------------------------------
+  // 通り道の飛び石。歩ける場所が見た目で分かるようにする
+  const stone = new THREE.BoxGeometry(0.52, 0.04, 0.38);
+  const stoneMaterial = tex.material('plaster', { sizeX: 0.52, sizeY: 0.38, color: 0x9d9890, roughness: 0.95 });
+  for (let i = 0; i < 5; i++) {
+    const slab = new THREE.Mesh(stone, stoneMaterial);
+    slab.position.set((i % 2 ? 0.16 : -0.16), 0.02, ROOM.minZ - ROOM.wall - 2.6 - i * 0.62);
+    slab.rotation.y = (i % 2 ? 0.05 : -0.04);
+    slab.receiveShadow = true;
+    group.add(slab);
+  }
+
   const bench = createBench(tex);
   bench.position.set(-0.3, 0, -6.2);
   bench.rotation.y = Math.PI + 0.25;

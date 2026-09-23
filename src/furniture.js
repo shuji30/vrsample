@@ -100,6 +100,66 @@ function planarUV(geometry) {
   return geometry;
 }
 
+/**
+ * 硬式野球ボールの表面。
+ *
+ * 直径 7.3cm の白い革に、赤い縫い目が 8 の字に 2 本走る。球の UV は
+ * 経度 u・緯度 v なので、赤道をはさんで上下に振れる正弦曲線を 2 本描くと
+ * それらしい 8 の字になる。縫い目は線ではなく短い斜めのステッチの列。
+ */
+function createBaseballTexture(size = 512) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size / 2;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+
+  // 革の下地。わずかにムラを入れて真っ白を避ける
+  ctx.fillStyle = '#f2f0e8';
+  ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 2200; i++) {
+    ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.035})`;
+    ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2);
+  }
+
+  const amp = H * 0.26;
+  const seam = (x, sign) => H / 2 + sign * amp * Math.sin((x / W) * Math.PI * 2);
+
+  for (const sign of [1, -1]) {
+    // 縫い目のくぼみ
+    ctx.strokeStyle = 'rgba(120, 110, 100, 0.35)';
+    ctx.lineWidth = Math.max(2, size * 0.008);
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 4) {
+      const y = seam(x, sign);
+      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // ステッチ。曲線の接線に対して斜めに短い線を並べる
+    ctx.strokeStyle = '#c0392b';
+    ctx.lineWidth = Math.max(2, size * 0.009);
+    ctx.lineCap = 'round';
+    const step = W / 34;
+    for (let x = step / 2; x < W; x += step) {
+      const y = seam(x, sign);
+      const slope = (seam(x + 1, sign) - seam(x - 1, sign)) / 2;
+      const angle = Math.atan2(slope, 1) + Math.PI / 2.4 * sign;
+      const len = size * 0.022;
+      ctx.beginPath();
+      ctx.moveTo(x - Math.cos(angle) * len, y - Math.sin(angle) * len);
+      ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
+      ctx.stroke();
+    }
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  return texture;
+}
+
 /** 額装した板を壁に掛ける。 */
 function framed(map, width, height, frameMaterial) {
   const group = new THREE.Group();
@@ -575,5 +635,43 @@ export function createFurniture(scene, tex, onSelectTheme) {
   tray.receiveShadow = true;
   group.add(tray);
 
-  return { group, grabbables, buttons, lampSockets };
+  // --- 野球ボール ---------------------------------------------------------
+  // 硬式球は直径 7.3cm。つかんで投げられるよう、小物と同じ扱いにする。
+  const BALL_RADIUS = 0.0365;
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_RADIUS, 32, 24),
+    new THREE.MeshPhysicalMaterial({
+      map: createBaseballTexture(),
+      roughness: 0.62,
+      metalness: 0,
+      clearcoat: 0.25,
+      clearcoatRoughness: 0.5,
+    }),
+  );
+  const ballHome = new THREE.Vector3(
+    TABLE.center.x + 0.30,
+    TABLE.top + BALL_RADIUS,
+    TABLE.center.z + 0.26,
+  );
+  ball.position.copy(ballHome);
+  ball.castShadow = true;
+  ball.receiveShadow = true;
+  ball.name = 'baseball';
+  ball.userData = {
+    grabbable: true,
+    label: '野球ボール',
+    home: ballHome,
+    halfSize: BALL_RADIUS,
+    // 革のボールなので小物より弾む
+    restitution: 0.55,
+    velocity: new THREE.Vector3(),
+    spin: new THREE.Vector3(),
+    held: false,
+    baseColor: new THREE.Color(0xf2f0e8),
+    baseEmissive: new THREE.Color(0x000000),
+  };
+  group.add(ball);
+  grabbables.push(ball);
+
+  return { group, grabbables, buttons, lampSockets, ball };
 }

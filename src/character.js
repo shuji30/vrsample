@@ -90,16 +90,18 @@ const SIT_POSE = {
   // 乗り上げてめくれ、深い（下げすぎ）と腿が座面クッションにめり込む。
   // 座る位置は placeSeats がこの角度から逆算して前寄りに取るので、
   // 膝は座面の前縁を越え、腿の下面がちょうど座面をなぞる。
-  leftUpperLeg: [-1.15, 0.04, 0.03],
-  rightUpperLeg: [-1.15, -0.04, -0.03],
+  // 膝は閉じる。スカートが短いので、開くとどうしても中が見えてしまう
+  leftUpperLeg: [-1.15, 0.05, 0.11],
+  rightUpperLeg: [-1.15, -0.05, -0.11],
   // 脛はほぼ真下。身長 1.4m のモデルに座面 61cm のソファなので足は床に
   // 届かない。無理に届かせようとすると腰を沈めるしかなくなる。
   leftLowerLeg: [1.10, 0, 0],
   rightLowerLeg: [1.10, 0, 0],
   leftFoot: [0.20, 0, 0],
   rightFoot: [0.20, 0, 0],
-  spine: [-0.06, 0, 0],
-  chest: [-0.05, 0, 0],
+  // やや前かがみ。裾が腿の上に垂れて、見た目が落ち着く
+  spine: [-0.15, 0, 0],
+  chest: [-0.10, 0, 0],
 };
 
 const POSE_BONES = [...new Set([...Object.keys(STAND_POSE), ...Object.keys(SIT_POSE)])];
@@ -288,6 +290,16 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let blink = 0;
   let settleSprings = 0;  // スプリングボーンを落ち着かせる残りフレーム数
 
+  // --- 視線 ---------------------------------------------------------------
+  let watched = null;      // 投げられたら目で追うもの（野球ボール）
+  let gaze = 0;            // それを見ている度合い（0..1）
+  let lookYaw = 0;         // いま首が向いている角度（体の正面から）
+  let lookPitch = 0;
+  let idleYaw = 0;         // きょろきょろの目標
+  let idlePitch = 0;
+  let idleUntil = 1.5;
+  let headRestY = 1.2;     // 頭のボーンの、足元からの高さ
+
   const ready = loader
     .loadAsync(url)
     .then((gltf) => {
@@ -313,6 +325,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
       cacheBones(vrm.humanoid);
       curlFingers(vrm.humanoid);
+      relaxSkirtWeights(vrm);
 
       // 腰の高さと腿の長さは、座面に腰を乗せる位置に要る。歩幅も身体に合わせる
       hipsRestY = bones.hips ? bones.hips.position.y : 0.7;
@@ -330,6 +343,11 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
       group.add(vrm.scene);
       measureLegs();
+      if (bones.head) {
+        const head = new THREE.Vector3();
+        bones.head.getWorldPosition(head);
+        headRestY = head.y;
+      }
       return vrm;
     })
     .catch((error) => {
@@ -337,6 +355,81 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       console.warn(`[character] ${url} を読み込めませんでした:`, error.message ?? error);
       return null;
     });
+
+  /**
+   * スカートの頂点が腿（UpperLeg）から受けている影響を、腰（Hips）へ移す。
+   *
+   * このモデルのスカートは腿にスキニングされているので、座って腿を上げると
+   * 裾が腿に引っぱられて持ち上がり、めくれ上がったように見える。スカートの
+   * ボーンを畳んでも直らないのはこのため（実際に試して変わらなかった）。
+   *
+   * 「スカートの頂点」は、スプリングボーン用のスカートボーン（VRoid 系なら
+   * J_Sec_*Skirt*）から影響を受けているかどうかで判定する。名前でメッシュを
+   * 探すより、モデルによる違いに強い。
+   *
+   * 腰へ移すと、歩いたときに脚がスカートを押し広げる動きは失われるが、
+   * 裾はスプリングボーンが揺らすので見た目の破綻はない。
+   */
+  function relaxSkirtWeights(model) {
+    let moved = 0;
+
+    model.scene.traverse((mesh) => {
+      if (!mesh.isSkinnedMesh) return;
+      const skeleton = mesh.skeleton?.bones;
+      const index = mesh.geometry?.attributes?.skinIndex;
+      const weight = mesh.geometry?.attributes?.skinWeight;
+      if (!skeleton || !index || !weight) return;
+
+      const skirt = new Set();
+      const thigh = new Set();
+      let hips = -1;
+      skeleton.forEach((bone, i) => {
+        const name = bone?.name ?? '';
+        if (/skirt/i.test(name)) skirt.add(i);
+        else if (/upperleg/i.test(name)) thigh.add(i);
+        else if (hips < 0 && /hips/i.test(name)) hips = i;
+      });
+      if (hips < 0 || skirt.size === 0 || thigh.size === 0) return;
+
+      for (let v = 0; v < index.count; v++) {
+        let isSkirt = false;
+        for (let k = 0; k < 4; k++) {
+          if (weight.getComponent(v, k) > 0.01 && skirt.has(index.getComponent(v, k))) {
+            isSkirt = true;
+            break;
+          }
+        }
+        if (!isSkirt) continue;
+
+        let transfer = 0;
+        for (let k = 0; k < 4; k++) {
+          const w = weight.getComponent(v, k);
+          if (w > 0 && thigh.has(index.getComponent(v, k))) {
+            transfer += w;
+            weight.setComponent(v, k, 0);
+          }
+        }
+        if (transfer <= 0) continue;
+
+        // すでに腰の枠があればそこへ、無ければ空いた枠を腰にする
+        let slot = -1;
+        for (let k = 0; k < 4; k++) if (index.getComponent(v, k) === hips) { slot = k; break; }
+        if (slot < 0) {
+          for (let k = 0; k < 4; k++) if (weight.getComponent(v, k) <= 0) { slot = k; break; }
+          if (slot >= 0) index.setComponent(v, slot, hips);
+        }
+        if (slot < 0) continue;   // 4 枠が全部埋まっている頂点はあきらめる
+
+        weight.setComponent(v, slot, weight.getComponent(v, slot) + transfer);
+        moved++;
+      }
+
+      index.needsUpdate = true;
+      weight.needsUpdate = true;
+    });
+
+    return moved;
+  }
 
   /**
    * 脚の寸法を、立ちポーズの実体から測る。
@@ -612,6 +705,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       bones.hips.position.y = hipsRestY;
     }
     if (bones.neck) bones.neck.rotation.set(0, 0, 0);
+    if (bones.head) bones.head.rotation.set(0, 0, 0);
   }
 
   /**
@@ -750,6 +844,74 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   }
 
   /**
+   * 首と視線。
+   *
+   * やることは 2 つ。ふだんは少しずつあたりを見まわし（キョロキョロ）、
+   * ボールが動いていればそちらを追う。追うのは速く、外すのはゆっくりにすると
+   * 「気づいて目で追い、やがて興味を失う」ように見える。
+   *
+   * 首だけでなく頭にも配分するのは、片方だけだと可動域に対して曲がりすぎて
+   * 不自然になるため。目玉は VRM の lookAt に任せる。
+   */
+  function applyGaze(dt) {
+    const data = watched?.userData;
+    const speed = data?.velocity ? data.velocity.length() : 0;
+    // 持たれている / 飛んでいるあいだは気にする
+    const interested = Boolean(data && (data.held || speed > 0.6));
+    gaze += ((interested ? 1 : 0) - gaze) * Math.min(1, dt * (interested ? 7 : 1.1));
+
+    // --- 目標の向きを決める -----------------------------------------------
+    let wantYaw = 0;
+    let wantPitch = 0;
+
+    if (gaze > 0.01 && watched) {
+      const dx = watched.position.x - group.position.x;
+      const dz = watched.position.z - group.position.z;
+      const dy = watched.position.y - (group.position.y + headRestY);
+      const horizontal = Math.hypot(dx, dz);
+      wantYaw = angleDelta(Math.atan2(dx, dz), yaw);
+      wantPitch = Math.atan2(dy, Math.max(0.2, horizontal));
+    }
+
+    // きょろきょろ。数秒ごとに見る先を変え、そこへゆっくり向く
+    if (elapsed > idleUntil) {
+      idleYaw = (Math.random() - 0.5) * 0.62;
+      idlePitch = (Math.random() - 0.5) * 0.20;
+      idleUntil = elapsed + 2.2 + Math.random() * 3.4;
+    }
+    // ゆっくりした揺らぎを足して、目標に着いたあと完全に止まらないようにする
+    const driftYaw = Math.sin(elapsed * 0.37) * 0.05 + Math.sin(elapsed * 0.83 + 1.7) * 0.03;
+    const driftPitch = Math.sin(elapsed * 0.29 + 0.6) * 0.022;
+
+    wantYaw = lerp(idleYaw + driftYaw, wantYaw, gaze);
+    wantPitch = lerp(idlePitch + driftPitch, wantPitch, gaze);
+
+    // 首が回りきらないように抑える
+    wantYaw = Math.max(-0.95, Math.min(0.95, wantYaw));
+    wantPitch = Math.max(-0.5, Math.min(0.45, wantPitch));
+
+    // 追うときは速く、ふだんはゆっくり
+    const follow = Math.min(1, dt * lerp(1.8, 9, gaze));
+    lookYaw += (wantYaw - lookYaw) * follow;
+    lookPitch += (wantPitch - lookPitch) * follow;
+
+    // 首と頭で分担する
+    if (bones.neck) {
+      bones.neck.rotation.y += lookYaw * 0.55;
+      bones.neck.rotation.x += -lookPitch * 0.5;
+    }
+    if (bones.head) {
+      bones.head.rotation.y += lookYaw * 0.45;
+      bones.head.rotation.x += -lookPitch * 0.5;
+      // 追っているときは少し首をかしげる。生き物らしさが出る
+      bones.head.rotation.z += lookYaw * 0.10 * gaze;
+    }
+
+    // 目玉は VRM の lookAt に任せる。見る相手を切り替えるだけ
+    if (vrm.lookAt) vrm.lookAt.target = gaze > 0.45 && watched ? watched : camera;
+  }
+
+  /**
    * 立ち姿を生かす。棒立ちは 3D だとすぐ人形に見えるので、呼吸（1 分に 15 回
    * くらい）と、それより遅い重心の揺れを別々の周期で重ねる。
    */
@@ -827,6 +989,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     applyPose();
     applyGait();
     applyIdle(dt);
+    applyGaze(dt);
     updateFootShadows();
     // スプリングボーン（髪・服）、視線、表情をまとめて進める
     vrm.update(dt);
@@ -847,6 +1010,8 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     group,
     ready,
     update,
+    /** 投げられたら目で追う対象（野球ボールなど）を登録する */
+    watch(object) { watched = object; },
     get vrm() { return vrm; },
     /** ライセンス表記用。読み込み前は null */
     get meta() { return vrm?.meta ?? null; },

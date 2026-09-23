@@ -247,7 +247,9 @@ const REACTIONS = {
   },
 };
 const REACTION_NAMES = Object.keys(REACTIONS);
-const REACTION_FACES = ['happy', 'relaxed', 'surprised', 'aa', 'ee', 'oh', 'blinkRight'];
+const REACTION_FACES = ['happy', 'relaxed', 'surprised', 'aa', 'ih', 'ou', 'ee', 'oh', 'blinkRight'];
+/** 口の形（しゃべるとき voice.js が入れる） */
+const MOUTH_SHAPES = ['aa', 'ih', 'ou', 'ee', 'oh'];
 
 const POSE_BONES = [...new Set([
   ...Object.keys(STAND_POSE), ...Object.keys(SIT_POSE), ...Object.keys(CROSS_LEGS),
@@ -509,6 +511,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let reaction = null;                      // { recipe, start, until, strength }
   let lastReaction = '';
   const faceNow = Object.fromEntries(REACTION_FACES.map((n) => [n, 0]));
+  // しゃべっている口。リアクションの口（大よろこびの aa など）と大きいほうを使う
+  const mouthWant = Object.fromEntries(MOUTH_SHAPES.map((n) => [n, 0]));
+  const mouthNow = Object.fromEntries(MOUTH_SHAPES.map((n) => [n, 0]));
   let tiltNow = 0;
   let nodNow = 0;
   /**
@@ -1384,10 +1389,14 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       tiltWant = (step.tilt ?? 0) * reaction.strength;
       nodWant = (step.nod ?? 0) * reaction.strength;
     }
+    // 口は速く動かす（1 拍 0.13 秒ほど）。表情ほどなめらかにするとぼやける
+    for (const name of MOUTH_SHAPES) {
+      mouthNow[name] += (mouthWant[name] - mouthNow[name]) * Math.min(1, dt * 22);
+    }
     for (const name of REACTION_FACES) {
       const target = (want?.[name] ?? 0) * (reaction?.strength ?? 1);
       faceNow[name] += (target - faceNow[name]) * Math.min(1, dt * (target > faceNow[name] ? 9 : 2.4));
-      expressions.setValue(name, faceNow[name]);
+      expressions.setValue(name, Math.max(faceNow[name], mouthNow[name] ?? 0));
     }
     tiltNow += (tiltWant - tiltNow) * Math.min(1, dt * 5);
     nodNow += (nodWant - nodNow) * Math.min(1, dt * 5);
@@ -1839,6 +1848,12 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       lastReaction = name;
       reaction = { recipe: REACTIONS[name], start: elapsed, until: elapsed + seconds, strength, name };
     },
+    /** 口の形を入れる（{ aa, ih, ou, ee, oh }、0..1）。null で閉じる */
+    setMouth(shape) {
+      for (const name of MOUTH_SHAPES) mouthWant[name] = shape?.[name] ?? 0;
+    },
+    /** 検証用：いまの口の開き（いちばん大きい形の値） */
+    get mouthOpen() { return Math.max(...MOUTH_SHAPES.map((n) => mouthNow[n])); },
     /** 検証用：いまのリアクションの名前 */
     get reactionName() { return reaction && elapsed < reaction.until ? reaction.name : null; },
     /** 指を開く度合い（0 = 軽く握る、1 = 開く） */

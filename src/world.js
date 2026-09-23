@@ -6,6 +6,7 @@ import { createFurniture, TABLE } from './furniture.js';
 import { createLighting } from './lighting.js';
 import { createCharacter } from './character.js';
 import { createCatchGame } from './catchball.js';
+import { createVoice } from './voice.js';
 import { DEFAULT_THEME } from './themes.js';
 
 /**
@@ -56,6 +57,7 @@ export function createWorld(renderer, scene, {
   characterUrl,
   wander = true,
   sit = true,
+  voice: voiceOn = true,
 } = {}) {
   const tex = createTextures(renderer, { quality: textureQuality });
 
@@ -84,9 +86,11 @@ export function createWorld(renderer, scene, {
   const character = createCharacter(scene, { url: characterUrl, camera, wander, sit });
   // 投げられたボールを目で追わせる
   character.watch(furniture.ball);
+  // 女の子の声（音声合成 + 口の動き + 吹き出し）。?voice=off で声だけ切る
+  const voice = camera ? createVoice({ character, scene, camera, muted: !voiceOn }) : null;
   // 庭に出るとキャッチボールが始まる（プレイヤーの頭 = camera の位置で判定）
   const catchGame = camera
-    ? createCatchGame({ character, ball: furniture.ball, camera, scene })
+    ? createCatchGame({ character, ball: furniture.ball, camera, scene, voice })
     : null;
 
   const { grabbables, buttons } = furniture;
@@ -155,6 +159,7 @@ export function createWorld(renderer, scene, {
   function update(dt) {
     catchGame?.update(dt);
     character.update(dt);
+    voice?.update(dt);
 
     // --- スイッチの押し込み ------------------------------------------------
     for (const button of buttons) {
@@ -294,6 +299,7 @@ export function createWorld(renderer, scene, {
     lighting,
     character,
     catchGame,
+    voice,
     update,
     setTheme: (key) => lighting.setTheme(key),
     getTheme: () => lighting.getTheme(),

@@ -21,6 +21,8 @@ import { createSeesaw } from './seesaw.js';
 import { createSeesawGame } from './seesawgame.js';
 import { createBuranko } from './buranko.js';
 import { createBurankoGame } from './burankogame.js';
+import { createPond, createFishing, inPond, outOfPond } from './pond.js';
+import { createFishingGame } from './fishinggame.js';
 import { createFireworks } from './fireworks.js';
 
 /**
@@ -221,6 +223,28 @@ export function createWorld(renderer, scene, {
     };
   }
 
+  // 庭の左の池と釣り。プレイヤーが桟橋のベンチの右に座ると、女の子が左に座って一緒に釣る
+  scene.add(createPond());
+  let fishingGame = null;
+  const fishing = createFishing({
+    scene,
+    onEvent: (kind, info) => {
+      if (!fishingGame?.seated) return;
+      const n = info ? `${info.name} ${info.cm}センチ` : '';
+      if (kind === 'bite') voice?.say('fishingBite');
+      else if (kind === 'caught') voice?.say('fishingCaught', { n });
+      else if (kind === 'escaped') voice?.say('fishingEscaped', { chance: 0.7 });
+      else if (kind === 'girlCaught') voice?.say('fishingGirlCaught', { n });
+    },
+  });
+  fishingGame = camera ? createFishingGame({ character, fishing, voice }) : null;
+  if (fishingGame) {
+    fishingGame.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
+    };
+  }
+
   // プレイヤーがカートに乗ると、女の子もピンクのカートに乗る。スタートの枠に並ぶとレース
   const kartRace = camera ? createKartRace({ scene, playerKart: karts.player, herKart: karts.her, voice }) : null;
   const kartGame = camera
@@ -288,6 +312,9 @@ export function createWorld(renderer, scene, {
     // 庭の左のポケバイのコース（と、その手前の芝生）。庭（x -6 から）と 1m 重ねてつなぐ。
     // テニスコートの左の柵（x -4.5）とは重ならない
     { ...BIKE_TRACK.area },
+    // さらに左の池のまわり（pond.js）。ポケバイの範囲と 0.5m 重ねる。左の生け垣は x -32.5。
+    // 池の水の上は clampToBounds の最後で外す（桟橋の上は歩ける）
+    { minX: -31.5, maxX: -16.5, minZ: -33.5, maxZ: -5.5 },
   ];
 
   function courtRegion() {
@@ -309,6 +336,19 @@ export function createWorld(renderer, scene, {
    * なって、ネットの外へ出てしまった。
    */
   function clampToBounds(x, z, inset = 0, from = null) {
+    const p = clampToRegions(x, z, inset, from);
+    // 池の水の上には入れない（縁の石のぶん 0.2m 広く見る）。直前の点が池の外なら、
+    // 縁に沿って滑らせる（桟橋の先から横へ落ちたとき、縁まで大きく飛ばさないように）
+    const m = inset + 0.2;
+    if (!inPond(p.x, p.z, m)) return p;
+    if (from && !inPond(from.x, from.z, m)) {
+      if (!inPond(p.x, from.z, m)) return { x: p.x, z: from.z };
+      if (!inPond(from.x, p.z, m)) return { x: from.x, z: p.z };
+      return { x: from.x, z: from.z };
+    }
+    return outOfPond(p.x, p.z, m);
+  }
+  function clampToRegions(x, z, inset = 0, from = null) {
     let best = null;
     let bestDistance = Infinity;
     let home = null;
@@ -367,17 +407,19 @@ export function createWorld(renderer, scene, {
     camera.getWorldPosition(eye);
     let next = shadowAt;
     if (eye.x > KART_TRACK.area.minX + 1.5) next = 'kart';
+    else if (eye.x < -18.5 || (shadowAt === 'pond' && eye.x < -17)) next = 'pond';
     else if (eye.x < BIKE_TRACK.area.maxX - 1.5 && eye.z < -13.5) next = 'bike';
     else if (eye.x < KART_TRACK.area.minX - 0.5 || shadowAt !== 'kart') {
       if (shadowAt !== 'court' && eye.z < courtNear - 1.0) next = 'court';
       else if (shadowAt === 'court' && eye.z > courtNear + 1.0) next = 'house';
-      else if (shadowAt === 'kart' || shadowAt === 'bike') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
+      else if (shadowAt === 'kart' || shadowAt === 'bike' || shadowAt === 'pond') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
     }
     if (next === shadowAt) return;
     shadowAt = next;
     shadowOnCourt = next === 'court';
     if (next === 'kart') lighting.setShadowFocus(16.5, -19.5);
     else if (next === 'bike') lighting.setShadowFocus(-11.5, -22.5);
+    else if (next === 'pond') lighting.setShadowFocus(-24.0, -11.0);
     else if (next === 'court') lighting.setShadowFocus(PARK.court.x, PARK.court.z + 1.5);
     else lighting.setShadowFocus(0, -3.0);
   }
@@ -493,13 +535,22 @@ export function createWorld(renderer, scene, {
         burankoGame.start();
       }
     }
-    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
+    // 釣りも同じ
+    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && fishingGame?.wanted && !fishingGame.active) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        fishingGame.start();
+      }
+    }
+    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
       catchGame?.suspend();
       tennisGame.start();
     }
     if (kartGame?.active) kartGame.update(dt);
     else if (bikeGame?.active) { /* 下で動かす */ } else if (seesawGame?.active) seesawGame.update(dt);
     else if (burankoGame?.active) burankoGame.update(dt);
+    else if (fishingGame?.active) fishingGame.update(dt);
     else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
     // ポケバイは、女の子が見ていないあいだもラップを数えて、表示を出す
@@ -510,6 +561,8 @@ export function createWorld(renderer, scene, {
     // ブランコ：女の子の席はいつも、プレイヤーの席は乗っていないときだけ、ここで動かす
     buranko.updateGirl(dt);
     if (!burankoGame?.wanted) buranko.settle(dt);
+    // 女の子の竿（座って釣っているあいだだけ出す）
+    fishing.updateGirl(dt, Boolean(fishingGame?.seated));
     kartRace?.update(dt, { driving: Boolean(kartGame?.wanted), seated: Boolean(kartGame?.driving) });
     // カートコースの起伏の上を歩くときは、足元を地面の高さに（カートに乗り降りしているあいだは除く）
     if (character.body.loaded && !['getIn', 'drive', 'stopKart', 'getOut'].includes(kartGame?.state)) {
@@ -666,7 +719,7 @@ export function createWorld(renderer, scene, {
 
   return {
     grabbables,
-    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body],
+    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body],
     floor: room.floor,
     /** 地面の高さ（カートコースの起伏。ほかは 0） */
     groundHeight,
@@ -686,15 +739,17 @@ export function createWorld(renderer, scene, {
     kartRace,
     /** kartdrive.js から：プレイヤーがカートに乗った / 降りた */
     onKartEnter: (v) => {
-      if (v === bike) { if (bikeGame) bikeGame.playerRiding = true; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = true; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = true; } else if (kartGame) kartGame.playerDriving = true;
+      if (v === bike) { if (bikeGame) bikeGame.playerRiding = true; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = true; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = true; } else if (v === fishing) { if (fishingGame) fishingGame.playerRiding = true; } else if (kartGame) kartGame.playerDriving = true;
     },
     onKartExit: (v) => {
-      if (v === bike) { if (bikeGame) bikeGame.playerRiding = false; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = false; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = false; } else if (kartGame) kartGame.playerDriving = false;
+      if (v === bike) { if (bikeGame) bikeGame.playerRiding = false; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = false; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = false; } else if (v === fishing) { fishing.leave(); if (fishingGame) fishingGame.playerRiding = false; } else if (kartGame) kartGame.playerDriving = false;
     },
     seesaw,
     seesawGame,
     buranko,
     burankoGame,
+    fishing,
+    fishingGame,
     bike,
     bikeGame,
     /** ラケットで打ったときに呼ばれる（{ racket, ball, speed, racketSpeed, by, position }） */

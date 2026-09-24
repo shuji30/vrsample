@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { ROOM } from './room.js';
+import { createKartCourse } from './karttrack.js';
 
 /**
  * 窓の外の公園。さるすべりの木と滑り台がある。
@@ -709,13 +710,14 @@ function createBackdrop(tex, seed = 11) {
   }
 
   // 奥の生け垣と木立は、テニスコートの向こうまで下げてある（以前は z = -17.5 / -22）
-  hedgeRow({ x: -24, z: -34 }, { x: 24, z: -34 }, 46);
+  // 右側（+X）はカートコースのぶん広げて、生け垣と木を奥へ下げる
+  hedgeRow({ x: -24, z: -34.5 }, { x: 31, z: -34.5 }, 52);
   hedgeRow({ x: -17.5, z: -36 }, { x: -17.5, z: 6 }, 40);
-  hedgeRow({ x: 17.5, z: -36 }, { x: 17.5, z: 6 }, 40);
+  hedgeRow({ x: 28.5, z: -36 }, { x: 28.5, z: 6 }, 40);
 
-  treeRow({ x: -22, z: -38.5 }, { x: 22, z: -38.5 }, 16);
+  treeRow({ x: -22, z: -38.5 }, { x: 31, z: -38.5 }, 19);
   treeRow({ x: -20.5, z: -36 }, { x: -20.5, z: 6 }, 17);
-  treeRow({ x: 20.5, z: -36 }, { x: 20.5, z: 6 }, 17);
+  treeRow({ x: 31.5, z: -36 }, { x: 31.5, z: 6 }, 17);
 
   const matrix = new THREE.Matrix4();
   const quaternion = new THREE.Quaternion();
@@ -1114,6 +1116,9 @@ export function createPark(scene, tex) {
   const court = createTennisCourt(tex);
   court.position.set(PARK.court.x, 0, PARK.court.z);
   group.add(court);
+
+  // --- カートコース（庭の右、テニスコートの横） -----------------------------
+  group.add(createKartCourse());
 
   return { group, sky, skyUniforms };
 }

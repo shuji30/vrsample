@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { ROOM } from './room.js';
 import { createKartCourse } from './karttrack.js';
+import { createBikeCourse } from './biketrack.js';
 
 /**
  * 窓の外の公園。さるすべりの木と滑り台がある。
@@ -1119,6 +1120,7 @@ export function createPark(scene, tex) {
 
   // --- カートコース（庭の右、テニスコートの横） -----------------------------
   group.add(createKartCourse({ grass: lawn.material }));
+  group.add(createBikeCourse());
 
   return { group, sky, skyUniforms };
 }

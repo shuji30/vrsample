@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createTextures } from './textures.js';
 import { createRoom, ROOM } from './room.js';
-import { createPark } from './park.js';
+import { createPark, PARK } from './park.js';
 import { createFurniture, TABLE } from './furniture.js';
 import { createLighting } from './lighting.js';
 import { createCharacter } from './character.js';
@@ -117,7 +117,17 @@ export function createWorld(renderer, scene, {
     { minX: ROOM.minX + MARGIN, maxX: ROOM.maxX - MARGIN, minZ: ROOM.minZ + MARGIN, maxZ: ROOM.maxZ - MARGIN },
     { minX: door.x - door.width / 2 + 0.18, maxX: door.x + door.width / 2 - 0.18, minZ: outerZ - THROUGH, maxZ: ROOM.minZ + MARGIN + THROUGH },
     { minX: GARDEN.minX, maxX: GARDEN.maxX, minZ: GARDEN.minZ, maxZ: outerZ - 0.2 },
+    // 庭の奥のテニスコート（外まわりまで）。左右と奥は柵なので、ここが境目になる。
+    // 庭と重なるように手前へ 1.5m 長く取る（inset で縮めても継ぎ目が切れないように）
+    courtRegion(),
   ];
+
+  function courtRegion() {
+    const c = PARK.court;
+    const halfW = c.width / 2 + c.runoffSide;
+    const halfL = c.length / 2 + c.runoffEnd;
+    return { minX: c.x - halfW, maxX: c.x + halfW, minZ: c.z - halfL, maxZ: c.z + halfL + 1.5 };
+  }
 
   /**
    * 与えた点を、歩ける範囲のいちばん近いところへ寄せる。
@@ -156,7 +166,25 @@ export function createWorld(renderer, scene, {
     data.spin.set(0, 0, 0);
   }
 
+  // 影を落とす範囲。プレイヤーがテニスコートへ出たらコートへ寄せ、庭へ
+  // 戻ったら家のまわりへ戻す。境目に 2m の遊びをつけて、行き来でちらつかせない
+  const courtNear = PARK.court.z + PARK.court.length / 2 + PARK.court.runoffEnd;
+  const eye = new THREE.Vector3();
+  let shadowOnCourt = false;
+  function updateShadowFocus() {
+    if (!camera) return;
+    camera.getWorldPosition(eye);
+    if (!shadowOnCourt && eye.z < courtNear - 1.0) {
+      shadowOnCourt = true;
+      lighting.setShadowFocus(PARK.court.x, PARK.court.z + 1.5);
+    } else if (shadowOnCourt && eye.z > courtNear + 1.0) {
+      shadowOnCourt = false;
+      lighting.setShadowFocus(0, -3.0);
+    }
+  }
+
   function update(dt) {
+    updateShadowFocus();
     catchGame?.update(dt);
     character.update(dt);
     voice?.update(dt);

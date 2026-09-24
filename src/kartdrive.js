@@ -98,12 +98,13 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       player.headWorldPosition(tmp2);
       rig.position.x += tmp.x - tmp2.x;
       rig.position.z += tmp.z - tmp2.z;
-      rig.position.y = 0;
+      rig.position.y = world.groundHeight?.(tmp.x, tmp.z) ?? 0;
     } else {
       // PC：カートの左に立って、カートのほうを向く
       const ahead = new THREE.Vector3(Math.sin(kart.state.yaw), 0, Math.cos(kart.state.yaw));
-      camera.position.set(tmp.x, 1.62, tmp.z);
-      desktop.controls.target.set(tmp.x + ahead.x * 3, 1.2, tmp.z + ahead.z * 3);
+      // 目の高さは地面から 1.62m（坂の途中で降りても、地面に立つ）
+      camera.position.set(tmp.x, 1.62 + (world.groundHeight?.(tmp.x, tmp.z) ?? 0), tmp.z);
+      desktop.controls.target.set(tmp.x + ahead.x * 3, 1.2 + (world.groundHeight?.(tmp.x, tmp.z) ?? 0), tmp.z + ahead.z * 3);
       desktop.controls.update();
     }
     world.onKartExit?.(kart);

@@ -1118,7 +1118,7 @@ export function createPark(scene, tex) {
   group.add(court);
 
   // --- カートコース（庭の右、テニスコートの横） -----------------------------
-  group.add(createKartCourse());
+  group.add(createKartCourse({ grass: lawn.material }));
 
   return { group, sky, skyUniforms };
 }

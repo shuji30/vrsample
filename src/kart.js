@@ -1,5 +1,8 @@
 import * as THREE from 'three';
-import { KART_TRACK, TRACK_LENGTH, nearestOnTrack, trackPoint, trackTangent } from './karttrack.js';
+import { KART_TRACK, TRACK_LENGTH, groundHeight, nearestOnTrack, trackPoint, trackTangent } from './karttrack.js';
+
+/** 坂で受ける重力の加速度（m/s²）。本当の重力（9.8）そのままだと、小さい坂でも止まりそうになる */
+const SLOPE_GRAVITY = 5.5;
 
 /**
  * カート（子ども用のゴーカート）。見た目と、走りの物理。
@@ -149,6 +152,8 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart', perf
     travelYaw: 0,    // 進んでいる向き（ハンドブレーキで滑ると、車の向き yaw とずれる）
     slip: 0,         // 車の向きと進む向きのずれ（ラジアン）
     sliding: false,  // 後輪が滑っている（滑りから戻っている）あいだ
+    pitch: 0,        // 前が上がっている角度（坂。ラジアン）
+    roll: 0,         // 右（ローカル +X）が上がっている角度
     boost: 1,        // 最高速の倍率（レースの追い上げで女の子のカートだけ上げる）
     // カートの性能の倍率（最高速・加速・曲がるときのグリップ）。女の子のカートは速めにしてある
     perf: { top: 1, accel: 1, grip: 1, ...perf },
@@ -157,7 +162,23 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart', perf
 
   /** 見た目を state に合わせる */
   function pose() {
-    group.rotation.y = state.yaw;
+    // 地面の起伏に合わせて、後輪の車軸（原点）の高さに置き、前後・左右に傾ける
+    const x = group.position.x;
+    const z = group.position.z;
+    const fx = Math.sin(state.yaw);
+    const fz = Math.cos(state.yaw);
+    const rear = groundHeight(x, z);
+    const front = groundHeight(x + fx * KART.wheelBase, z + fz * KART.wheelBase);
+    const half = KART.width / 2;
+    const cx = x + fx * KART.wheelBase * 0.5;
+    const cz = z + fz * KART.wheelBase * 0.5;
+    // ローカル +X のワールドの向きは (cos yaw, -sin yaw)
+    const plusX = groundHeight(cx + fz * half, cz - fx * half);
+    const minusX = groundHeight(cx - fz * half, cz + fx * half);
+    state.pitch = Math.atan2(front - rear, KART.wheelBase);
+    state.roll = Math.atan2(plusX - minusX, KART.width);
+    group.position.y = rear;
+    group.rotation.set(-state.pitch, state.yaw, state.roll, 'YXZ');
     const angle = state.steer * steerLimit();
     for (const w of wheels) {
       if (w.front) w.knuckle.rotation.y = angle;
@@ -232,6 +253,10 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart', perf
         const d = Math.min(Math.abs(state.speed), KART.brake * 0.35 * handbrake * dt);
         state.speed -= Math.sign(state.speed) * d;
       }
+      // 坂：上りで遅く、下りで速くなる。止まっていてブレーキを踏んでいる（アクセルを離して
+      // ほぼ止まっている）ときは、ずり落ちない
+      const holding = Math.abs(state.speed) < 0.3 && throttle < 0.01 && (brake > 0.01 || handbrake > 0.01 || Math.abs(state.speed) < 0.05);
+      if (!holding) a -= SLOPE_GRAVITY * Math.sin(state.pitch);
       const drag = (state.onGrass ? KART.grassDrag : KART.coast) + (state.speed > top ? 4 : 0);
       state.speed += a * dt;
       if (Math.abs(state.speed) > 1e-3 && throttle < 0.01 && (brake < 0.01 || state.speed > 0)) {

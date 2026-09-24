@@ -330,6 +330,11 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     player.position.z += inside.z - pivot.z;
     lastHead.set(inside.x, 0, inside.z);
     hasLastHead = true;
+    // 起伏（カートコースの土手など）の上では、リグ（足元）を地面の高さへ。急に上下すると
+    // 酔うので、少しずつ追う
+    const ground = world.groundHeight?.(inside.x, inside.z) ?? 0;
+    player.position.y += (ground - player.position.y) * 0.25;
+    if (Math.abs(ground - player.position.y) < 1e-3) player.position.y = ground;
   }
 
   function applyDeadzone(value) {

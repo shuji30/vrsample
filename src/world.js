@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { createTextures } from './textures.js';
 import { createRoom, ROOM } from './room.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
-import { KART_TRACK } from './karttrack.js';
+import { KART_TRACK, groundHeight } from './karttrack.js';
 import { createKart, gridSlot } from './kart.js';
 import { createKartGame } from './kartgame.js';
 import { createFurniture, TABLE } from './furniture.js';
@@ -17,10 +17,10 @@ import { createKartRace } from './kartrace.js';
 
 /**
  * 女の子のカートの性能の倍率（最高速・加速・グリップ）。ふつうのカートの性能では、
- * 上手に走っても 3 周 43 秒ほどで「遅すぎる」と言われた。前をふさがれずに走って 3 周 34.3 秒
+ * 上手に走っても 3 周 43 秒ほどで「遅すぎる」と言われた。前をふさがれずに走って 3 周 34.3 秒（コースの起伏込み）
  * （スタートの枠から、合図の緑からゴールまで）になるよう、実際に走らせて合わせた
  */
-const HER_KART_PERF = { top: 1.42, accel: 2.05, grip: 1.5 };
+const HER_KART_PERF = { top: 1.41, accel: 2.0, grip: 1.49 };
 import { DEFAULT_THEME } from './themes.js';
 
 /**
@@ -409,6 +409,12 @@ export function createWorld(renderer, scene, {
     else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
     kartRace?.update(dt, { driving: Boolean(kartGame?.wanted), seated: Boolean(kartGame?.driving) });
+    // カートコースの起伏の上を歩くときは、足元を地面の高さに（カートに乗り降りしているあいだは除く）
+    if (character.body.loaded && !['getIn', 'drive', 'stopKart', 'getOut'].includes(kartGame?.state)) {
+      const bp = character.body.position;
+      const a = KART_TRACK.area;
+      if (bp.x > a.minX && bp.x < a.maxX && bp.z > a.minZ && bp.z < a.maxZ) bp.y = groundHeight(bp.x, bp.z);
+    }
     character.update(dt);
     tennisGame?.afterPose();
     voice?.update(dt);
@@ -451,7 +457,8 @@ export function createWorld(renderer, scene, {
       const dz = prop.position.z - TABLE.center.z;
       const onTable =
         Math.hypot(dx, dz) < TABLE.radius && prevY >= TABLE.top + data.halfSize - 1e-3;
-      const surfaceY = onTable ? TABLE.top : 0;
+      // 床（カートコースの起伏の上なら、その高さ）
+      const surfaceY = onTable ? TABLE.top : groundHeight(prop.position.x, prop.position.z);
       const restY = surfaceY + data.halfSize;
       let grounded = false;
 
@@ -559,6 +566,8 @@ export function createWorld(renderer, scene, {
     grabbables,
     interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body],
     floor: room.floor,
+    /** 地面の高さ（カートコースの起伏。ほかは 0） */
+    groundHeight,
     bounds: regions,
     clampToBounds,
     room,

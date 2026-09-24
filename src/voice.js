@@ -30,6 +30,15 @@ export const LINES = {
   greet: ['なあに？', 'どうしたの？', 'えへへ', 'いいてんきだね'],
   tennisInvite: ['テニスしよ！', 'わたしもラケットとってくるね！', 'テニス？やるやる！'],
   kartInvite: ['わたしもカートにのるね！', 'カート？まけないよー！', 'よーし、きょうそうだ！'],
+  /** レース：スタートの枠に並んだ / 合図 / 抜いた・抜かれた / 最後の周 / 結果 */
+  raceGrid: ['スタートのところにならんでね！', 'はやくならんで！レースしよ！'],
+  raceReady: ['いくよー！', 'じゅんびはいい？', 'よーい…'],
+  raceGo: ['スタート！', 'それーっ！', 'いっくよー！'],
+  racePass: ['おさきにー！', 'ぬいちゃった！', 'えへへ、まえにでたよ！'],
+  raceOvertaken: ['あっ、ぬかれた！', 'まってー！', 'はやーい！'],
+  raceLastLap: ['ラストいっしゅう！', 'あといっしゅうだよ！'],
+  raceHerWin: ['やったー！わたしのかち！', 'いちばんだー！', 'かっちゃった！えへへ'],
+  racePlayerWin: ['まけちゃった…つぎはまけないよ！', 'はやいねー！くやしい！', 'すごーい！いちばんだね！'],
   /** プレイヤーのいい球が入った */
   tennisNice: ['ナイスショット！', 'いいたま！', 'うまーい！', 'はやーい！'],
   /** 自分が打った（たまに） */
@@ -152,7 +161,7 @@ function createBubble() {
 /** 1 拍の長さ（秒）。日本語の会話は 1 秒に 7〜8 拍 */
 const MORA = 0.13;
 /** 同じ場面の台詞を続けて言わない間（秒） */
-const COOLDOWN = { default: 3, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
+const COOLDOWN = { default: 3, racePass: 6, raceOvertaken: 6, raceGrid: 20, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
 
 /**
  * 声の選び方。名前に含まれる語で点をつける。

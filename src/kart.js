@@ -146,6 +146,7 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
     lateral: 0,      // 中心線からのずれ（m）
     brakeHeld: 0,    // 止まってからブレーキを踏み続けている時間（バックに入るまで）
     hit: 0,
+    boost: 1,        // 最高速の倍率（レースの追い上げで女の子のカートだけ上げる）
   };
   let spin = 0;
 
@@ -201,7 +202,7 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
       state.onGrass = Math.abs(near.lateral) > KART_TRACK.width / 2 + KART_TRACK.curb;
 
       // 前後の加速
-      const top = state.onGrass ? KART.grassMaxSpeed : KART.maxSpeed;
+      const top = state.onGrass ? KART.grassMaxSpeed : KART.maxSpeed * state.boost;
       let a = 0;
       if (throttle > 0.01) {
         // 速さが上限に近いほど伸びなくなる

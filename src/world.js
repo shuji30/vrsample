@@ -17,6 +17,8 @@ import { createKartRace } from './kartrace.js';
 import { createBike } from './bike.js';
 import { BIKE_TRACK, bikeGridSlot } from './biketrack.js';
 import { createBikeGame } from './bikegame.js';
+import { createSeesaw } from './seesaw.js';
+import { createSeesawGame } from './seesawgame.js';
 
 /**
  * 女の子のカートの性能の倍率（最高速・加速・グリップ）。ふつうのカートの性能では、
@@ -172,6 +174,17 @@ export function createWorld(renderer, scene, {
   const bikeGame = camera ? createBikeGame({ character, bike, voice, scene }) : null;
   if (bikeGame) {
     bikeGame.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
+    };
+  }
+
+  // シーソー（庭の左の芝生）。プレイヤーが片方に乗ると、女の子が反対に座る
+  const seesaw = createSeesaw();
+  scene.add(seesaw.group);
+  const seesawGame = camera ? createSeesawGame({ character, seesaw, voice }) : null;
+  if (seesawGame) {
+    seesawGame.onFinish = () => {
       character.watch(furniture.ball);
       catchGame?.resume();
     };
@@ -433,15 +446,26 @@ export function createWorld(renderer, scene, {
         bikeGame.start();
       }
     }
-    if (!kartGame?.active && !bikeGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
+    // シーソーも同じ
+    if (!kartGame?.active && !bikeGame?.active && seesawGame?.wanted && !seesawGame.active) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        seesawGame.start();
+      }
+    }
+    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
       catchGame?.suspend();
       tennisGame.start();
     }
     if (kartGame?.active) kartGame.update(dt);
-    else if (bikeGame?.active) { /* 下で動かす */ } else if (tennisGame?.active) tennisGame.update(dt);
+    else if (bikeGame?.active) { /* 下で動かす */ } else if (seesawGame?.active) seesawGame.update(dt);
+    else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
     // ポケバイは、女の子が見ていないあいだもラップを数えて、表示を出す
     bikeGame?.update(dt);
+    // プレイヤーが乗っていないシーソーは、ゆっくりプレイヤーの側へ下りて止まる
+    if (!seesawGame?.wanted) seesaw.update(dt, {});
     kartRace?.update(dt, { driving: Boolean(kartGame?.wanted), seated: Boolean(kartGame?.driving) });
     // カートコースの起伏の上を歩くときは、足元を地面の高さに（カートに乗り降りしているあいだは除く）
     if (character.body.loaded && !['getIn', 'drive', 'stopKart', 'getOut'].includes(kartGame?.state)) {
@@ -598,7 +622,7 @@ export function createWorld(renderer, scene, {
 
   return {
     grabbables,
-    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body],
+    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body],
     floor: room.floor,
     /** 地面の高さ（カートコースの起伏。ほかは 0） */
     groundHeight,
@@ -618,11 +642,13 @@ export function createWorld(renderer, scene, {
     kartRace,
     /** kartdrive.js から：プレイヤーがカートに乗った / 降りた */
     onKartEnter: (v) => {
-      if (v === bike) { if (bikeGame) bikeGame.playerRiding = true; } else if (kartGame) kartGame.playerDriving = true;
+      if (v === bike) { if (bikeGame) bikeGame.playerRiding = true; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = true; } else if (kartGame) kartGame.playerDriving = true;
     },
     onKartExit: (v) => {
-      if (v === bike) { if (bikeGame) bikeGame.playerRiding = false; } else if (kartGame) kartGame.playerDriving = false;
+      if (v === bike) { if (bikeGame) bikeGame.playerRiding = false; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = false; } else if (kartGame) kartGame.playerDriving = false;
     },
+    seesaw,
+    seesawGame,
     bike,
     bikeGame,
     /** ラケットで打ったときに呼ばれる（{ racket, ball, speed, racketSpeed, by, position }） */

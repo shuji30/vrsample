@@ -25,11 +25,12 @@ import { createEngineSound } from './audio.js';
  * VR では、乗った瞬間の頭の位置を覚えておき、それが運転席の目の位置に来るように
  * プレイヤーのリグを置く。そのあとの頭の動き（のぞき込むなど）はそのまま効く。
  */
-export function createKartDrive({ renderer, camera, player, desktop, world, kart, bike = null }) {
-  const vehicles = [kart, bike].filter(Boolean);
+export function createKartDrive({ renderer, camera, player, desktop, world, kart, bike = null, others = [] }) {
+  const vehicles = [kart, bike, ...others].filter(Boolean);
   /** いま乗っている（最後に乗った）乗り物 */
   let vehicle = kart;
-  const specOf = (v) => (v.kind === 'bike' ? { spec: BIKE, track: BIKE_TRACK } : { spec: KART, track: KART_TRACK });
+  const SEESAW_SPEC = { spec: { maxSpeed: 1 }, track: { width: 1e6 } };
+  const specOf = (v) => (v.kind === 'bike' ? { spec: BIKE, track: BIKE_TRACK } : v.kind === 'seesaw' ? SEESAW_SPEC : { spec: KART, track: KART_TRACK });
   const wheel = createWheelInput();
   const ffb = createWheelFFB();
   const engine = createEngineSound();
@@ -70,7 +71,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     desktop.dropAll();
     player.setDriving(true);
     desktop.setDriving(true);
-    engine.start();
+    if (!vehicle.silent) engine.start();   // シーソーなど、エンジンの無い乗り物は鳴らさない
     if (renderer.xr.isPresenting) calibrateHead();
     world.onKartEnter?.(vehicle);
   }

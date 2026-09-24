@@ -13,6 +13,7 @@ import { createVoice } from './voice.js';
 import { createRacketPhysics, createRacket, createTennisBall, createBallBasket, NET, hitsNet, surfaceBounce, addMagnus, spinBounce } from './tennis.js';
 import { createTennisGame, HER_RACKET_SPOT } from './tennisgame.js';
 import { createImpactSound } from './audio.js';
+import { createKartRace } from './kartrace.js';
 import { DEFAULT_THEME } from './themes.js';
 
 /**
@@ -150,10 +151,11 @@ export function createWorld(renderer, scene, {
     kart.place(g.x, g.z, g.yaw);
     scene.add(kart.group);
   }
-  // プレイヤーがカートに乗ると、女の子もピンクのカートに乗って走る
+  // プレイヤーがカートに乗ると、女の子もピンクのカートに乗る。スタートの枠に並ぶとレース
+  const kartRace = camera ? createKartRace({ scene, playerKart: karts.player, herKart: karts.her, voice }) : null;
   const kartGame = camera
     ? createKartGame({
-      character, kart: karts.her, playerKart: karts.player, voice,
+      character, kart: karts.her, playerKart: karts.player, voice, race: kartRace,
       clamp: (x, z, from) => clampToBounds(x, z, 0.75, from),
     })
     : null;
@@ -399,6 +401,7 @@ export function createWorld(renderer, scene, {
     if (kartGame?.active) kartGame.update(dt);
     else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
+    kartRace?.update(dt, { driving: Boolean(kartGame?.wanted), seated: Boolean(kartGame?.driving) });
     character.update(dt);
     tennisGame?.afterPose();
     voice?.update(dt);
@@ -562,6 +565,7 @@ export function createWorld(renderer, scene, {
     basket,
     karts,
     kartGame,
+    kartRace,
     /** kartdrive.js から：プレイヤーがカートに乗った / 降りた */
     onKartEnter: () => { if (kartGame) kartGame.playerDriving = true; },
     onKartExit: () => { if (kartGame) kartGame.playerDriving = false; },

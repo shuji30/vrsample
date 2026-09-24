@@ -276,3 +276,38 @@ export function createEngineSound({ volume = 0.5 } = {}) {
     },
   };
 }
+
+/**
+ * レースのスタートの合図の音（ピッ・ピッ・ピッ・ポーン）。beep(high) で 1 回鳴らす。
+ * high は緑になったときの高い長い音。AudioContext はユーザー操作のあとに作る。
+ */
+export function createSignalSound({ volume = 0.35 } = {}) {
+  let context = null;
+  function ensure() {
+    if (context) return context;
+    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
+    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    try { context = new AudioContextClass(); } catch { return null; }
+    return context;
+  }
+  return {
+    beep(high = false) {
+      if (!ensure()) return;
+      if (context.state === 'suspended') context.resume().catch(() => {});
+      const now = context.currentTime;
+      const length = high ? 0.7 : 0.18;
+      const osc = context.createOscillator();
+      osc.type = 'square';
+      osc.frequency.value = high ? 1320 : 660;
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(volume, now + 0.01);
+      gain.gain.setValueAtTime(volume, now + length - 0.05);
+      gain.gain.linearRampToValueAtTime(0, now + length);
+      osc.connect(gain).connect(context.destination);
+      osc.start(now);
+      osc.stop(now + length + 0.02);
+    },
+  };
+}

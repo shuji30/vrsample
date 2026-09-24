@@ -3,6 +3,7 @@ import { ROOM } from './room.js';
 import { KART } from './kart.js';
 import { createKartAI } from './kartai.js';
 import { gardenPath } from './catchball.js';
+import { TRACK_LENGTH, trackPoint } from './karttrack.js';
 
 /**
  * カート（女の子の側）。プレイヤーがカートに乗ると、女の子もキャッチボール（テニス）を
@@ -23,7 +24,7 @@ const WALK = 1.0;
 /** 2 台の当たりの半径（中心どうしがこれより近ければ押し合う） */
 const KART_RADIUS = 0.62;
 
-export function createKartGame({ character, kart, playerKart, clamp, voice = null }) {
+export function createKartGame({ character, kart, playerKart, clamp, voice = null, race = null }) {
   const body = character.body;
   const ai = createKartAI(kart, { skill: 0.8 });
   let state = 'off';
@@ -119,9 +120,68 @@ export function createKartGame({ character, kart, playerKart, clamp, voice = nul
     a.z -= nz * push;
     b.x += nx * push;
     b.z += nz * push;
-    kart.state.speed *= 0.9;
-    playerKart.state.speed *= 0.9;
+    // 後ろからぶつけた側（相手が前にいる側）だけ、相手の速さ近くまで落とす。以前は両方を
+    // 毎フレーム 1 割ずつ落としていて、並んで走ると 2 台ともほとんど進まなかった
+    const forward = (k, sx, sz) => Math.sin(k.state.yaw) * sx + Math.cos(k.state.yaw) * sz;
+    if (forward(kart, nx, nz) > 0.3 && kart.state.speed > playerKart.state.speed) {
+      kart.state.speed = Math.max(playerKart.state.speed, kart.state.speed * 0.85);
+    }
+    if (forward(playerKart, -nx, -nz) > 0.3 && playerKart.state.speed > kart.state.speed) {
+      playerKart.state.speed = Math.max(kart.state.speed, playerKart.state.speed * 0.85);
+    }
     return push;
+  }
+
+  /**
+   * レース（kartrace.js）の指示どおりに走る。レースが無ければ、ずっと走る。
+   *   hold   … 止まって待つ（ブレーキを踏み続けるとバックするので、止まったら離す）
+   *   race   … 全力（追い上げの skill）
+   *   toGrid … 自分の枠へ。コースを回って枠の 5m 手前まで来たら、枠の点を狙ってゆっくり寄せ、
+   *            着いたら枠にぴったり置く
+   */
+  function raceInput() {
+    const command = race ? race.herCommand() : 'race';
+    kart.state.boost = race ? race.herBoost : 1;
+    if (command === 'hold') {
+      return { throttle: 0, brake: Math.abs(kart.speed) > 0.2 ? 1 : 0, steer: 0 };
+    }
+    if (command === 'race') {
+      ai.skill = race ? race.herSkill : 0.8;
+      return ai.update({ rival: playerKart });
+    }
+    const slot = race.slot;
+    const p = kart.group.position;
+    const distance = Math.hypot(slot.x - p.x, slot.z - p.z);
+    // 枠まで、コースに沿って前へ何 m か（通り過ぎたばかりなら passed が小さい）
+    const slotU = nearestSlotU(slot);
+    let ahead = (slotU - kart.state.u) % 1;
+    if (ahead < 0) ahead += 1;
+    ahead *= TRACK_LENGTH;
+    const passed = TRACK_LENGTH - ahead;
+    // 着いた（少し行き過ぎても、近ければ着いたことにする）。速すぎたら先に止める
+    if (distance < 0.7 || (passed < 1.5 && distance < 1.3)) {
+      if (Math.abs(kart.speed) > 1.5) return { throttle: 0, brake: 1, steer: 0 };
+      kart.place(slot.x, slot.z, slot.yaw);
+      return { throttle: 0, brake: 0, steer: 0 };
+    }
+    ai.skill = 0.5;
+    if (ahead < 7) {
+      return ai.update({ target: slot, speedCap: Math.max(0.6, distance * 0.6), rival: playerKart });
+    }
+    return ai.update({ speedCap: 4.5, rival: playerKart });
+  }
+  let slotU = null;
+  function nearestSlotU(slot) {
+    if (slotU !== null) return slotU;
+    // 枠の点にいちばん近いコース上の u（初めの 1 回だけ探す）
+    let best = Infinity;
+    const q = new THREE.Vector3();
+    for (let i = 0; i < 2000; i++) {
+      trackPoint(i / 2000, q);
+      const d = (q.x - slot.x) ** 2 + (q.z - slot.z) ** 2;
+      if (d < best) { best = d; slotU = i / 2000; }
+    }
+    return slotU;
   }
 
   function update(dt) {
@@ -158,7 +218,7 @@ export function createKartGame({ character, kart, playerKart, clamp, voice = nul
         break;
       }
       case 'drive': {
-        const input = ai.update();
+        const input = raceInput();
         kart.update(dt, input, clamp);
         separate();
         seatPoint(seat);

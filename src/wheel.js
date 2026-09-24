@@ -125,12 +125,9 @@ export function createWheelInput() {
   async function connectHid() {
     if (!hidSupported) { hidStatus = 'このブラウザは WebHID に対応していません（Chrome / Edge で開いてください）'; return; }
     try {
-      const picked = await navigator.hid.requestDevice({
-        filters: [
-          { usagePage: 0x01, usage: 0x04 }, { usagePage: 0x01, usage: 0x05 }, { usagePage: 0x01, usage: 0x08 },
-          { usagePage: 0x02 },
-        ],
-      });
+      // 絞り込まずに、すべての HID の機器から選べるようにする（ペダルの記述子は機種ごとに
+      // ばらばらで、ジョイスティックとして名のらないものもある）
+      const picked = await navigator.hid.requestDevice({ filters: [] });
       for (const d of picked) {
         await openHid(d);
         try {
@@ -440,8 +437,17 @@ export function createWheelInput() {
     const input = read();
     const roles = guess();
     const describe = (role) => (role ? `${short(role.id)} の軸 ${role.axis}` : '未設定');
+    // 軸の一覧。いま動いている軸（最近 1 秒で 0.05 以上動いた）を黄色で目立たせる
+    const nowMs = performance.now();
     panel.querySelector('[data-devices]').innerHTML = sims.length
-      ? sims.map((p) => `・${short(p.id)}　<small>${p.axes.map((v, i) => `${i}:${v.toFixed(2)}`).join(' ')}</small>`).join('<br>')
+      ? sims.map((p) => `・${short(p.id)}${p.hid ? '（HID）' : p.mapping === 'standard' ? '（ゲームパッド）' : ''}　<small>${p.axes.map((v, i) => {
+        const key = `${p.id}#${i}`;
+        const seen = axisSeen.get(key) ?? { v, at: 0 };
+        if (Math.abs(v - seen.v) > 0.05) { seen.v = v; seen.at = nowMs; }
+        axisSeen.set(key, seen);
+        const moving = nowMs - seen.at < 1000;
+        return `<span style="${moving ? 'color:#ffd84a;font-weight:bold' : ''}">${i}:${v.toFixed(2)}</span>`;
+      }).join(' ')}</small>`).join('<br>')
       : '（見つかりません。ハンドルを少し回すか、ペダルを踏んでください）';
     panel.querySelector('[data-map]').textContent = `ハンドル：${describe(roles.steer)}　アクセル：${describe(roles.throttle)}　ブレーキ：${describe(roles.brake)}`;
     panel.querySelector('[data-bars]').innerHTML = input
@@ -477,6 +483,27 @@ export function createWheelInput() {
 
   const short = (id) => id.replace(/\s*\(.*?Vendor:.*?\)\s*/i, '').slice(0, 48);
 
+  const axisSeen = new Map();
+
+  /** 入力機器の情報（うまく読めないときに送ってもらう） */
+  function describeInputs() {
+    const lines = [];
+    const all = typeof navigator !== 'undefined' && navigator.getGamepads ? [...navigator.getGamepads()] : [];
+    all.forEach((p, i) => {
+      if (!p) { lines.push(`#${i}: (空き)`); return; }
+      lines.push(`#${i}: ${p.id}  mapping=${p.mapping || '(なし)'}  connected=${p.connected}`);
+      lines.push(`   軸 ${p.axes.length}: ${p.axes.map((v, k) => `${k}:${v.toFixed(3)}`).join(' ')}`);
+      lines.push(`   ボタン ${p.buttons.length}: 押している ${p.buttons.map((b, k) => (b.pressed || b.value > 0.05 ? `${k}(${b.value.toFixed(2)})` : null)).filter(Boolean).join(' ') || 'なし'}`);
+    });
+    for (const p of hidPads) lines.push(`HID: ${p.id}  軸 ${p.axes.length}: ${p.axes.map((v, k) => `${k}:${v.toFixed(3)}`).join(' ')}  受信 ${p.seen ? 'あり' : 'まだ'}`);
+    const roles = guess();
+    for (const role of ['steer', 'throttle', 'brake']) {
+      const r = roles[role];
+      lines.push(`${ROLE_NAMES[role]}: ${r ? `${r.id} 軸 ${r.axis} 離した ${r.rest?.toFixed?.(3)} 踏みきった ${r.full?.toFixed?.(3)} いま ${axisValue(r)?.toFixed?.(3) ?? '読めない'}${config[role] ? '' : '（自動）'}` : '未設定'}`);
+    }
+    return lines.join('\n');
+  }
+
   function openPanel() {
     if (panel) { closePanel(); return; }
     panel = document.createElement('div');
@@ -503,7 +530,9 @@ export function createWheelInput() {
         <b>ハンコンのボタン</b>（「覚える」を押してから、使いたいボタンを押す）<br>
         ${BUTTON_ACTIONS.map(([code, , label]) => `${label}：<span data-btn="${code}"></span> <button data-learn="${code}">覚える</button>`).join('　')}<br>
         <small>ペダルが一覧に出ないとき：一度踏んでみる。それでも出なければ</small>
-        <button data-hid>HID で直接つなぐ</button> <small data-hidstatus></small>
+        <button data-hid>HID で直接つなぐ</button> <small data-hidstatus></small><br>
+        <button data-inputs>入力機器の情報を書き出す</button>
+        <textarea data-inputdump readonly style="display:none;width:100%;height:9em;font:11px monospace"></textarea>
       </div>
       ハンドルいっぱいまでの角度（中央から）：<input data-full type="number" min="20" max="540" step="10" style="width:5em">°
       　ハンコン全体の回転角：<input data-lock type="number" min="180" max="2520" step="10" style="width:5em">°
@@ -519,6 +548,12 @@ export function createWheelInput() {
       if (el.dataset?.flip) flip(el.dataset.flip);
       if (el.hasAttribute?.('data-hid')) connectHid();
       if (el.dataset?.learn) learning = el.dataset.learn;
+      if (el.hasAttribute?.('data-inputs')) {
+        const dump = panel.querySelector('[data-inputdump]');
+        dump.value = describeInputs();
+        dump.style.display = '';
+        dump.select();
+      }
       if (event.target.hasAttribute?.('data-next')) wizardNext();
       if (event.target.hasAttribute?.('data-reset')) { config = { ...DEFAULT }; save(config); firstAxes.clear(); wizard = null; }
     });
@@ -562,6 +597,7 @@ export function createWheelInput() {
     recalibrate(role) { startWizard(role); },
     connectHid() { return connectHid(); },
     learnButton(code) { learning = code; },
+    describeInputs() { return describeInputs(); },
     get config() { return { ...config, ...guess() }; },
     /** 設定の画面を開いたときに呼ぶ（FFB の欄を足すのに使う） */
     set onPanel(fn) { onPanel = fn; },

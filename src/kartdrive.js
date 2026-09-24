@@ -212,13 +212,19 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     const xr = xrInput(dt);
     const w = wheel.read();
     if (w?.kind === 'wheel') {
+      // キー・パッド・VR のコントローラーを入れているあいだは、そちらのアクセル・ブレーキを使う
+      // （ペダルの読み違いでブレーキが踏まれたままに見えても、キーで走れるように）
       const out = { ...w };
-      for (const extra of [keyboardInput(), wheel.readPad(), xr].filter(Boolean)) {
-        out.throttle = Math.max(out.throttle, extra.throttle);
-        out.brake = Math.max(out.brake, extra.brake);
-        if (Math.abs(extra.steer) > 0.05) { out.steer = extra.steer; out.angle = extra.steer * 90; }
-        if (extra.hands) out.hands = true;
+      const active = (i) => i.throttle > 0.02 || i.brake > 0.02 || Math.abs(i.steer) > 0.05;
+      const extras = [keyboardInput(), wheel.readPad(), xr].filter((i) => i && active(i));
+      if (extras.length) {
+        out.throttle = Math.max(...extras.map((i) => i.throttle));
+        out.brake = Math.max(...extras.map((i) => i.brake));
       }
+      for (const extra of extras) {
+        if (Math.abs(extra.steer) > 0.05) { out.steer = extra.steer; out.angle = extra.steer * 90; }
+      }
+      if (xr?.hands) out.hands = true;
       return out;
     }
     const candidates = [keyboardInput(), xr, w].filter(Boolean);
@@ -264,6 +270,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     }
     const input = readInput(dt);
     if (!driving) return;       // 入力を読むあいだに降りた
+    // レースのスタートの合図のあいだは動かない（ブレーキも離す。踏み続けるとバックするので）
+    if (world.kartRace?.locked) { input.throttle = 0; input.brake = Math.abs(kart.speed) > 0.2 ? 1 : 0; }
     lastInput = input;
     const before = kart.speed;
     kart.update(dt, input, clampKart);

@@ -377,7 +377,7 @@ export function createRacketPhysics({ rackets, balls, onHit }) {
           inverseA.copy(matrixA).invert();
           inverseB.copy(matrixB).invert();
           for (const ball of balls) {
-            if (ball.userData.held) continue;
+            if (ball.userData.held || ball.userData.inBasket) continue;
             ballA.lerpVectors(lastBall.get(ball), ball.position, (i - 1) / steps);
             ballB.lerpVectors(lastBall.get(ball), ball.position, i / steps);
             if (hitTest(racket, s, ball, dt / steps)) break search;
@@ -616,4 +616,154 @@ export function solveShot(from, target, data, { flight = 1.2, topspin = 40, clea
     aim.z += ez;
   }
   return { velocity, spin, landing: landing ?? aim.clone() };
+}
+
+// ---------------------------------------------------------------------------
+// ボールかご
+// ---------------------------------------------------------------------------
+
+/**
+ * テニスボールのかご（コーチが球出しに使う、脚つきの金網のかご）。
+ *
+ * かごの中の球は物理を止め、決まった位置（slot）に並べておく（userData.inBasket）。
+ * 上から落ちてきた球・投げ入れた球は、かごの口より内側に入ったらかごの中へ収める。
+ * take() で 1 つ取り出す（PC の F、VR はかごの中の球をそのままつかむ）。
+ *
+ * かごの底は床から 0.45m、口は 0.81m。半径 0.2m に、1 段 13 個 × 2 段まで入る。
+ */
+export function createBallBasket() {
+  const group = new THREE.Group();
+  group.name = 'ballBasket';
+  const wire = new THREE.MeshStandardMaterial({ color: 0x2f3438, roughness: 0.45, metalness: 0.8 });
+  const R = 0.2;
+  const bottom = 0.45;
+  const top = 0.81;
+  const rod = (from, to, radius = 0.004) => {
+    const length = from.distanceTo(to);
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 6), wire);
+    mesh.position.copy(from).add(to).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), to.clone().sub(from).normalize());
+    mesh.castShadow = true;
+    group.add(mesh);
+  };
+  // 縦の針金と輪
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    rod(new THREE.Vector3(Math.cos(a) * R, bottom, Math.sin(a) * R), new THREE.Vector3(Math.cos(a) * R, top, Math.sin(a) * R));
+  }
+  for (const y of [bottom, (bottom + top) / 2, top]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(R, y === top ? 0.007 : 0.004, 6, 40), wire);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = y;
+    ring.castShadow = true;
+    group.add(ring);
+  }
+  // 底の格子
+  for (let i = -3; i <= 3; i++) {
+    const x = (i / 3.5) * R;
+    const half = Math.sqrt(R * R - x * x);
+    rod(new THREE.Vector3(x, bottom, -half), new THREE.Vector3(x, bottom, half), 0.003);
+    rod(new THREE.Vector3(-half, bottom, x), new THREE.Vector3(half, bottom, x), 0.003);
+  }
+  // 脚（4 本、少し開く）と取っ手
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    rod(new THREE.Vector3(Math.cos(a) * R * 0.9, bottom, Math.sin(a) * R * 0.9),
+      new THREE.Vector3(Math.cos(a) * (R + 0.06), 0.005, Math.sin(a) * (R + 0.06)), 0.009);
+  }
+  const handle = [];
+  for (let i = 0; i <= 16; i++) {
+    const a = Math.PI * (i / 16);
+    handle.push(new THREE.Vector3(Math.cos(a) * R, top + Math.sin(a) * 0.16, 0));
+  }
+  const handleMesh = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(handle), 24, 0.008, 6), wire);
+  handleMesh.castShadow = true;
+  group.add(handleMesh);
+
+  // 球を置く位置（かごのローカル）。外周 9 個 + 内側 4 個を 2 段
+  const r = TENNIS_BALL_RADIUS;
+  const slots = [];
+  for (let layer = 0; layer < 2; layer++) {
+    const y = bottom + r + 0.004 + layer * (r * 1.9);
+    const twist = layer * 0.35;
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + twist;
+      slots.push(new THREE.Vector3(Math.cos(a) * (R - r - 0.012), y, Math.sin(a) * (R - r - 0.012)));
+    }
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + twist + 0.4;
+      slots.push(new THREE.Vector3(Math.cos(a) * 0.055, y, Math.sin(a) * 0.055));
+    }
+  }
+  const occupant = new Array(slots.length).fill(null);
+  const local = new THREE.Vector3();
+  const world = new THREE.Vector3();
+
+  /** 空いている、いちばん下の位置 */
+  const freeSlot = () => occupant.findIndex((b) => b === null);
+
+  function put(ball, index) {
+    occupant[index] = ball;
+    const d = ball.userData;
+    d.inBasket = true;
+    d.velocity.set(0, 0, 0);
+    d.spin.set(0, 0, 0);
+    group.localToWorld(ball.position.copy(slots[index]));
+  }
+
+  return {
+    group,
+    capacity: slots.length,
+    get count() { return occupant.filter(Boolean).length; },
+    /** かごの中の位置（ワールド）。最初に球を入れておくのに使う */
+    slotWorld(index, out = new THREE.Vector3()) { return group.localToWorld(out.copy(slots[index])); },
+    /** 球をかごへ入れる（空きが無ければ false） */
+    add(ball) {
+      const index = freeSlot();
+      if (index < 0) return false;
+      put(ball, index);
+      return true;
+    },
+    /** 1 つ取り出す（上の段から）。取り出した球は物理に戻る（呼んだ側が持つ） */
+    take() {
+      for (let i = occupant.length - 1; i >= 0; i--) {
+        const ball = occupant[i];
+        if (!ball) continue;
+        occupant[i] = null;
+        ball.userData.inBasket = false;
+        return ball;
+      }
+      return null;
+    },
+    /** かごの口の中心（ワールド）。手の届く距離を測るのに使う */
+    mouth(out = new THREE.Vector3()) { return group.localToWorld(out.set(0, top, 0)); },
+    /**
+     * 毎フレーム。持っていかれた球の位置を空け、口から入ってきた球をしまう
+     * @param {THREE.Object3D[]} balls
+     */
+    update(balls) {
+      for (let i = 0; i < occupant.length; i++) {
+        const ball = occupant[i];
+        if (ball && (ball.userData.held || !ball.userData.inBasket)) {
+          ball.userData.inBasket = false;
+          occupant[i] = null;
+        }
+      }
+      for (const ball of balls) {
+        const d = ball.userData;
+        if (d.held || d.inBasket) continue;
+        local.copy(ball.position);
+        group.worldToLocal(local);
+        const inside = Math.hypot(local.x, local.z) < R - r * 0.5 && local.y > bottom && local.y < top + 0.03;
+        if (!inside || d.velocity.y > 0.5) continue;
+        const index = freeSlot();
+        if (index >= 0) put(ball, index);
+      }
+      // 並べた球は動かない（かごが動くことはないが、念のため毎回置き直す）
+      for (let i = 0; i < occupant.length; i++) {
+        if (occupant[i]) group.localToWorld(occupant[i].position.copy(slots[i]));
+      }
+      return world;
+    },
+  };
 }

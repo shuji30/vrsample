@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { createTextures } from './textures.js';
 import { createRoom, ROOM } from './room.js';
-import { createPark, PARK } from './park.js';
+import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { createFurniture, TABLE } from './furniture.js';
 import { createLighting } from './lighting.js';
 import { createCharacter } from './character.js';
 import { createCatchGame } from './catchball.js';
 import { createVoice } from './voice.js';
-import { createRacketPhysics, createRacket, NET, hitsNet, surfaceBounce, addMagnus, spinBounce } from './tennis.js';
+import { createRacketPhysics, createRacket, createTennisBall, createBallBasket, NET, hitsNet, surfaceBounce, addMagnus, spinBounce } from './tennis.js';
 import { createTennisGame, HER_RACKET_SPOT } from './tennisgame.js';
 import { createImpactSound } from './audio.js';
 import { DEFAULT_THEME } from './themes.js';
@@ -21,7 +21,7 @@ import { DEFAULT_THEME } from './themes.js';
  */
 
 /** 庭の広さ。歩いて出られる範囲で、公園の遊具や木は柵の向こう側に残る */
-const GARDEN = { minX: -6.0, maxX: 6.0, minZ: -13.0 };
+const GARDEN = { minX: -6.0, maxX: 6.0 };
 
 const GRAVITY = -9.8;
 /**
@@ -114,10 +114,33 @@ export function createWorld(renderer, scene, {
   scene.add(herRacket);
   grabbables.push(herRacket);
 
+  // ボールかご（手前のコートの左後ろ、防球ネットの前）に 12 個、コートに 3 個の
+  // テニスボールを置いておく。打ち損じても、かごから次の球を出せる
+  const basket = createBallBasket();
+  basket.group.position.set(COURT_BACKSTOP.minX + 0.9, 0, COURT_BACKSTOP.z - 1.0);
+  scene.add(basket.group);
+  basket.group.updateMatrixWorld(true);
+  for (let i = 0; i < 12; i++) {
+    const ball = createTennisBall();
+    basket.slotWorld(i, ball.userData.home);
+    ball.position.copy(ball.userData.home);
+    scene.add(ball);
+    grabbables.push(ball);
+    basket.add(ball);
+  }
+  for (const [x, z] of [[1.3, -17.2], [-0.9, -16.4], [2.3, -19.6]]) {
+    const ball = createTennisBall();
+    ball.userData.home.set(x, ball.userData.halfSize, z);
+    ball.position.copy(ball.userData.home);
+    scene.add(ball);
+    grabbables.push(ball);
+  }
+  const tennisBalls = grabbables.filter((prop) => prop.userData.tennis);
+
   // テニス。プレイヤーがラケットを持ってコートに入ると、キャッチボールから体を引き取る
   const tennisGame = camera
     ? createTennisGame({
-      character, ball: furniture.tennisBall, racket: herRacket, playerRacket: furniture.racket, camera, scene, voice,
+      character, balls: tennisBalls, racket: herRacket, playerRacket: furniture.racket, camera, scene, voice,
     })
     : null;
   if (tennisGame) {
@@ -148,17 +171,24 @@ export function createWorld(renderer, scene, {
   const regions = [
     { minX: ROOM.minX + MARGIN, maxX: ROOM.maxX - MARGIN, minZ: ROOM.minZ + MARGIN, maxZ: ROOM.maxZ - MARGIN },
     { minX: door.x - door.width / 2 + 0.18, maxX: door.x + door.width / 2 - 0.18, minZ: outerZ - THROUGH, maxZ: ROOM.minZ + MARGIN + THROUGH },
-    { minX: GARDEN.minX, maxX: GARDEN.maxX, minZ: GARDEN.minZ, maxZ: outerZ - 0.2 },
-    // 庭の奥のテニスコート（外まわりまで）。左右と奥は柵なので、ここが境目になる。
-    // 庭と重なるように手前へ 1.5m 長く取る（inset で縮めても継ぎ目が切れないように）
+    // 庭は手前の防球ネットのすぐ前まで
+    { minX: GARDEN.minX, maxX: GARDEN.maxX, minZ: COURT_BACKSTOP.z + 0.05, maxZ: outerZ - 0.2 },
+    // 庭の奥のテニスコート（外まわりまで）。左右と奥は柵、手前は防球ネットなので、
+    // ここが境目になる。庭とはネットの右端の入口だけでつながる
     courtRegion(),
+    // 入口。ネットの右端から右の柵まで。コートと庭の両方へ 1m ほど食い込ませる
+    // （inset で縮めても継ぎ目が切れないように）
+    {
+      minX: COURT_BACKSTOP.maxX, maxX: COURT_BACKSTOP.gapMaxX,
+      minZ: COURT_BACKSTOP.z - 1.2, maxZ: COURT_BACKSTOP.z + 1.0,
+    },
   ];
 
   function courtRegion() {
     const c = PARK.court;
     const halfW = c.width / 2 + c.runoffSide;
     const halfL = c.length / 2 + c.runoffEnd;
-    return { minX: c.x - halfW, maxX: c.x + halfW, minZ: c.z - halfL, maxZ: c.z + halfL + 1.5 };
+    return { minX: c.x - halfW, maxX: c.x + halfW, minZ: c.z - halfL, maxZ: COURT_BACKSTOP.z };
   }
 
   /**
@@ -226,7 +256,6 @@ export function createWorld(renderer, scene, {
     impact.play(kind, strength * falloff);
   }
   const rackets = grabbables.filter((prop) => prop.userData.racket);
-  const tennisBalls = grabbables.filter((prop) => prop.userData.tennis);
   const racketHits = [];
   const racketPhysics = createRacketPhysics({
     rackets,
@@ -237,6 +266,28 @@ export function createWorld(renderer, scene, {
       for (const listener of racketHits) listener(hit);
     },
   });
+
+  /**
+   * 手前の防球ネット。網の線（z 一定）をまたいだ球を、網のあるところ（入口を除く・
+   * 高さ 3m まで）で止める。網なので、ほとんど跳ね返らずに下へ落ちる
+   */
+  function backstopCollision(prop, prevZ) {
+    const data = prop.userData;
+    const r = data.halfSize;
+    const b = COURT_BACKSTOP;
+    const x = prop.position.x;
+    if (x < b.minX || x > b.maxX || prop.position.y > b.height) return;
+    const before = prevZ - b.z;
+    const after = prop.position.z - b.z;
+    if (!((before > r && after < r) || (before < -r && after > -r))) return;
+    const side = Math.sign(before);
+    prop.position.z = b.z + side * r;
+    data.velocity.z = -data.velocity.z * NET_RESTITUTION;
+    data.velocity.x *= 0.5;
+    data.velocity.y *= 0.4;
+    data.spin.multiplyScalar(0.3);
+    soundAt(prop.position, 'net', Math.min(1, Math.abs(data.velocity.z) / 2 + 0.2));
+  }
 
   /** ネットを通り抜けようとした球を止める（tennis.js の hitsNet で網をまたいだかを見る） */
   function netCollision(prop, prevZ) {
@@ -295,7 +346,7 @@ export function createWorld(renderer, scene, {
     // --- 小物の簡易物理 ----------------------------------------------------
     for (const prop of grabbables) {
       const data = prop.userData;
-      if (data.held) continue;
+      if (data.held || data.inBasket) continue;
 
       const prevY = prop.position.y;
       const prevZ = prop.position.z;
@@ -314,6 +365,7 @@ export function createWorld(renderer, scene, {
       data.velocity.y += GRAVITY * dt;
       prop.position.addScaledVector(data.velocity, dt);
       netCollision(prop, prevZ);
+      backstopCollision(prop, prevZ);
 
       // 着地面。テーブルの真上から落ちてきたときだけ天板に乗る
       const dx = prop.position.x - TABLE.center.x;
@@ -421,6 +473,7 @@ export function createWorld(renderer, scene, {
 
     // --- ラケットで打つ ------------------------------------------------------
     racketPhysics.update(dt);
+    basket.update(tennisBalls);
   }
 
   return {
@@ -435,6 +488,9 @@ export function createWorld(renderer, scene, {
     ball: furniture.ball,
     racket: furniture.racket,
     tennisBall: furniture.tennisBall,
+    /** テニスボールすべて（机の 1 個・かごの 12 個・コートの 3 個） */
+    tennisBalls,
+    basket,
     /** ラケットで打ったときに呼ばれる（{ racket, ball, speed, racketSpeed, by, position }） */
     onRacketHit: (listener) => racketHits.push(listener),
     lighting,

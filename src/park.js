@@ -774,6 +774,11 @@ export const PARK = {
     runoffEnd: 2.0, runoffSide: 1.5,
     net: 0.80, netPost: 0.86,
     serviceFromNet: 3.45,
+    /**
+     * 手前（家の側）の背面の防球ネット。打ち損じた球が庭まで転がっていかないように、
+     * ベースラインの後ろの外まわりの端に張る。右端の 1.4m は開けて、庭からの入口にする
+     */
+    backstop: { height: 3.0, gap: 1.4 },
   },
   bench: { x: -2.4, z: -6.8, yaw: Math.PI + 0.35 },
   tree: { x: -1.6, z: -9.2 },
@@ -956,8 +961,71 @@ function createTennisCourt(tex) {
   fence(-ow, -ol, -ow, ol, 1.0);        // 左の柵
   fence(ow, -ol, ow, ol, 1.0);          // 右の柵
 
+  // --- 手前の防球ネット -------------------------------------------------------
+  // 金網ではなく、柔らかい網（5cm 角の黒っぽい緑）を支柱のあいだに張る。
+  // 右端は入口として開けておき、入口の脇の支柱は少し太くする
+  const b = c.backstop;
+  const backCanvas = document.createElement('canvas');
+  backCanvas.width = 64;
+  backCanvas.height = 64;
+  const bctx = backCanvas.getContext('2d');
+  // 網目のすき間も薄く塗っておく。線だけを alphaTest で抜くと、遠くで網目が
+  // 点々のモアレになった。半透明にして、遠くでは薄い幕に見えるようにする
+  bctx.fillStyle = 'rgba(28, 46, 36, 0.18)';
+  bctx.fillRect(0, 0, 64, 64);
+  bctx.strokeStyle = 'rgba(24, 40, 31, 0.95)';
+  bctx.lineWidth = 6;
+  bctx.strokeRect(0, 0, 64, 64);
+  const backLength = ow * 2 - b.gap;
+  const backTexture = new THREE.CanvasTexture(backCanvas);
+  backTexture.wrapS = THREE.RepeatWrapping;
+  backTexture.wrapT = THREE.RepeatWrapping;
+  backTexture.repeat.set(backLength / 0.05, b.height / 0.05);
+  const backNet = new THREE.Mesh(
+    new THREE.PlaneGeometry(backLength, b.height),
+    new THREE.MeshStandardMaterial({
+      map: backTexture, transparent: true, depthWrite: false, side: THREE.DoubleSide, roughness: 0.9,
+    }),
+  );
+  backNet.position.set(-ow + backLength / 2, b.height / 2, ol);
+  backNet.renderOrder = 2;
+  group.add(backNet);
+  const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x2c3a33, roughness: 0.6, metalness: 0.5 });
+  const poles = Math.round(backLength / 2.4) + 1;
+  for (let i = 0; i < poles; i++) {
+    const x = -ow + (i / (poles - 1)) * backLength;
+    const r = i === poles - 1 ? 0.045 : 0.035;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(r, r, b.height + 0.1, 10), poleMaterial);
+    pole.position.set(x, (b.height + 0.1) / 2, ol);
+    pole.castShadow = true;
+    group.add(pole);
+  }
+  // 上と下のロープ
+  for (const y of [b.height, 0.04]) {
+    const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, backLength, 6), poleMaterial);
+    rope.position.set(-ow + backLength / 2, y, ol);
+    rope.rotation.z = Math.PI / 2;
+    group.add(rope);
+  }
+
   return group;
 }
+
+/**
+ * 手前の防球ネットの位置（ワールド）。z の線上、minX〜maxX に張ってあり、
+ * maxX から右の柵（gapMaxX）までが入口
+ */
+export const COURT_BACKSTOP = (() => {
+  const c = PARK.court;
+  const halfW = c.width / 2 + c.runoffSide;
+  return {
+    z: c.z + c.length / 2 + c.runoffEnd,
+    minX: c.x - halfW,
+    maxX: c.x + halfW - c.backstop.gap,
+    gapMaxX: c.x + halfW,
+    height: c.backstop.height,
+  };
+})();
 
 export function createPark(scene, tex) {
   const group = new THREE.Group();

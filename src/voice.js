@@ -7,22 +7,25 @@ import * as THREE from 'three';
  * 母音に合わせて口を動かす（VRM の aa / ih / ou / ee / oh）。頭の横に吹き出しも
  * 出すので、日本語の声が入っていない端末や、音を出せない場面でも伝わる。
  *
- * 声の種類は端末しだい。Windows の Chrome なら Nanami / Haruka、Mac なら Kyoko
- * などが入っている。女性の声を名前で優先し、高めの声にする。
+ * 声の種類は端末しだい。Windows の Edge なら Nanami（Natural）、Chrome なら
+ * Google 日本語や Haruka / Ayumi、Mac なら Kyoko などが入っている。
+ * 若い女性の自然な声を名前で選び、声ごとに高さと速さを合わせる。どの声も一律に
+ * ピッチを上げると、自然な声（ニューラル音声）ほど機械っぽく割れて聞こえた。
+ * V キーで入っている声を順に試せる（選んだ声は覚えておく）。
  *
  * 台詞は仮名で書く。口の形を母音から決めるためで、漢字だと読みが分からない。
  */
 
 /** 場面ごとの台詞。同じ場面でも毎回違うものを選ぶ */
 export const LINES = {
-  playerCatch: ['ナイスキャッチ！', 'じょうず！', 'やったね！', 'いいかんじ！', 'ばっちり！'],
-  herCatch: ['とった！', 'ナイスボール！', 'よしっ！', 'えいっ！'],
+  playerCatch: ['ナイスキャッチ！', 'わぁ、じょうず！', 'やったね！', 'いいかんじ！', 'ばっちり！'],
+  herCatch: ['とれたっ！', 'ナイスボール！', 'よしっ！', 'えへへ、とれた！'],
   fumble: ['あっ、ごめん！', 'わわっ！', 'おとしちゃった…'],
   playerMiss: ['ドンマイ！', 'ごめん、それちゃった！', 'あれれ？'],
   rally: ['{n}かい、つづいたね！', '{n}かい！すごいすごい！', 'れんぞく{n}かい！'],
   unreachable: ['とどかないよー', 'あそこにはいっちゃった…', 'とってきてー'],
-  invite: ['キャッチボールしよ！', 'おそとであそぼ！', 'まってー、いまいくね！'],
-  goIn: ['またあそぼうね！', 'たのしかったー！'],
+  invite: ['ねえねえ、キャッチボールしよ！', 'おそとであそぼ！', 'まってー、いまいくね！'],
+  goIn: ['またあそぼうね！', 'たのしかったね！'],
   wake: ['ふぁ…よくねた', 'んー…ねちゃってた', 'おはよ…'],
   greet: ['なあに？', 'どうしたの？', 'えへへ', 'いいてんきだね'],
   tennisInvite: ['テニスしよ！', 'わたしもラケットとってくるね！', 'テニス？やるやる！'],
@@ -151,6 +154,55 @@ const MORA = 0.13;
 const COOLDOWN = { default: 3, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
 
 /**
+ * 声の選び方。名前に含まれる語で点をつける。
+ *   自然な声（Natural / Online / Neural / Enhanced / Premium）を優先
+ *   若い女性の声（Aoi / Mayu / Shiori / Nanami）を優先
+ *   男性の声（Ichiro / Keita / Otoya / Hattori / Daichi / Naoki）は使わない
+ */
+function voiceScore(name) {
+  let score = 0;
+  if (/natural|online|neural|enhanced|premium/i.test(name)) score += 3;
+  if (/aoi|mayu|shiori/i.test(name)) score += 3;
+  if (/nanami/i.test(name)) score += 2;
+  if (/haruka|ayumi|sayaka|kyoko|o-ren|mizuki|female|女性/i.test(name)) score += 1;
+  if (/google/i.test(name)) score += 1.5;
+  if (/ichiro|keita|otoya|hattori|daichi|naoki|male|男性/i.test(name) && !/female/i.test(name)) score -= 10;
+  return score;
+}
+
+/**
+ * 声ごとの高さ（pitch）と速さ（rate）。音声合成の pitch は 1 が既定で、上げすぎると
+ * 声が割れて機械っぽくなる。自然な声は控えめに、昔からの合成音声は少し多めに上げる。
+ * 子どもらしさは高さより、少し速めの話し方のほうが効く
+ */
+const VOICE_TUNING = {
+  natural: { pitch: 1.18, rate: 1.1 },
+  google: { pitch: 1.3, rate: 1.12 },
+  classic: { pitch: 1.35, rate: 1.08 },
+  default: { pitch: 1.3, rate: 1.08 },
+};
+function tuningFor(name) {
+  const base = /natural|online|neural|enhanced|premium/i.test(name) ? VOICE_TUNING.natural
+    : /google/i.test(name) ? VOICE_TUNING.google
+      : /haruka|ayumi|sayaka|kyoko|o-ren|mizuki/i.test(name) ? VOICE_TUNING.classic
+        : VOICE_TUNING.default;
+  // URL で試せるように（?voicepitch=1.4&voicerate=1.1）
+  const params = typeof location !== 'undefined' ? new URLSearchParams(location.search) : null;
+  const pitch = Number(params?.get('voicepitch'));
+  const rate = Number(params?.get('voicerate'));
+  return { pitch: pitch > 0 ? pitch : base.pitch, rate: rate > 0 ? rate : base.rate };
+}
+
+const clampNumber = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const VOICE_KEY = 'vrsample.voice';
+function readSavedVoice() {
+  try { return localStorage.getItem(VOICE_KEY); } catch { return null; }
+}
+function saveVoice(name) {
+  try { localStorage.setItem(VOICE_KEY, name); } catch { /* 覚えられなくても続ける */ }
+}
+
+/**
  * @param {object} options
  * @param {ReturnType<import('./character.js').createCharacter>} options.character
  * @param {THREE.Scene} options.scene
@@ -164,12 +216,23 @@ export function createVoice({ character, scene, camera, muted = false }) {
   scene.add(bubble.sprite);
 
   let voice = null;
-  function pickVoice() {
-    if (!synth) return;
+  let tuning = VOICE_TUNING.default;
+  /** 日本語の声を、かわいく聞こえそうな順に並べたもの（男性の声は後ろへ） */
+  function rankedVoices() {
+    if (!synth) return [];
     const ja = synth.getVoices().filter((v) => /^ja/i.test(v.lang));
-    // 女性の声を名前で優先する（Windows / Mac / Android / Chrome の代表的なもの）
-    const female = /nanami|haruka|ayumi|sayaka|kyoko|o-ren|mizuki|female|女性|google/i;
-    voice = ja.find((v) => female.test(v.name)) ?? ja[0] ?? null;
+    return ja.map((v, i) => ({ v, score: voiceScore(v.name) - i * 0.01 }))
+      .sort((a, b) => b.score - a.score)
+      .map((e) => e.v);
+  }
+  function useVoice(v) {
+    voice = v;
+    tuning = tuningFor(v?.name ?? '');
+  }
+  function pickVoice() {
+    const ranked = rankedVoices();
+    const saved = readSavedVoice();
+    useVoice(ranked.find((v) => v.name === saved) ?? ranked[0] ?? null);
   }
   pickVoice();
   synth?.addEventListener?.('voiceschanged', pickVoice);
@@ -203,8 +266,11 @@ export function createVoice({ character, scene, camera, muted = false }) {
         u.lang = 'ja-JP';
         // 声の指定だけ失敗しても（型の合わない声オブジェクトなど）、発声は続ける
         try { if (voice) u.voice = voice; } catch { /* 既定の声でしゃべる */ }
-        u.pitch = 1.5;   // 子どもの声らしく高め
-        u.rate = 1.05;
+        // 声ごとの高さと速さに、台詞の気分をのせる。はずんだ台詞（！）は少し高く速く、
+        // しょんぼりした台詞（…）は少し低くゆっくり
+        const mood = /…|ごめん|あーん|まけた|おとしちゃった/.test(text) ? -1 : /！/.test(text) ? 1 : 0;
+        u.pitch = clampNumber(tuning.pitch + mood * 0.06, 0.5, 2);
+        u.rate = clampNumber(tuning.rate + mood * 0.04, 0.5, 2);
         u.volume = 1;
         synth.speak(u);
       } catch {
@@ -301,8 +367,25 @@ export function createVoice({ character, scene, camera, muted = false }) {
     speak,
     update,
     get speaking() { return speaking; },
+    /**
+     * 次の声に替えて、ひとこと言う（PC の V キー）。選んだ声は覚えておき、次に開いたときも使う。
+     * 替えた声の名前を返す（声が 1 つも無ければ null）
+     */
+    cycleVoice() {
+      const ranked = rankedVoices().filter((v) => voiceScore(v.name) > -5);
+      if (ranked.length === 0) return null;
+      const next = ranked[(ranked.indexOf(voice) + 1) % ranked.length];
+      useVoice(next);
+      saveVoice(next.name);
+      speak('このこえ、どうかな？');
+      // 吹き出しには声の名前も出す（「Microsoft Nanami Online (Natural) - Japanese」なら Nanami）
+      const short = next.name.replace(/^(Microsoft|Google|Apple)\s+/i, '').split(/[\s(-]/)[0] || next.name;
+      bubble.draw(`このこえ、どうかな？（${short}）`);
+      return next.name;
+    },
     /** 検証用 */
     get voiceName() { return voice?.name ?? null; },
+    get voiceTuning() { return { ...tuning }; },
     bubble: bubble.sprite,
   };
 }

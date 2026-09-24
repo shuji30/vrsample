@@ -141,7 +141,8 @@ export function createDesktopControls(renderer, camera, world) {
   // トスして、落ちてくるところを自動で打つ。G でラケットを置く。
   const ball = world.ball;
   const racket = world.racket;
-  const balls = [world.ball, world.tennisBall].filter(Boolean);
+  const balls = [world.ball, ...(world.tennisBalls ?? [])].filter(Boolean);
+  const basket = world.basket ?? null;
   const HOLD = new THREE.Vector3(0.20, -0.30, -0.45);        // カメラから見た持つ位置
   const HOLD_LEFT = new THREE.Vector3(-0.22, -0.30, -0.45);  // ラケットを持っているときは左手
   const PICK_RANGE = 1.8;
@@ -150,9 +151,9 @@ export function createDesktopControls(renderer, camera, world) {
   let heldBall = null;
   const eye = new THREE.Vector3();
   const look = new THREE.Vector3();
-  const swing = racket ? createDesktopSwing(camera, racket, { ball: world.tennisBall }) : null;
+  const swing = racket ? createDesktopSwing(camera, racket, { balls: world.tennisBalls ?? [] }) : null;
 
-  const free = (object) => object && !object.userData.held;
+  const free = (object) => object && !object.userData.held && !object.userData.inBasket;
   const holdSlot = () => (swing?.holding ? HOLD_LEFT : HOLD);
 
   function take(object) {
@@ -214,11 +215,22 @@ export function createDesktopControls(renderer, camera, world) {
     return object.localToWorld(gripPoint.set(0, 0.3, 0));
   }
 
+  /** ボールかごが手の届くところにあれば、そこから 1 つ取り出す */
+  const mouth = new THREE.Vector3();
+  function fromBasket() {
+    if (!basket || basket.count === 0) return null;
+    camera.getWorldPosition(eye);
+    basket.mouth(mouth);
+    if (Math.hypot(mouth.x - eye.x, mouth.z - eye.z) > PICK_RANGE) return null;
+    return basket.take();
+  }
+
   window.addEventListener('keydown', (event) => {
     if (renderer.xr.isPresenting) return;
     if (event.code === 'KeyF') {
       if (heldBall) { throwBall(); return; }
-      const object = nearest();
+      // 足もとの球より、かごを先に見る（かごのそばで F を押したら、かごから出す）
+      const object = (swing?.holding ? fromBasket() : null) ?? nearest() ?? fromBasket();
       if (object) take(object);
     } else if (event.code === 'KeyG' && swing?.holding) {
       swing.drop();

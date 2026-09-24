@@ -330,7 +330,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     lastInput = input;
     const { spec, track } = specOf(vehicle);
     const before = vehicle.speed;
-    vehicle.update(dt, input, clampKart);
+    // 4 つめは、手で持つ物（釣り竿など）のための VR の手
+    vehicle.update(dt, input, clampKart, { xr: renderer.xr.isPresenting, controllers: player.controllers });
     // 壁に当たって急に止まった
     const drop = before - vehicle.speed;
     if (drop > 1.2) ffb.bump(Math.min(1, drop / 5), -vehicle.state.steer || 1);

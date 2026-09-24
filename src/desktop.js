@@ -150,7 +150,7 @@ export function createDesktopControls(renderer, camera, world) {
   let heldBall = null;
   const eye = new THREE.Vector3();
   const look = new THREE.Vector3();
-  const swing = racket ? createDesktopSwing(camera, racket) : null;
+  const swing = racket ? createDesktopSwing(camera, racket, { ball: world.tennisBall }) : null;
 
   const free = (object) => object && !object.userData.held;
   const holdSlot = () => (swing?.holding ? HOLD_LEFT : HOLD);

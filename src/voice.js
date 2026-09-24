@@ -26,6 +26,20 @@ export const LINES = {
   wake: ['ふぁ…よくねた', 'んー…ねちゃってた', 'おはよ…'],
   greet: ['なあに？', 'どうしたの？', 'えへへ', 'いいてんきだね'],
   tennisInvite: ['テニスしよ！', 'わたしもラケットとってくるね！', 'テニス？やるやる！'],
+  /** プレイヤーのいい球が入った */
+  tennisNice: ['ナイスショット！', 'いいたま！', 'うまーい！', 'はやーい！'],
+  /** 自分が打った（たまに） */
+  tennisHit: ['えいっ！', 'それっ！', 'よいしょ！'],
+  tennisRally: ['{n}かい、つづいたよ！', 'ラリー{n}かい！', '{n}かい！すごいすごい！'],
+  /** プレイヤーの球がネット / アウト */
+  tennisNet: ['あー、ネット！', 'おしいっ！', 'ネットだー'],
+  tennisOut: ['アウトー！', 'ちょっとながかったね', 'おそとだよー'],
+  /** 自分の球がネット / アウト */
+  tennisMyNet: ['ごめん、ネットだー', 'あちゃー、かかっちゃった'],
+  tennisMyOut: ['あっ、アウトだ…', 'ごめん、ながすぎた！'],
+  /** 自分が届かなかった / プレイヤーが返せなかった */
+  tennisMiss: ['とどかなかったー！', 'はやすぎるよー！', 'あーん、まけた！'],
+  tennisPlayerMiss: ['ドンマイ！', 'もういっかい！', 'いまのはむずかしかったね'],
 };
 
 // --- 仮名 → 母音 -----------------------------------------------------------
@@ -134,7 +148,7 @@ function createBubble() {
 /** 1 拍の長さ（秒）。日本語の会話は 1 秒に 7〜8 拍 */
 const MORA = 0.13;
 /** 同じ場面の台詞を続けて言わない間（秒） */
-const COOLDOWN = { default: 3, greet: 25, herCatch: 6, rally: 1 };
+const COOLDOWN = { default: 3, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
 
 /**
  * @param {object} options
@@ -257,13 +271,13 @@ export function createVoice({ character, scene, camera, muted = false }) {
         if (node) node.getWorldPosition(head);
         else head.copy(body.position).setY(body.headHeight);
         // 見ている人から見て右上に出す（顔に重ならないように）。遠いと読めないので、
-        // 1.8m より遠ければ距離に合わせて大きくする（最大 2.2 倍）。ずらす量も
-        // 同じだけ広げて、頭の上のラリー表示と重ならないようにする
+        // 1.8m より遠ければ距離に合わせて大きくする（最大 4 倍。テニスではネットの
+        // 向こう 12m 先にいる）。ずらす量も同じだけ広げて、頭の上のラリー表示と重ならないようにする
         camera.getWorldPosition(eye);
         const dx = head.x - eye.x;
         const dz = head.z - eye.z;
         const d = Math.hypot(dx, dz) || 1;
-        const k = Math.min(2.2, Math.max(1, d / 1.8));
+        const k = Math.min(4, Math.max(1, d / 1.8));
         bubble.sprite.scale.set(0.72 * k, 0.225 * k, 1);
         const side = 0.38 * k;
         bubble.sprite.position.set(head.x - (dz / d) * side, head.y + 0.05 + 0.1 * k, head.z + (dx / d) * side);

@@ -670,7 +670,7 @@ export function createCatchGame({ character, ball, camera, scene, voice = null }
     body.setCrouch(0);
     body.setBend(0);
     body.setFocus(false);
-    board.sprite.visible = false;
+    board.hide();
     flight = null;
     path = [];
     state = 'suspended';
@@ -1086,7 +1086,7 @@ export function createCatchGame({ character, ball, camera, scene, voice = null }
  * ラリー回数の看板。女の子の頭の上に出て、数秒で消える。
  * VR でも読めるよう、DOM ではなくシーンの中のスプライトにする。
  */
-function createRallyBoard() {
+export function createRallyBoard({ scale = 1 } = {}) {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 192;
@@ -1095,12 +1095,12 @@ function createRallyBoard() {
   texture.colorSpace = THREE.SRGBColorSpace;
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false });
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(1.0, 0.375, 1);   // 6m 先でも読める大きさ（VR で視角 9 度ほど）
+  sprite.scale.set(1.0 * scale, 0.375 * scale, 1);   // 6m 先でも読める大きさ（VR で視角 9 度ほど）
   sprite.visible = false;
   sprite.renderOrder = 3;
   let showFor = 0;
 
-  function draw(rally, best, broke) {
+  function draw(rally, best, broke, label) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'rgba(20, 24, 32, 0.62)';
     const r = 40;
@@ -1111,7 +1111,7 @@ function createRallyBoard() {
     ctx.textBaseline = 'middle';
     ctx.fillStyle = broke ? '#ffd6a0' : '#ffffff';
     ctx.font = 'bold 84px sans-serif';
-    ctx.fillText(broke ? 'おしい！' : `ラリー ${rally}`, canvas.width / 2, 78);
+    ctx.fillText(broke ? label ?? 'おしい！' : `ラリー ${rally}`, canvas.width / 2, 78);
     ctx.fillStyle = '#b9d7ff';
     ctx.font = 'bold 44px sans-serif';
     ctx.fillText(`ベスト ${best}`, canvas.width / 2, 148);
@@ -1120,17 +1120,21 @@ function createRallyBoard() {
 
   return {
     sprite,
-    show(rally, best, broke = false) {
-      draw(rally, best, broke);
+    /** label は途切れたときの見出し（既定「おしい！」） */
+    show(rally, best, broke = false, label = null) {
+      draw(rally, best, broke, label);
       showFor = 2.6;
       sprite.visible = true;
     },
-    update(dt, body) {
+    /** at を渡すとそこに出す（テニスはネットの上）。無ければ女の子の頭の上 */
+    update(dt, body, at = null) {
       if (!sprite.visible) return;
       showFor -= dt;
       if (showFor <= 0) { sprite.visible = false; return; }
       material.opacity = Math.min(1, showFor / 0.5);
-      sprite.position.set(body.position.x, body.headHeight + 0.5, body.position.z);
+      if (at) sprite.position.copy(at);
+      else sprite.position.set(body.position.x, body.headHeight + 0.5, body.position.z);
     },
+    hide() { sprite.visible = false; },
   };
 }

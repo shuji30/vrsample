@@ -249,6 +249,7 @@ export function createWorld(renderer, scene, {
     data.velocity.y *= 0.5;
     data.spin.multiplyScalar(0.3);
     soundAt(prop.position, 'net', Math.min(1, Math.abs(data.velocity.z) / 2 + 0.2));
+    tennisGame?.onBallNet(prop);
   }
 
   const flatQuaternion = new THREE.Quaternion();

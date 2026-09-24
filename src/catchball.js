@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ROOM } from './room.js';
-import { PARK } from './park.js';
+import { PARK, COURT_BACKSTOP } from './park.js';
 import { createThrow } from './throwing.js';
 
 /**
@@ -195,8 +195,19 @@ export function settle(point, fromZ = point.y) {
     if (fromZ > fz && point.y < fz + FENCE_MARGIN) point.y = fz + FENCE_MARGIN;
     if (fromZ < fz && point.y > fz - FENCE_MARGIN) point.y = fz - FENCE_MARGIN;
   }
+  // テニスコート手前の防球ネット。右端の入口以外では、元いた側にとどめる
+  const bz = COURT_BACKSTOP.z;
+  if (point.x < COURT_BACKSTOP.maxX + BODY_RADIUS) {
+    if (fromZ > bz && point.y < bz + BODY_RADIUS) point.y = bz + BODY_RADIUS;
+    if (fromZ < bz && point.y > bz - BODY_RADIUS) point.y = bz - BODY_RADIUS;
+  }
   return point;
 }
+
+/** 防球ネットの入口の、庭側とコート側の点 */
+const ENTRANCE_X = (COURT_BACKSTOP.maxX + COURT_BACKSTOP.gapMaxX) / 2;
+export const ENTRANCE_OUT = new THREE.Vector2(ENTRANCE_X, COURT_BACKSTOP.z + 0.7);
+export const ENTRANCE_IN = new THREE.Vector2(ENTRANCE_X, COURT_BACKSTOP.z - 0.7);
 
 /**
  * 庭の中の道順。柵の向こう側へ行くなら切れ目を通し、途中の障害物は
@@ -217,6 +228,15 @@ export function gardenPath(from, to) {
     // 抜けた先の点が余白の中へ入って、いつまでもそこへ着けなかった
     if (!inGap) points.push(settle(new THREE.Vector2(gx, fz + sideA * 0.5), fz + sideA));
     points.push(settle(new THREE.Vector2(inGap ? clamp(from.x, GAP_PATH.min, GAP_PATH.max) : gx, fz + sideB * 0.5), fz + sideB));
+  }
+  // テニスコートの防球ネットをまたぐなら、右端の入口を通す
+  const bz = COURT_BACKSTOP.z;
+  const courtA = from.y < bz;
+  const courtB = to.y < bz;
+  if (courtA !== courtB) {
+    const inEntrance = from.x > COURT_BACKSTOP.maxX && Math.abs(from.y - bz) < 1.0;
+    if (!inEntrance) points.push((courtA ? ENTRANCE_IN : ENTRANCE_OUT).clone());
+    points.push((courtA ? ENTRANCE_OUT : ENTRANCE_IN).clone());
   }
   points.push(to.clone());
 

@@ -197,6 +197,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
       }
       object.userData.held = true;
       object.userData.heldBy = 'player';
+      object.userData.inBasket = false;   // かごの中の球も、そのままつかめる
       object.userData.velocity.set(0, 0, 0);
       object.userData.spin.set(0, 0, 0);
       setHover(object, false);

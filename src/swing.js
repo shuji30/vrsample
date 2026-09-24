@@ -94,9 +94,9 @@ function hermite(points, times, t, out) {
 /**
  * @param {THREE.Camera} camera
  * @param {THREE.Object3D} racket
- * @param {{ ball?: THREE.Object3D }} [options] 自動で振るときに見るテニスボール
+ * @param {{ balls?: THREE.Object3D[] }} [options] 自動で振るときに見るテニスボール
  */
-export function createDesktopSwing(camera, racket, { ball = null } = {}) {
+export function createDesktopSwing(camera, racket, { balls = [] } = {}) {
   const ballLocal = new THREE.Vector3();
   const offset = new THREE.Vector3();
   let spaceHeld = false;
@@ -106,8 +106,15 @@ export function createDesktopSwing(camera, racket, { ball = null } = {}) {
    * どこにいるか。届く範囲に入るなら、面の中心からのずれを返す（入らなければ null）
    */
   function reachOffset(out) {
-    if (!ball || ball.userData.held) return null;
+    for (const ball of balls) {
+      if (ballOffset(ball, out)) return out;
+    }
+    return null;
+  }
+  function ballOffset(ball, out) {
+    if (ball.userData.held || ball.userData.inBasket) return null;
     const d = ball.userData;
+    if (d.velocity.lengthSq() < 1) return null;
     // こちらへ向かってくる球だけ
     camera.updateWorldMatrix(true, false);
     const eye = camera.getWorldPosition(new THREE.Vector3());

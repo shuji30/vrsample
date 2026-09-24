@@ -87,16 +87,28 @@ const ASSIST = { player: 0.35, desktop: 0.8 };
 /**
  * @param {object} options
  * @param {ReturnType<import('./character.js').createCharacter>} options.character
- * @param {THREE.Object3D} options.ball テニスボール
+ * @param {THREE.Object3D[]} options.balls テニスボール（いくつあってもよい。打ち合うのは「いま飛んでいる 1 つ」）
  * @param {THREE.Object3D} options.racket 女の子のラケット
  * @param {THREE.Object3D} options.playerRacket プレイヤーのラケット
  * @param {THREE.Camera} options.camera
  * @param {THREE.Scene} options.scene
  * @param {object} [options.voice]
  */
-export function createTennisGame({ character, ball, racket, playerRacket, camera, scene, voice = null }) {
+export function createTennisGame({ character, balls, racket, playerRacket, camera, scene, voice = null }) {
   const body = character.body;
-  const data = ball.userData;
+  // いま見ている球。飛んできた球・打った球・拾いに行く球へ、そのつど持ち替える
+  let ball = balls[0];
+  let data = ball.userData;
+  function focusOn(next) {
+    if (next === ball) return;
+    ball = next;
+    data = next.userData;
+    rally.prevVy = data.velocity.y;
+    if (state !== 'off') character.watch(ball);
+  }
+  /** 止まっている時間（球ごと）。自分の側に止まった球を拾いに行くのに使う */
+  const restTimes = new Map(balls.map((b) => [b, 0]));
+  const lastPositions = new Map(balls.map((b) => [b, b.position.clone()]));
   const hands = createRacketHands(body, racket);
   const ready = readyPoints();
 
@@ -107,11 +119,9 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
   let planAge = 0;
   let swing = null;
   let cooldown = 0;
-  let restFor = 0;
   let unwanted = 0;           // テニスをやめたそうにしている時間
   let holdingRacket = false;
   let holdingBall = false;
-  let lastSeen = new THREE.Vector3().copy(ball.position);
   let random = Math.random;
   const player = new THREE.Vector3();
   const tmp = new THREE.Vector3();
@@ -144,7 +154,8 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
     return held && player.z < OUTSIDE_Z;
   }
 
-  const ballFree = () => !data.held;
+  const ballFree = () => !data.held && !data.inBasket;
+  const isFree = (b) => !b.userData.held && !b.userData.inBasket;
   const onHerSide = (p) => p.z < NET.z - 0.1
     && p.x > HER_AREA.minX - 0.5 && p.x < HER_AREA.maxX + 0.5 && p.z > HER_AREA.minZ - 0.5;
   const clampHer = (v) => {
@@ -224,11 +235,30 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
     return { hit: best, out, bounce: firstBounce };
   }
 
-  /** 飛んでくる球か（自分の側へ向かっている） */
+  /** 飛んでくる球があるか（自分の側へ向かっている）。あれば、その球を見る */
   function incoming() {
-    if (!ballFree() || cooldown > 0) return false;
-    const v = data.velocity;
-    return v.z < -1.5 && ball.position.z > NET.z - 3 && ball.position.y > 0.05 && v.length() > 2;
+    if (cooldown > 0) return false;
+    for (const b of balls) {
+      if (!isFree(b)) continue;
+      const v = b.userData.velocity;
+      if (v.z < -1.5 && b.position.z > NET.z - 3 && b.position.y > 0.05 && v.length() > 2) {
+        focusOn(b);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 自分の側に止まっている球のうち、いちばん近いもの */
+  function restingOnMySide() {
+    let best = null;
+    let bestD = Infinity;
+    for (const b of balls) {
+      if (!isFree(b) || restTimes.get(b) < 0.8 || !onHerSide(b.position)) continue;
+      const d = Math.hypot(b.position.x - body.position.x, b.position.z - body.position.z);
+      if (d < bestD) { best = b; bestD = d; }
+    }
+    return best;
   }
 
   // --- 道順 -------------------------------------------------------------------
@@ -408,7 +438,8 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
    * 相手のコートの内側へ少し寄せる
    */
   function onRacketHit(hit) {
-    if (hit.ball !== ball || state === 'off') return;
+    if (!balls.includes(hit.ball) || state === 'off') return;
+    focusOn(hit.ball);
     if (hit.racket !== racket) {
       assistPlayerShot(hit.by);
       beginShot(hit.by === 'character' ? 'her' : 'player');
@@ -615,9 +646,12 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
       board.update(dt, body, BOARD_AT);
     }
 
-    const moved = lastSeen.distanceTo(ball.position);
-    lastSeen.copy(ball.position);
-    restFor = ballFree() && data.velocity.length() < 0.3 && ball.position.y < 0.1 && moved < 0.01 ? restFor + dt : 0;
+    for (const b of balls) {
+      const last = lastPositions.get(b);
+      const still = isFree(b) && b.userData.velocity.length() < 0.3 && b.position.y < 0.1 && last.distanceTo(b.position) < 0.01;
+      restTimes.set(b, still ? restTimes.get(b) + dt : 0);
+      last.copy(b.position);
+    }
 
     const faceYaw = Math.atan2(player.x - body.position.x, player.z - body.position.z);
 
@@ -671,7 +705,9 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
         holdReady(body.yaw);
         if (incoming()) { beginPlan(); break; }
         // 自分の側に止まった球は拾いに行く
-        if (restFor > 0.8 && onHerSide(ball.position) && !holdingBall) {
+        const resting = holdingBall ? null : restingOnMySide();
+        if (resting) {
+          focusOn(resting);
           path = routeTo(clampHer(new THREE.Vector2(ball.position.x - 0.25, ball.position.z + 0.2)));
           state = 'fetch';
         }

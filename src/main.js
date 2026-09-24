@@ -279,6 +279,11 @@ async function start() {
     if (event.key === 'd' || event.key === 'D') debugPanel.toggle();
     if (event.key === 'r' || event.key === 'R') world.resetProps();
     if (event.key === 'm' || event.key === 'M') music.toggle();
+    // 女の子の声を替える（入っている日本語の声を順に。選んだ声は覚えておく）
+    if (event.key === 'v' || event.key === 'V') {
+      const name = world.voice?.cycleVoice();
+      if (name) console.info(`声: ${name}`);
+    }
   });
 
   // VR 中の実測。ヘッドセットを被っている間は画面の文字が読めないので、

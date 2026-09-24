@@ -229,13 +229,44 @@ export function createVoice({ character, scene, camera, muted = false }) {
     voice = v;
     tuning = tuningFor(v?.name ?? '');
   }
+  /**
+   * 声の状態。日本語の声が端末に無いときに、日本語以外の声（英語の声など）で
+   * 読ませると、片言の外国語のように聞こえた。日本語の声が無ければ読み上げず、
+   * 吹き出しと口の動きだけにして、開始画面で声の入れ方を知らせる（main.js）
+   */
+  let searched = false;       // 探し終えた（見つかった / 見つからないまま時間切れ）
+  const statusListeners = [];
+  const status = () => ({
+    enabled: Boolean(synth),
+    searching: Boolean(synth) && !voice && !searched,
+    name: voice?.name ?? null,
+    japanese: Boolean(voice),
+  });
+  const notify = () => { for (const fn of statusListeners) fn(status()); };
   function pickVoice() {
+    const had = voice;
     const ranked = rankedVoices();
     const saved = readSavedVoice();
-    useVoice(ranked.find((v) => v.name === saved) ?? ranked[0] ?? null);
+    useVoice(ranked.find((v) => v.name === saved) ?? ranked[0] ?? had ?? null);
+    if (voice) searched = true;
+    if (voice !== had) notify();
   }
   pickVoice();
   synth?.addEventListener?.('voiceschanged', pickVoice);
+  // ブラウザは声の一覧をあとから読み込む（Chrome のネットの声、Edge の Natural など）。
+  // voiceschanged が来ない端末もあるので、20 秒は 0.5 秒おきに見直す
+  if (synth && !voice) {
+    // 回数ではなく経過時間で区切る（重い端末ではタイマーが間引かれて、いつまでも終わらなかった）
+    const started = performance.now();
+    const timer = setInterval(() => {
+      pickVoice();
+      if (voice || performance.now() - started > 20000) {
+        clearInterval(timer);
+        searched = true;
+        notify();
+      }
+    }, 500);
+  }
 
   let morae = [];
   let moraIndex = 0;
@@ -259,7 +290,8 @@ export function createVoice({ character, scene, camera, muted = false }) {
     bubble.draw(text);
     bubble.sprite.visible = true;
 
-    if (synth && typeof SpeechSynthesisUtterance !== 'undefined') {
+    // 日本語の声が無ければ読み上げない（外国語の声の片言になる）。吹き出しと口だけ
+    if (synth && voice && typeof SpeechSynthesisUtterance !== 'undefined') {
       try {
         synth.cancel();
         const u = new SpeechSynthesisUtterance(text);
@@ -377,12 +409,17 @@ export function createVoice({ character, scene, camera, muted = false }) {
       const next = ranked[(ranked.indexOf(voice) + 1) % ranked.length];
       useVoice(next);
       saveVoice(next.name);
+      notify();
       speak('このこえ、どうかな？');
       // 吹き出しには声の名前も出す（「Microsoft Nanami Online (Natural) - Japanese」なら Nanami）
       const short = next.name.replace(/^(Microsoft|Google|Apple)\s+/i, '').split(/[\s(-]/)[0] || next.name;
       bubble.draw(`このこえ、どうかな？（${short}）`);
       return next.name;
     },
+    /** 声の状態（{ enabled, searching, name, japanese }） */
+    get status() { return status(); },
+    /** 声の状態が変わったら呼ぶ（見つかった / 替えた / 探し終えた） */
+    onStatus(fn) { statusListeners.push(fn); fn(status()); },
     /** 検証用 */
     get voiceName() { return voice?.name ?? null; },
     get voiceTuning() { return { ...tuning }; },

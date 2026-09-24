@@ -121,7 +121,7 @@ export function createDesktopControls(renderer, camera, world) {
     let dx = step.x;
     let dz = step.z;
     if (clamp) {
-      const inside = clamp(camera.position.x + dx, camera.position.z + dz, 0.25);
+      const inside = clamp(camera.position.x + dx, camera.position.z + dz, 0.25, camera.position);
       dx = inside.x - camera.position.x;
       dz = inside.z - camera.position.z;
     }

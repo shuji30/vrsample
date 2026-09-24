@@ -192,12 +192,21 @@ export function createWorld(renderer, scene, {
   }
 
   /**
-   * 与えた点を、歩ける範囲のいちばん近いところへ寄せる。
-   * inset は物の半径ぶんの余白（壁にめり込ませないため）。
+   * 与えた点を、歩ける範囲へ寄せる。inset は物の半径ぶんの余白（壁にめり込ませないため）。
+   *
+   * from（直前にいた点）を渡すと、はみ出したときは from のいた矩形の中で寄せる
+   * （壁に沿って滑る）。渡さなければ、いちばん近い矩形へ寄せる。
+   *
+   * from が要るのは、防球ネットのように薄い仕切りの両側で矩形が近いとき。VR の頭は
+   * 余白 0 で判定するので、コート側と庭側の矩形が 5cm しか離れておらず、ターンや
+   * 身を乗り出した拍子にネットの線を少し越えると、「いちばん近い矩形」が向こう側に
+   * なって、ネットの外へ出てしまった。
    */
-  function clampToBounds(x, z, inset = 0) {
+  function clampToBounds(x, z, inset = 0, from = null) {
     let best = null;
     let bestDistance = Infinity;
+    let home = null;
+    let homeDistance = Infinity;
     for (const region of regions) {
       const minX = region.minX + inset;
       const maxX = region.maxX - inset;
@@ -207,12 +216,23 @@ export function createWorld(renderer, scene, {
       const cx = Math.min(Math.max(x, minX), maxX);
       const cz = Math.min(Math.max(z, minZ), maxZ);
       const distance = (cx - x) ** 2 + (cz - z) ** 2;
+      if (distance === 0) return { x, z };          // 中にいる
       if (distance < bestDistance) {
         bestDistance = distance;
         best = { x: cx, z: cz };
       }
+      // 直前にいた矩形（少しはみ出していても、その矩形のそばにいたなら）
+      if (from) {
+        const fx = Math.min(Math.max(from.x, minX), maxX);
+        const fz = Math.min(Math.max(from.z, minZ), maxZ);
+        const away = (fx - from.x) ** 2 + (fz - from.z) ** 2;
+        if (away < 1e-4 && distance < homeDistance) {
+          homeDistance = distance;
+          home = { x: cx, z: cz };
+        }
+      }
     }
-    return best ?? { x, z };
+    return home ?? best ?? { x, z };
   }
 
   const tmp = new THREE.Vector3();
@@ -349,6 +369,7 @@ export function createWorld(renderer, scene, {
       if (data.held || data.inBasket) continue;
 
       const prevY = prop.position.y;
+      const prevX = prop.position.x;
       const prevZ = prop.position.z;
 
       // 空気抵抗。速さの二乗に比例するので、山なりに投げた球の飛距離と
@@ -444,7 +465,7 @@ export function createWorld(renderer, scene, {
       // 壁。歩ける範囲と同じ形で押し戻し、押し戻した向きに速度を反射する。
       // 掃き出し窓の開口ぶんはここが空いているので、ボールは庭へ抜けていく。
       const r = data.halfSize;
-      const clamped = clampToBounds(prop.position.x, prop.position.z, r);
+      const clamped = clampToBounds(prop.position.x, prop.position.z, r, { x: prevX, z: prevZ });
       const pushX = clamped.x - prop.position.x;
       const pushZ = clamped.z - prop.position.z;
       if (pushX * pushX + pushZ * pushZ > 1e-8) {

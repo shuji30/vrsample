@@ -3,7 +3,7 @@ import { PARK } from './park.js';
 import { ROOM } from './room.js';
 import { NET, predictTennis, solveShot } from './tennis.js';
 import { createForehand, createRacketHands, readyPoints, contactFor, SWING_LEAD } from './forehand.js';
-import { gardenPath } from './catchball.js';
+import { gardenPath, createRallyBoard } from './catchball.js';
 
 /**
  * テニスコートでのテニス（女の子の側）。
@@ -22,8 +22,16 @@ import { gardenPath } from './catchball.js';
  * 当たらなければ空振りで、球はそのまま後ろへ抜ける。
  *
  * 自分の側に止まった球は拾いに行き、構えの位置から自分で落として打って送る。
- * プレイヤーがコートを出る（またはラケットを置く）と、ラケットを元の場所へ
+ * プレイヤーがラケットを置く（または部屋へ戻る）と、ラケットを元の場所へ
  * 置いて、ネットの脇を回って手前側へ戻り、キャッチボールへ体を返す。
+ * 持っている道具で遊びが変わる：ラケットを持って外へ出ればテニス、持って
+ * いなければキャッチボール。
+ *
+ * ラリー：打った球が相手のコートに入るたびに 1 つ数え、ネットの上の看板に出す。
+ * ネット・アウト・2 回弾む（返せなかった）・手で取ると途切れ、理由を台詞で言う。
+ * 女の子もときどきミスをする（速い球、バックハンド、長いラリーほど増える）。
+ * プレイヤーの打球は、相手のコートへ向かっている球だけ、落ちる所を少しコートの
+ * 内側へ寄せる（VR は 35%、PC は 80%。PC は振りの向きを加減できないため）。
  */
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -66,9 +74,15 @@ const COOLDOWN = 0.6;
 /** 打ちやすい高さ（m）と、打てる高さの範囲 */
 const SWEET_HEIGHT = 0.85;
 const LOW = 0.32;
-const HIGH = 1.3;
+const HIGH = 1.4;
 /** 屋外（庭）にいるか */
 const OUTSIDE_Z = ROOM.minZ - ROOM.wall - 0.25;
+/** ラリーの看板を出す所（ネットの上） */
+const BOARD_AT = new THREE.Vector3(C.x, 2.5, NET.z);
+/** 線の上に落ちた球は入り（球の半径ぶん甘く見る） */
+const LINE = 0.035;
+/** プレイヤーの打球を相手のコートの内側へ寄せる強さ */
+const ASSIST = { player: 0.35, desktop: 0.8 };
 
 /**
  * @param {object} options
@@ -121,13 +135,13 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
     camera.getWorldPosition(player);
   }
 
-  /** プレイヤーがラケットを持ってコート（外まわりまで）に入っているか */
+  /**
+   * プレイヤーがラケットを持って外（庭かコート）にいるか。持っている道具で遊びを
+   * 選ぶ：ラケットならテニス、そうでなければキャッチボール
+   */
   function playerWantsTennis() {
     const held = playerRacket.userData.held && ['player', 'desktop'].includes(playerRacket.userData.heldBy);
-    const onCourt = player.z < NEAR_BASELINE + C.runoffEnd + 0.5
-      && player.z > BASELINE - C.runoffEnd
-      && Math.abs(player.x - C.x) < HALF_WIDTH + C.runoffSide + 0.2;
-    return held && onCourt;
+    return held && player.z < OUTSIDE_Z;
   }
 
   const ballFree = () => !data.held;
@@ -200,7 +214,7 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
           + (s.v.y > 0 ? 0.15 : 0) + s.t * 0.05 + (side < 0 ? 0.12 : 0);
         if (score < bestScore) {
           bestScore = score;
-          best = { point: s.p.clone(), t: s.t, stand, yaw, height: s.p.y, side };
+          best = { point: s.p.clone(), t: s.t, stand, yaw, height: s.p.y, side, speed: s.v.length() };
         }
       }
     }
@@ -367,6 +381,9 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
 
   let onFinish = null;
   function finish() {
+    board.hide();
+    rally.hitter = null;
+    rally.count = 0;
     hands.release();
     body.setThrowPose(null);
     body.setCrouch(0);
@@ -385,22 +402,188 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
     state = 'swing';
   }
 
-  /** 当たり判定から呼ばれる。自分のラケットで当たったら、狙った所へ打ち直す */
+  /**
+   * 当たり判定から呼ばれる。自分のラケットで当たったら、狙った所へ打ち直す
+   * （ときどきミスして、ネットかアウトへ行く）。プレイヤーのラケットなら、
+   * 相手のコートの内側へ少し寄せる
+   */
   function onRacketHit(hit) {
-    if (hit.racket !== racket || hit.ball !== ball) return;
+    if (hit.ball !== ball || state === 'off') return;
+    if (hit.racket !== racket) {
+      assistPlayerShot(hit.by);
+      beginShot(hit.by === 'character' ? 'her' : 'player');
+      return;
+    }
     const target = aimPoint();
     const distance = Math.hypot(target.x - ball.position.x, target.z - ball.position.z);
-    const shot = solveShot(ball.position, target, data, {
-      flight: clamp(0.35 + distance / 11, 0.95, 1.5),
-      topspin: 35 + random() * 20,
-    });
-    data.velocity.copy(shot.velocity);
-    data.spin.copy(shot.spin);
+    // ラリーが続くと少しずつ速く（最大 15%）
+    const pace = 1 - Math.min(0.15, rally.count * 0.01);
+    // ミスの見込み。速い球・バックハンド・長いラリーほど増える
+    const chance = clamp(0.03 + Math.max(0, (plan?.speed ?? 8) - 10) * 0.025
+      + (plan?.side < 0 ? 0.03 : 0) + Math.max(0, rally.count - 8) * 0.01, 0, 0.35);
+    if (state === 'swing' && random() < chance) {
+      mishit(target);
+    } else {
+      const shot = solveShot(ball.position, target, data, {
+        flight: clamp(0.35 + distance / 11, 0.95, 1.5) * pace,
+        topspin: 35 + random() * 20,
+      });
+      data.velocity.copy(shot.velocity);
+      data.spin.copy(shot.spin);
+      lastShot = { target, landing: shot.landing };
+    }
     cooldown = COOLDOWN;
     hitThisSwing = true;
     stats.returned++;
-    lastShot = { target, landing: shot.landing };
+    voice?.say('tennisHit', { chance: 0.25 });
+    beginShot('her');
   }
+
+  /** 打ち損じ。半分はネット、半分は長すぎるか横へ外れる */
+  function mishit(target) {
+    stats.mishit = (stats.mishit ?? 0) + 1;
+    if (random() < 0.5) {
+      // ネットの白帯より下へ、まっすぐ
+      const to = new THREE.Vector3(target.x, NET.height(target.x) * 0.55, NET.z);
+      const t = 0.45;
+      data.velocity.set((to.x - ball.position.x) / t, (to.y - ball.position.y + 4.9 * t * t) / t, (to.z - ball.position.z) / t);
+      data.spin.set(0, 0, 0);
+      lastShot = { target: to, landing: null, error: 'net' };
+      return;
+    }
+    const wide = random() < 0.5;
+    const out = wide
+      ? new THREE.Vector3(C.x + Math.sign(target.x - C.x || 1) * (HALF_WIDTH + 0.7), 0, target.z)
+      : new THREE.Vector3(target.x, 0, NEAR_BASELINE + 1.2 + random());
+    const shot = solveShot(ball.position, out, data, { flight: 1.2, topspin: 30 });
+    data.velocity.copy(shot.velocity);
+    data.spin.copy(shot.spin);
+    lastShot = { target: out, landing: shot.landing, error: 'out' };
+  }
+
+  /**
+   * プレイヤーの打球を、相手のコートの内側へ寄せる。女の子の側へ向かっている球だけ。
+   * 落ちる所がコートの外（か手前のネット）なら、コートの線の 0.5m 内側の点へ
+   * strength の割合だけ近づけた所を狙い直す。大きく外れた球（4m 以上）はそのまま
+   */
+  function assistPlayerShot(by) {
+    const strength = ASSIST[by] ?? 0;
+    if (!strength || data.velocity.z > -2) return;
+    const samples = predictTennis(ball.position, data.velocity, data.spin, data, { maxTime: 3 });
+    let landing = null;
+    let netted = false;
+    for (const s of samples) {
+      if (s.net) { netted = true; landing = s.p.clone().setZ(NET.z - 1.5); break; }
+      if (s.bounces > 0) { landing = s.p.clone(); break; }
+    }
+    if (!landing) return;
+    const inside = new THREE.Vector3(
+      clamp(landing.x, C.x - HALF_WIDTH + 0.5, C.x + HALF_WIDTH - 0.5), 0,
+      clamp(landing.z, BASELINE + 0.5, NET.z - 1.5),
+    );
+    const off = Math.hypot(inside.x - landing.x, inside.z - landing.z);
+    const spin = data.spin.length();
+    let flight = samples.find((s) => s.bounces > 0)?.t ?? 1.1;
+    let target;
+    if (by === 'desktop') {
+      // PC は振りが決まっているので、いつも打ち返しやすい球に直す：ベースラインの
+      // 2m 内側より手前に、1.15 秒以上かけて届く球（速く深い球は、弾んだあと
+      // 女の子の頭の上を越えて返せなかった）
+      if (off > 4) return;
+      target = landing.clone().lerp(inside, strength);
+      target.z = clamp(target.z, BASELINE + 2.0, NET.z - 1.8);
+      flight = Math.max(flight, 1.15);
+    } else {
+      if (off < 0.01 && !netted) return;
+      if (off > 4) return;
+      if (netted) return;   // VR のネットはそのまま（持ち上げると不自然）
+      target = landing.clone().lerp(inside, strength);
+    }
+    const shot = solveShot(ball.position, target, data, { flight: clamp(flight, 0.6, 1.6), topspin: Math.min(80, spin) });
+    data.velocity.copy(shot.velocity);
+    data.spin.copy(shot.spin);
+  }
+
+  // --- ラリー ---------------------------------------------------------------------
+
+  const board = createRallyBoard({ scale: 2.2 });
+  scene.add(board.sprite);
+  const rally = { count: 0, best: 0, hitter: null, bounces: 0, prevVy: 0 };
+
+  /** 打った（hitter: 'player' | 'her'）。ここから次に弾むまでを見る */
+  function beginShot(hitter) {
+    rally.hitter = hitter;
+    rally.bounces = 0;
+  }
+
+  function endRally(reason, by) {
+    if (!rally.hitter) return;
+    const count = rally.count;
+    rally.hitter = null;
+    rally.count = 0;
+    const labels = { net: 'ネット！', out: 'アウト！', miss: 'おしい！' };
+    board.show(count, rally.best, true, labels[reason] ?? 'おしい！');
+    stats.ended = stats.ended ?? {};
+    const key = `${by}:${reason}`;
+    stats.ended[key] = (stats.ended[key] ?? 0) + 1;
+    if (by === 'player') {
+      if (reason === 'net') voice?.say('tennisNet');
+      else if (reason === 'out') voice?.say('tennisOut');
+      else voice?.say('tennisPlayerMiss');
+    } else if (reason === 'net') voice?.say('tennisMyNet');
+    else if (reason === 'out') voice?.say('tennisMyOut');
+    else voice?.say('tennisMiss');
+    if (count >= 5) body.smile(2.4, 1);
+  }
+
+  /** 打った球が相手のコートに入った */
+  function goodShot() {
+    rally.count++;
+    rally.best = Math.max(rally.best, rally.count);
+    stats.rally = rally.count;
+    stats.best = rally.best;
+    board.show(rally.count, rally.best);
+    if (rally.count % 5 === 0) {
+      voice?.say('tennisRally', { n: rally.count });
+      body.smile(2.4, 1);
+    } else if (rally.hitter === 'player' && data.velocity.length() > 9) {
+      voice?.say('tennisNice', { chance: 0.5 });
+    }
+  }
+
+  /** 弾んだ所を見て、入ったか・返せなかったかを決める */
+  function trackRally() {
+    if (data.held) {
+      // 手で取った / 拾った：その場で終わり（数えるだけで、台詞は言わない）
+      if (rally.hitter) { rally.hitter = null; rally.count = 0; }
+      rally.prevVy = 0;
+      return;
+    }
+    const vy = data.velocity.y;
+    const bounced = rally.prevVy < -0.4 && vy > 0 && ball.position.y < data.halfSize + 0.05;
+    rally.prevVy = vy;
+    if (!bounced || !rally.hitter) return;
+    rally.bounces++;
+    const p = ball.position;
+    const receiverSide = rally.hitter === 'player' ? -1 : 1;   // -1 = 女の子の側（z < ネット）
+    if (rally.bounces === 1) {
+      const side = Math.sign(p.z - NET.z);
+      const inLines = Math.abs(p.x - C.x) <= HALF_WIDTH + LINE
+        && p.z >= BASELINE - LINE && p.z <= NEAR_BASELINE + LINE;
+      if (side === receiverSide && inLines) goodShot();
+      else endRally('out', rally.hitter);
+    } else {
+      // 2 回目：受ける側が返せなかった
+      endRally('miss', rally.hitter === 'player' ? 'her' : 'player');
+    }
+  }
+
+  /** ネットに掛かった（world.js から） */
+  function onBallNet(prop) {
+    if (prop !== ball || !rally.hitter) return;
+    endRally('net', rally.hitter);
+  }
+
   let lastShot = null;
   let hitThisSwing = false;
 
@@ -426,6 +609,11 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
     const wants = playerWantsTennis();
     unwanted = wants ? 0 : unwanted + dt;
     if (state !== 'off' && unwanted > 3) stop();
+
+    if (state !== 'off') {
+      trackRally();
+      board.update(dt, body, BOARD_AT);
+    }
 
     const moved = lastSeen.distanceTo(ball.position);
     lastSeen.copy(ball.position);
@@ -673,6 +861,8 @@ export function createTennisGame({ character, ball, racket, playerRacket, camera
     update,
     afterPose,
     onRacketHit,
+    onBallNet,
+    get rally() { return { count: rally.count, best: rally.best, hitter: rally.hitter }; },
     start,
     stop,
     set onFinish(fn) { onFinish = fn; },

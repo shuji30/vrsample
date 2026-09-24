@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RACKET } from './tennis.js';
+import { RACKET, predictTennis } from './tennis.js';
 
 /**
  * PC でラケットを振る。VR なら手の動きがそのまま振りになるが、マウスと
@@ -9,6 +9,11 @@ import { RACKET } from './tennis.js';
  * 打つ判定は VR と同じ（tennis.js の createRacketPhysics）。ラケットが実際に
  * 動いた速さで球が飛ぶので、ここでは「どこを、どれくらいの速さで通るか」を
  * 姿勢で決めているだけ。
+ *
+ * スペースを押したままにすると、振りかぶって待つ。飛んできた球が届く所へ来る
+ * なら、その時刻に合わせて自動で振り出し、インパクトの位置も球の通り道へ寄せる
+ * （マウスとキーボードでは、面を球の高さや左右へ合わせる手段が無いため）。
+ * 離せばその場で振る。
  *
  * 姿勢は、カメラから見たグリップの位置 g、シャフトの向き s、面の法線 n で書く
  * （x 右・y 上・-z 前）。インパクトでは面の中心が目の 24cm 下、60cm 前に来て、
@@ -48,8 +53,10 @@ function posePoints({ g, s, n }) {
 }
 
 const KEYS = Object.fromEntries(Object.entries(POSES).map(([name, pose]) => [name, posePoints(pose)]));
-/** 振り出しの点列。先頭は振り出した瞬間の姿勢に毎回書き換えるので、KEYS.back とは別に持つ */
-const FORWARD = [KEYS.back.map((p) => p.clone()), KEYS.impact, KEYS.follow, KEYS.ready];
+/** 振り出しの点列。先頭は振り出した瞬間の姿勢、インパクトは球へ寄せた姿勢に毎回書き換えるので、別に持つ */
+const FORWARD = [KEYS.back.map((p) => p.clone()), KEYS.impact.map((p) => p.clone()), KEYS.follow.map((p) => p.clone()), KEYS.ready];
+/** インパクトを球へ寄せてよい量（カメラの座標、m）。左右・上下・前後 */
+const REACH = { x: [-0.55, 0.45], y: [-0.75, 0.25], z: [-0.35, 0.3] };
 
 /**
  * 時刻つきの点列を、速さが途切れないようにつなぐ（エルミート補間）。
@@ -84,7 +91,49 @@ function hermite(points, times, t, out) {
   return out;
 }
 
-export function createDesktopSwing(camera, racket) {
+/**
+ * @param {THREE.Camera} camera
+ * @param {THREE.Object3D} racket
+ * @param {{ ball?: THREE.Object3D }} [options] 自動で振るときに見るテニスボール
+ */
+export function createDesktopSwing(camera, racket, { ball = null } = {}) {
+  const ballLocal = new THREE.Vector3();
+  const offset = new THREE.Vector3();
+  let spaceHeld = false;
+
+  /**
+   * いま振り出したら、インパクト（FORWARD_TIMES[1] 秒後）に球はカメラから見て
+   * どこにいるか。届く範囲に入るなら、面の中心からのずれを返す（入らなければ null）
+   */
+  function reachOffset(out) {
+    if (!ball || ball.userData.held) return null;
+    const d = ball.userData;
+    // こちらへ向かってくる球だけ
+    camera.updateWorldMatrix(true, false);
+    const eye = camera.getWorldPosition(new THREE.Vector3());
+    const toEye = eye.sub(ball.position);
+    if (toEye.dot(d.velocity) <= 0 || toEye.length() > 12) return null;
+    const lead = FORWARD_TIMES[1];
+    const samples = predictTennis(ball.position, d.velocity, d.spin, d, { maxTime: lead + 0.02 });
+    const at = samples.find((sample) => sample.t >= lead - 1e-3);
+    if (!at) return null;
+    ballLocal.copy(at.p);
+    camera.worldToLocal(ballLocal);
+    out.subVectors(ballLocal, KEYS.impact[1]);
+    const inside = out.x >= REACH.x[0] && out.x <= REACH.x[1] && out.y >= REACH.y[0] && out.y <= REACH.y[1]
+      && out.z >= REACH.z[0] && out.z <= REACH.z[1];
+    return inside ? out : null;
+  }
+
+  /** 振り出す。ずれ（offset）はインパクトに全部、フォローに半分かける */
+  function startForward(shift = null) {
+    FORWARD[0].forEach((p, i) => p.copy(current[i]));
+    FORWARD[1].forEach((p, i) => p.copy(KEYS.impact[i]).add(shift ?? offset.set(0, 0, 0)));
+    FORWARD[2].forEach((p, i) => p.copy(KEYS.follow[i]).addScaledVector(shift ?? offset, 0.5));
+    phase = 'forward';
+    time = 0;
+  }
+
   let holding = false;
   let phase = 'ready';   // ready | back | forward
   let time = 0;
@@ -133,6 +182,7 @@ export function createDesktopSwing(camera, racket) {
     drop() {
       if (!holding) return;
       holding = false;
+      spaceHeld = false;
       phase = 'ready';
       autoForwardAt = null;
       // シーン直下へ戻す（attach はワールドでの位置と向きを保つ）
@@ -145,6 +195,7 @@ export function createDesktopSwing(camera, racket) {
     },
 
     backswing() {
+      spaceHeld = true;
       if (!holding || phase !== 'ready') return;
       from.forEach((p, i) => p.copy(current[i]));
       phase = 'back';
@@ -152,11 +203,10 @@ export function createDesktopSwing(camera, racket) {
     },
 
     forward() {
+      spaceHeld = false;
       if (!holding || phase !== 'back' || autoForwardAt !== null) return;
-      // 振りかぶりきる前に離しても、そこから振り出す
-      FORWARD[0].forEach((p, i) => p.copy(current[i]));
-      phase = 'forward';
-      time = 0;
+      // 振りかぶりきる前に離しても、そこから振り出す。球が届く所へ来るなら寄せる
+      startForward(reachOffset(offset));
     },
 
     /** テニスボールを目の前にトスして、落ちてくるところを打つ */
@@ -174,6 +224,8 @@ export function createDesktopSwing(camera, racket) {
 
     update(dt) {
       if (!holding) return;
+      // 押したままなら、振り終わって構えに戻ったところで、また振りかぶって待つ
+      if (phase === 'ready' && spaceHeld && autoForwardAt === null) this.backswing();
       time += dt;
       if (phase === 'back') {
         const k = Math.min(1, time / BACK_TIME);
@@ -182,10 +234,15 @@ export function createDesktopSwing(camera, racket) {
         if (autoForwardAt !== null && time >= autoForwardAt) {
           // 振り出しの時刻を過ぎたぶんは、振りのほうへ持ち越す。フレームの区切りまで
           // 待って 0 から始めると、フレームが落ちたときにトスした球より遅れて空振りする
-          FORWARD[0].forEach((p, i) => p.copy(KEYS.back[i]));
           time -= autoForwardAt;
           autoForwardAt = null;
+          FORWARD[0].forEach((p, i) => p.copy(KEYS.back[i]));
+          FORWARD[1].forEach((p, i) => p.copy(KEYS.impact[i]));
+          FORWARD[2].forEach((p, i) => p.copy(KEYS.follow[i]));
           phase = 'forward';
+        } else if (autoForwardAt === null && spaceHeld && k >= 1 && reachOffset(offset)) {
+          // 押したまま待っていて、球が届く所へ来る：いま振り出す
+          startForward(offset);
         }
       }
       if (phase === 'forward') {

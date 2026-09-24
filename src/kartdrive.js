@@ -32,6 +32,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   let grip = 0;                 // VR でグリップを握っている時間（降りる）
   const headLocal = new THREE.Vector3();
   let rigYawOffset = 0;
+  let stickClick = false;
   const tmp = new THREE.Vector3();
   const tmp2 = new THREE.Vector3();
   const eye = new THREE.Vector3();
@@ -55,21 +56,31 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     player.setDriving(true);
     desktop.setDriving(true);
     engine.start();
-    if (renderer.xr.isPresenting) {
-      // いまの頭の位置（リグから見た）を覚え、リグをカートの向きに合わせる
-      const rig = player.player;
-      rig.updateMatrixWorld(true);
-      renderer.xr.getCamera().getWorldPosition(tmp);
-      headLocal.copy(rig.worldToLocal(tmp.clone()));
-      // 頭の向きのぶんだけリグを回して、乗った瞬間に前を向いているようにする
-      const q = new THREE.Quaternion();
-      renderer.xr.getCamera().getWorldQuaternion(q);
-      const f = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
-      const headYaw = Math.atan2(-f.x, -f.z) - rig.rotation.y;
-      rigYawOffset = -headYaw;
-    }
+    if (renderer.xr.isPresenting) calibrateHead();
     world.onKartEnter?.(kart);
   }
+
+  /**
+   * VR：いまの頭の位置（リグから見た）と向きを覚え、頭が運転席の目の位置でカートの前を
+   * 向くようにリグを合わせる。乗ったとき、乗ったまま VR を始めたとき（PC で乗ってから
+   * ENTER VR すると、合わせないまま VR の基準の向き（SteamVR の部屋の正面など）になって
+   * 逆を向いていた）、左スティックを押し込んだときに合わせ直す。
+   */
+  function calibrateHead() {
+    const rig = player.player;
+    rig.updateMatrixWorld(true);
+    renderer.xr.getCamera().getWorldPosition(tmp);
+    headLocal.copy(rig.worldToLocal(tmp.clone()));
+    // 頭の向きのぶんだけリグを回して、前を向いているようにする
+    const q = new THREE.Quaternion();
+    renderer.xr.getCamera().getWorldQuaternion(q);
+    const f = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    const headYaw = Math.atan2(-f.x, -f.z) - rig.rotation.y;
+    rigYawOffset = -headYaw;
+  }
+  // VR を始めたときに乗っていたら、頭の姿勢が取れるようになってから（数フレーム後）合わせる
+  let calibrateIn = 0;
+  renderer.xr.addEventListener('sessionstart', () => { if (driving) calibrateIn = 3; });
 
   function exit() {
     if (!driving) return;
@@ -151,6 +162,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       steer: (left ? 1 : 0) - (right ? 1 : 0),
       throttle: keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0,
       brake: keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0,
+      handbrake: keys.has('Space') ? 1 : 0,
       kind: 'keys',
       angle: 0,
     };
@@ -160,7 +172,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   function xrInput(dt) {
     const session = renderer.xr.getSession();
     if (!session) return null;
-    const out = { steer: 0, throttle: 0, brake: 0, kind: 'xr', angle: 0, hands: false };
+    const out = { steer: 0, throttle: 0, brake: 0, handbrake: 0, kind: 'xr', angle: 0, hands: false };
     let stickX = 0;
     let gripped = false;
     [...session.inputSources].forEach((source, index) => {
@@ -171,10 +183,16 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       const trigger = gp.buttons[0]?.value ?? 0;
       if (hand === 'right') out.throttle = trigger;
       else out.brake = trigger;
-      if (gp.buttons[1]?.pressed) gripped = true;
+      // 降りるのは左のグリップ（0.5 秒）。右のグリップはハンドブレーキ
+      if (hand === 'left' && gp.buttons[1]?.pressed) gripped = true;
+      if (hand === 'right') out.handbrake = gp.buttons[1]?.value ?? (gp.buttons[1]?.pressed ? 1 : 0);
       if (hand === 'left') {
         const x = Math.abs(gp.axes[2] ?? 0) > Math.abs(gp.axes[0] ?? 0) ? gp.axes[2] ?? 0 : gp.axes[0] ?? 0;
         stickX = Math.abs(x) < 0.2 ? 0 : x;
+        // 左スティックの押し込み：頭の位置と向きを合わせ直す
+        const click = Boolean(gp.buttons[3]?.pressed);
+        if (click && !stickClick) calibrateHead();
+        stickClick = click;
       }
     });
     grip = gripped ? grip + dt : 0;
@@ -216,6 +234,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       // （ペダルの読み違いでブレーキが踏まれたままに見えても、キーで走れるように）
       const out = { ...w };
       const active = (i) => i.throttle > 0.02 || i.brake > 0.02 || Math.abs(i.steer) > 0.05;
+      // ハンドブレーキは、どれで引いても効く
+      out.handbrake = Math.max(out.handbrake ?? 0, ...[keyboardInput(), wheel.readPad(), xr].filter(Boolean).map((i) => i.handbrake ?? 0));
       const extras = [keyboardInput(), wheel.readPad(), xr].filter((i) => i && active(i));
       if (extras.length) {
         out.throttle = Math.max(...extras.map((i) => i.throttle));
@@ -231,13 +251,14 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     let best = candidates[0];
     const size = (i) => Math.abs(i.steer) + i.throttle + i.brake;
     for (const c of candidates) if (size(c) > size(best)) best = c;
-    return best;
+    return { ...best, handbrake: Math.max(...candidates.map((c) => c.handbrake ?? 0)) };
   }
 
   // --- 毎フレーム ---------------------------------------------------------------
 
   function placeView() {
     kart.eye(eye);
+    if (calibrateIn > 0 && renderer.xr.isPresenting && --calibrateIn === 0) calibrateHead();
     const yaw = kart.state.yaw;
     if (renderer.xr.isPresenting) {
       // 覚えた頭の位置が、運転席の目に来るようにリグを置く
@@ -253,8 +274,13 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       camera.position.copy(eye);
       camera.lookAt(eye.x + fx * 6, eye.y - 0.35, eye.z + fz * 6);
     } else {
-      camera.position.set(kart.group.position.x - fx * 3.8, 2.1, kart.group.position.z - fz * 3.8);
-      camera.lookAt(kart.group.position.x + fx * 2, 0.6, kart.group.position.z + fz * 2);
+      // 追いかけ視点は、進む向き（travelYaw）の後ろから。ハンドブレーキで滑ると、カートが
+      // 横を向いて流れるのが見える（車の向きの後ろにすると、滑っていても真後ろしか見えない）
+      const ty = kart.state.travelYaw ?? yaw;
+      const tx = Math.sin(ty);
+      const tz = Math.cos(ty);
+      camera.position.set(kart.group.position.x - tx * 3.8, 2.1, kart.group.position.z - tz * 3.8);
+      camera.lookAt(kart.group.position.x + tx * 2, 0.6, kart.group.position.z + tz * 2);
     }
     camera.updateMatrixWorld(true);
   }

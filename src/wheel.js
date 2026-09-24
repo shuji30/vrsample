@@ -38,6 +38,8 @@ const DEFAULT = {
   steer: null,
   throttle: null,
   brake: null,
+  /** ハンドブレーキ（後輪だけのブレーキ）。レバー型の軸を割り当てる。ボタン型はボタンの割り当てで */
+  handbrake: null,
   /** ハンコン全体の回転角（端から端、度）。G29 / T300 は 900、Fanatec / DD は 900〜1080 など */
   lockDegrees: 900,
   /** カートのハンドルがいっぱいになるまでに回す角度（中央から片側、度） */
@@ -47,28 +49,53 @@ const DEFAULT = {
 function load() {
   try { return { ...DEFAULT, ...JSON.parse(localStorage.getItem(STORE) ?? '{}') }; } catch { return { ...DEFAULT }; }
 }
+/** 最後に保存した時刻（設定の画面に出す）。保存できなかったときは -1 */
+let lastSaved = 0;
 function save(config) {
-  try { localStorage.setItem(STORE, JSON.stringify(config)); } catch { /* 覚えられなくても動く */ }
+  try { localStorage.setItem(STORE, JSON.stringify(config)); lastSaved = Date.now(); } catch { lastSaved = -1; }
 }
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const HID_STORE = 'vrsample.wheelHid';
+/** 名前から、ハンドブレーキ・ハンコンらしい機器を見分ける（設定していないときの推し量りに使う） */
+const HANDBRAKE_NAME = /hand ?brake|handbrake|e-?brake|サイドブレーキ/i;
+const WHEEL_NAME = /wheel|ddwb|cammus|g29|g27|g25|g923|driving force|t300|t-gt|t248|t150|tmx|fanatec|csl|clubsport|podium|moza|simucube|simagic|asetek|thrustmaster|logitech g/i;
+/**
+ * VR のコントローラー。ブラウザによっては Gamepad API にも出てくる（Pimax P2N など）。
+ * ハンコンの候補に並ぶと紛らわしく、ハンドルに選ばれてしまうこともあるので外す
+ */
+const VR_CONTROLLER = /pimax|oculus|meta quest|quest|touch controller|openvr|vive|valve|index controller|knuckles|windows mixed reality|spatial controller|hp reverb|pico|htc/i;
 
 /**
  * WebHID でつないだ機器を、Gamepad のような形（id / axes / buttons）にする。
- * 入力の報告の、値の項目（8 ビット以上、定数でないもの）を軸として -1..1 に並べる。
- * 軸の順は、報告の番号の順 → 報告の中の並び順。
+ *   軸 … 入力の報告の値の項目のうち、Generic Desktop（X / Y / Z / Rx … 0x30〜0x38）と
+ *        Simulation Controls（アクセル・ブレーキ・ハンドルなど、page 0x02）のもの。-1..1 に並べる。
+ *        ほかの項目（FFB の状態 page 0x0F やメーカー独自の page 0xFF00〜）まで軸にすると、
+ *        CAMMUS DDWB では軸が 13 本になり、どれがハンドルか分かりにくかった。
+ *        当てはまる項目が 1 つも無い機器（ペダルの一部）は、8 ビット以上の値の項目をすべて軸にする
+ *   ボタン … Button（page 0x09）の 1 ビットの項目。ボタンの番号の順に並べる
+ *        （以前は軸しか読まず、HID でつないだハンコンのボタンが効かなかった）
  */
 function createHidPad(device) {
-  const layout = [];   // { reportId, offset, size, min, max, signed }
+  const axesAll = [];      // { reportId, offset, size, min, max, signed, page }
+  const buttonBits = [];   // { reportId, offset, number }
   const walk = (collections) => {
     for (const c of collections ?? []) {
       for (const r of c.inputReports ?? []) {
         let offset = 0;
         for (const item of r.items ?? []) {
+          const usages = item.usages?.length ? item.usages
+            : item.usageMinimum !== undefined ? Array.from({ length: Math.max(0, (item.usageMaximum ?? item.usageMinimum) - item.usageMinimum + 1) }, (_, i) => item.usageMinimum + i) : [];
           for (let k = 0; k < item.reportCount; k++) {
-            if (!item.isArray && !item.isConstant && item.reportSize >= 8 && item.logicalMaximum > item.logicalMinimum) {
-              layout.push({ reportId: r.reportId ?? 0, offset, size: item.reportSize, min: item.logicalMinimum, max: item.logicalMaximum, signed: item.logicalMinimum < 0 });
+            const usage = usages[Math.min(k, usages.length - 1)] ?? 0;
+            const page = usage >>> 16;
+            const id = usage & 0xffff;
+            if (!item.isArray && !item.isConstant) {
+              if (page === 0x09 && item.reportSize === 1) {
+                buttonBits.push({ reportId: r.reportId ?? 0, offset, number: id });
+              } else if (item.reportSize >= 8 && item.logicalMaximum > item.logicalMinimum) {
+                axesAll.push({ reportId: r.reportId ?? 0, offset, size: item.reportSize, min: item.logicalMinimum, max: item.logicalMaximum, signed: item.logicalMinimum < 0, page, id });
+              }
             }
             offset += item.reportSize;
           }
@@ -78,19 +105,35 @@ function createHidPad(device) {
     }
   };
   walk(device.collections);
+  const wanted = axesAll.filter((a) => (a.page === 0x01 && a.id >= 0x30 && a.id <= 0x38) || a.page === 0x02);
+  const layout = wanted.length ? wanted : axesAll.filter((a) => a.page !== 0x0f && a.page < 0xff00);
+  buttonBits.sort((a, b) => a.number - b.number);
   const name = `${device.productName || 'HID'} (HID Vendor: ${device.vendorId.toString(16).padStart(4, '0')} Product: ${device.productId.toString(16).padStart(4, '0')})`;
-  const pad = { id: name, index: -1, connected: true, mapping: '', axes: layout.map(() => 0), buttons: [], hid: true, seen: false };
+  const pad = {
+    id: name, index: -1, connected: true, mapping: '', hid: true, seen: false,
+    axes: layout.map(() => 0),
+    buttons: buttonBits.map(() => ({ pressed: false, touched: false, value: 0 })),
+  };
+  const readBits = (data, offset, size) => {
+    let v = 0;
+    for (let b = 0; b < size; b++) {
+      const bit = offset + b;
+      if ((data[bit >> 3] ?? 0) & (1 << (bit & 7))) v += 2 ** b;
+    }
+    return v;
+  };
   device.addEventListener('inputreport', (event) => {
     const data = new Uint8Array(event.data.buffer, event.data.byteOffset, event.data.byteLength);
     layout.forEach((a, i) => {
       if (a.reportId !== event.reportId) return;
-      let v = 0;
-      for (let b = 0; b < a.size; b++) {
-        const bit = a.offset + b;
-        if ((data[bit >> 3] ?? 0) & (1 << (bit & 7))) v += 2 ** b;
-      }
+      let v = readBits(data, a.offset, a.size);
       if (a.signed && v >= 2 ** (a.size - 1)) v -= 2 ** a.size;
       pad.axes[i] = clamp(((v - a.min) / (a.max - a.min)) * 2 - 1, -1, 1);
+    });
+    buttonBits.forEach((b, i) => {
+      if (b.reportId !== event.reportId) return;
+      const on = readBits(data, b.offset, 1) === 1;
+      pad.buttons[i] = { pressed: on, touched: on, value: on ? 1 : 0 };
     });
     pad.seen = true;
   });
@@ -109,7 +152,7 @@ export function createWheelInput() {
 
   function pads() {
     const list = typeof navigator !== 'undefined' && navigator.getGamepads
-      ? [...navigator.getGamepads()].filter((p) => p && p.connected && p.axes.length > 0) : [];
+      ? [...navigator.getGamepads()].filter((p) => p && p.connected && p.axes.length > 0 && !VR_CONTROLLER.test(p.id)) : [];
     return list.concat(hidPads.filter((p) => p.seen && p.axes.length > 0));
   }
 
@@ -118,8 +161,10 @@ export function createWheelInput() {
     if (!device.opened) await device.open();
     const pad = createHidPad(device);
     pad.device = device;
+    // 同じ機器の、軸もボタンも無い口（インターフェース）は並べない
+    if (pad.axes.length === 0 && pad.buttons.length === 0) return;
     hidPads.push(pad);
-    hidStatus = `${device.productName || 'HID の機器'} をつなぎました（軸 ${pad.axes.length} 本）。ペダルを踏むと一覧に出ます`;
+    hidStatus = `${device.productName || 'HID の機器'} をつなぎました（軸 ${pad.axes.length} 本・ボタン ${pad.buttons.length} 個）。動かすと一覧に出ます`;
   }
   /** HID で直接つなぐ（ボタンを押したときに呼ぶ） */
   async function connectHid() {
@@ -161,15 +206,26 @@ export function createWheelInput() {
   function guess() {
     const sims = pads().filter(isSimDevice);
     for (const pad of sims) if (!firstAxes.has(pad.id)) firstAxes.set(pad.id, pad.axes.slice());
-    const roles = { steer: config.steer, throttle: config.throttle, brake: config.brake };
+    const roles = { steer: config.steer, throttle: config.throttle, brake: config.brake, handbrake: config.handbrake ?? null };
+    // ハンドブレーキ・シフター・単体のペダルは、ハンドルに選ばない。名前がハンコンらしい機器を先に
+    const notWheel = (p) => HANDBRAKE_NAME.test(p.id) || /shifter|pedal/i.test(p.id);
     if (!roles.steer) {
-      // ハンドルは、軸が 3 つ以上ある機器の軸 0（ハンドルとペダルが一体の機種）、無ければ最初の機器の軸 0
-      const wheel = sims.find((p) => p.axes.length >= 3) ?? sims[0];
+      // ハンドルは、名前がハンコンらしい機器 → 軸が 3 つ以上ある機器 → 最初の機器、の軸 0
+      const candidates = sims.filter((p) => !notWheel(p));
+      const wheel = candidates.find((p) => WHEEL_NAME.test(p.id)) ?? candidates.find((p) => p.axes.length >= 3) ?? candidates[0];
       if (wheel) roles.steer = { id: wheel.id, axis: 0, rest: 0, full: -1 };
+    }
+    if (!roles.handbrake) {
+      // 名前がハンドブレーキの機器の、離したとき端（±1）にある軸
+      const hb = sims.find((p) => HANDBRAKE_NAME.test(p.id));
+      const rest = hb && firstAxes.get(hb.id);
+      const axis = rest ? rest.findIndex((v) => Math.abs(Math.abs(v) - 1) < 0.05) : -1;
+      if (axis >= 0) roles.handbrake = { id: hb.id, axis, rest: Math.sign(rest[axis]), full: -Math.sign(rest[axis]) };
     }
     if (!roles.throttle || !roles.brake) {
       const pedals = [];
       for (const pad of sims) {
+        if (HANDBRAKE_NAME.test(pad.id)) continue;
         const rest = firstAxes.get(pad.id);
         rest.forEach((v, i) => {
           if (roles.steer && pad.id === roles.steer.id && i === roles.steer.axis) return;
@@ -211,6 +267,7 @@ export function createWheelInput() {
         steer: clamp(angle / config.fullDegrees, -1, 1),
         throttle: pedalValue(roles.throttle),
         brake: pedalValue(roles.brake),
+        handbrake: pedalValue(roles.handbrake),
         kind: 'wheel',
         angle,
         id: roles.steer.id,
@@ -230,8 +287,10 @@ export function createWheelInput() {
       const standard = pad.mapping === 'standard';
       const throttle = (standard ? pad.buttons[7]?.value : pad.buttons[0]?.value) ?? 0;
       const brake = (standard ? pad.buttons[6]?.value : pad.buttons[1]?.value) ?? 0;
+      // ハンドブレーキ：'standard' は B
+      const handbrake = standard ? pad.buttons[1]?.value ?? 0 : 0;
       if (Math.abs(steer) > 0 || throttle > 0.02 || brake > 0.02 || pad.buttons.some((b) => b.pressed)) {
-        return { steer, throttle, brake, kind: 'pad', angle: steer * 90, id: pad.id, pad };
+        return { steer, throttle, brake, handbrake, kind: 'pad', angle: steer * 90, id: pad.id, pad };
       }
     }
     return null;
@@ -240,7 +299,7 @@ export function createWheelInput() {
   // --- ハンコンのボタン ------------------------------------------------------------
   // ハンコンのボタンを、キー（E 乗る / 降りる、C 視点、H 設定）に割り当てる。
   // 設定の画面で「覚える」を押してから、使いたいボタンを押す。
-  const BUTTON_ACTIONS = [['KeyE', 'e', '乗る / 降りる'], ['KeyC', 'c', '視点'], ['KeyH', 'h', '設定の画面']];
+  const BUTTON_ACTIONS = [['KeyE', 'e', '乗る / 降りる'], ['KeyC', 'c', '視点'], ['KeyH', 'h', '設定の画面'], ['Space', ' ', 'ハンドブレーキ']];
   let learning = null;           // 覚えているキー（code）
   const lastPressed = new Map(); // `${id}#${index}` → 押されていたか
   const fireKey = (type, code, key) => window.dispatchEvent(new KeyboardEvent(type, { code, key, bubbles: true }));
@@ -285,6 +344,7 @@ export function createWheelInput() {
     center: 'ハンドルをまっすぐ（真ん中）にして、ペダルから足を離し、「次へ」を押してください',
     steer: 'ハンドルを左いっぱいまで回し、次に右いっぱいまで回して、真ん中に戻してください（回しきれないときは、左右へ回したあとで「次へ」）',
     throttle: 'アクセルをいっぱいに踏んで、離してください',
+    handbrake: 'ハンドブレーキをいっぱいに引いて、戻してください',
     brake: 'ブレーキをいっぱいに踏んで、離してください',
     done: 'キャリブレーションが終わりました。下のバーで、ハンドル・アクセル・ブレーキが動くか確かめてください',
   };
@@ -323,9 +383,11 @@ export function createWheelInput() {
       // いっぱいまで回すと軸の値の変わりが小さいので、片側 0.05（900° なら 22°）で足りるとする。
       // 回しきれないときは「次へ」でも決められる
       if (t && t.max - t.rest > 0.05 && t.rest - t.min > 0.05 && Math.abs(t.now - t.rest) < 0.03) finishSteer(t);
-    } else if (wizard.step === 'throttle' || wizard.step === 'brake') {
-      const other = wizard.step === 'brake' ? 'throttle' : 'brake';
-      const exclude = [config.steer, wizard.only ? config[other] : wizard.step === 'brake' ? config.throttle : null].filter(Boolean);
+    } else if (PEDAL_ROLES.includes(wizard.step)) {
+      // ほかの役割に割り当て済みの軸は選ばない（順に覚えるときは、先に覚えたものだけ）
+      const others = wizard.only ? PEDAL_ROLES.filter((r) => r !== wizard.step).map((r) => config[r])
+        : wizard.step === 'brake' ? [config.throttle] : [];
+      const exclude = [config.steer, ...others].filter(Boolean);
       const t = pedalMove(exclude);
       if (t) {
         config[wizard.step] = { id: t.id, axis: t.axis, rest: t.now, full: t.full };
@@ -375,7 +437,8 @@ export function createWheelInput() {
   }
 
   // --- 手で割り当てる -----------------------------------------------------------
-  const ROLE_NAMES = { steer: 'ハンドル', throttle: 'アクセル', brake: 'ブレーキ' };
+  const ROLE_NAMES = { steer: 'ハンドル', throttle: 'アクセル', brake: 'ブレーキ', handbrake: 'ハンドブレーキ' };
+  const PEDAL_ROLES = ['throttle', 'brake', 'handbrake'];
   /** 役割に、機器の軸を割り当てる（値は今の値を「離した / 真ん中」として取る） */
   function assign(role, id, axis) {
     if (!id) { config[role] = null; save(config); return; }
@@ -449,9 +512,11 @@ export function createWheelInput() {
         return `<span style="${moving ? 'color:#ffd84a;font-weight:bold' : ''}">${i}:${v.toFixed(2)}</span>`;
       }).join(' ')}</small>`).join('<br>')
       : '（見つかりません。ハンドルを少し回すか、ペダルを踏んでください）';
-    panel.querySelector('[data-map]').textContent = `ハンドル：${describe(roles.steer)}　アクセル：${describe(roles.throttle)}　ブレーキ：${describe(roles.brake)}`;
+    panel.querySelector('[data-map]').textContent = `ハンドル：${describe(roles.steer)}　アクセル：${describe(roles.throttle)}　ブレーキ：${describe(roles.brake)}`
+      + `　ハンドブレーキ：${describe(roles.handbrake)}`;
     panel.querySelector('[data-bars]').innerHTML = input
       ? bar('ハンドル', input.steer, true) + bar('アクセル', input.throttle) + bar('ブレーキ', input.brake)
+        + bar('サイド', input.handbrake ?? 0)
         + `<small>ハンドルの角度 ${input.angle.toFixed(0)}°</small>`
       : '';
     // 割り当ての選択肢（機器や軸が増えたときだけ作り直す）
@@ -471,6 +536,9 @@ export function createWheelInput() {
       if (sel.value !== want) sel.value = [...sel.options].some((o) => o.value === want) ? want : '';
     }
     panel.querySelector('[data-hidstatus]').textContent = hidStatus;
+    panel.querySelector('[data-saved]').textContent = lastSaved < 0
+      ? '設定をこのブラウザに保存できませんでした（プライベートウィンドウなど）'
+      : `設定はこのブラウザに自動で保存されます${lastSaved ? `（${new Date(lastSaved).toLocaleTimeString()} に保存）` : ''}${importMessage ? `　${importMessage}` : ''}`;
     for (const el of panel.querySelectorAll('[data-btn]')) {
       const m = config.buttons?.[el.dataset.btn];
       el.textContent = learning === el.dataset.btn ? 'ボタンを押してください…' : m ? `${short(m.id)} のボタン ${m.index}` : '未設定';
@@ -484,6 +552,32 @@ export function createWheelInput() {
   const short = (id) => id.replace(/\s*\(.*?Vendor:.*?\)\s*/i, '').slice(0, 48);
 
   const axisSeen = new Map();
+  let importMessage = '';
+
+  /**
+   * 設定の書き出し・読み込み（JSON）。設定はふだんから、このブラウザ（localStorage）に
+   * 自動で保存している。ブラウザを変えるときや、消えたときのための控え
+   */
+  function exportSettings() {
+    let ffb = null;
+    let hid = null;
+    try { ffb = JSON.parse(localStorage.getItem('vrsample.ffb') ?? 'null'); } catch { /* 無し */ }
+    try { hid = JSON.parse(localStorage.getItem(HID_STORE) ?? 'null'); } catch { /* 無し */ }
+    return JSON.stringify({ vrsampleWheel: 1, wheel: config, ffb, hid }, null, 1);
+  }
+  function importSettings(text) {
+    try {
+      const data = JSON.parse(text);
+      if (!data || data.vrsampleWheel !== 1 || typeof data.wheel !== 'object') return false;
+      config = { ...DEFAULT, ...data.wheel };
+      save(config);
+      if (data.ffb) localStorage.setItem('vrsample.ffb', JSON.stringify(data.ffb));
+      if (Array.isArray(data.hid)) localStorage.setItem(HID_STORE, JSON.stringify(data.hid));
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   /** 入力機器の情報（うまく読めないときに送ってもらう） */
   function describeInputs() {
@@ -497,7 +591,7 @@ export function createWheelInput() {
     });
     for (const p of hidPads) lines.push(`HID: ${p.id}  軸 ${p.axes.length}: ${p.axes.map((v, k) => `${k}:${v.toFixed(3)}`).join(' ')}  受信 ${p.seen ? 'あり' : 'まだ'}`);
     const roles = guess();
-    for (const role of ['steer', 'throttle', 'brake']) {
+    for (const role of ['steer', ...PEDAL_ROLES]) {
       const r = roles[role];
       lines.push(`${ROLE_NAMES[role]}: ${r ? `${r.id} 軸 ${r.axis} 離した ${r.rest?.toFixed?.(3)} 踏みきった ${r.full?.toFixed?.(3)} いま ${axisValue(r)?.toFixed?.(3) ?? '読めない'}${config[role] ? '' : '（自動）'}` : '未設定'}`);
     }
@@ -521,18 +615,21 @@ export function createWheelInput() {
       <button data-wizard>キャリブレーションを始める</button>
       <button data-only="throttle">アクセルだけ覚え直す</button>
       <button data-only="brake">ブレーキだけ覚え直す</button>
+      <button data-only="handbrake">ハンドブレーキを覚える</button>
       <button data-reset>設定を消す</button>
       <div style="margin:6px 0">
         <b>割り当て</b>（機器と軸を選ぶ。ペダルは離した状態で選ぶ）<br>
-        ${['steer', 'throttle', 'brake'].map((role) => `<div>${ROLE_NAMES[role]}：<select data-assign="${role}" style="max-width:320px"></select>
+        ${['steer', ...PEDAL_ROLES].map((role) => `<div>${ROLE_NAMES[role]}：<select data-assign="${role}" style="max-width:320px"></select>
           ${role === 'steer' ? '<button data-flip="steer">左右を反転</button>'
             : `<button data-record="${role}:rest">離した値を記録</button><button data-record="${role}:full">踏みきった値を記録</button><button data-flip="${role}">反転</button>`}</div>`).join('')}
         <b>ハンコンのボタン</b>（「覚える」を押してから、使いたいボタンを押す）<br>
         ${BUTTON_ACTIONS.map(([code, , label]) => `${label}：<span data-btn="${code}"></span> <button data-learn="${code}">覚える</button>`).join('　')}<br>
         <small>ペダルが一覧に出ないとき：一度踏んでみる。それでも出なければ</small>
         <button data-hid>HID で直接つなぐ</button> <small data-hidstatus></small><br>
-        <button data-inputs>入力機器の情報を書き出す</button>
-        <textarea data-inputdump readonly style="display:none;width:100%;height:9em;font:11px monospace"></textarea>
+        <button data-inputs>入力機器の情報を書き出す</button><br>
+        <small data-saved></small>
+        <button data-export>設定を書き出す</button> <button data-import>貼り付けた設定を読み込む</button>
+        <textarea data-inputdump style="display:none;width:100%;height:9em;font:11px monospace"></textarea>
       </div>
       ハンドルいっぱいまでの角度（中央から）：<input data-full type="number" min="20" max="540" step="10" style="width:5em">°
       　ハンコン全体の回転角：<input data-lock type="number" min="180" max="2520" step="10" style="width:5em">°
@@ -548,6 +645,23 @@ export function createWheelInput() {
       if (el.dataset?.flip) flip(el.dataset.flip);
       if (el.hasAttribute?.('data-hid')) connectHid();
       if (el.dataset?.learn) learning = el.dataset.learn;
+      if (el.hasAttribute?.('data-export')) {
+        const dump = panel.querySelector('[data-inputdump]');
+        dump.value = exportSettings();
+        dump.style.display = '';
+        dump.select();
+      }
+      if (el.hasAttribute?.('data-import')) {
+        const dump = panel.querySelector('[data-inputdump]');
+        if (dump.style.display === 'none') {
+          dump.value = '';
+          dump.style.display = '';
+          dump.placeholder = '書き出した設定をここに貼り付けて、もう一度「貼り付けた設定を読み込む」を押してください';
+          dump.focus();
+        } else {
+          importMessage = importSettings(dump.value) ? '設定を読み込みました' : '読み込めませんでした（書き出した内容をそのまま貼り付けてください）';
+        }
+      }
       if (el.hasAttribute?.('data-inputs')) {
         const dump = panel.querySelector('[data-inputdump]');
         dump.value = describeInputs();
@@ -598,6 +712,8 @@ export function createWheelInput() {
     connectHid() { return connectHid(); },
     learnButton(code) { learning = code; },
     describeInputs() { return describeInputs(); },
+    exportSettings() { return exportSettings(); },
+    importSettings(text) { return importSettings(text); },
     get config() { return { ...config, ...guess() }; },
     /** 設定の画面を開いたときに呼ぶ（FFB の欄を足すのに使う） */
     set onPanel(fn) { onPanel = fn; },

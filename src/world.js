@@ -14,6 +14,13 @@ import { createRacketPhysics, createRacket, createTennisBall, createBallBasket, 
 import { createTennisGame, HER_RACKET_SPOT } from './tennisgame.js';
 import { createImpactSound } from './audio.js';
 import { createKartRace } from './kartrace.js';
+
+/**
+ * 女の子のカートの性能の倍率（最高速・加速・グリップ）。ふつうのカートの性能では、
+ * 上手に走っても 3 周 43 秒ほどで「遅すぎる」と言われた。前をふさがれずに走って 3 周 34.3 秒
+ * （スタートの枠から、合図の緑からゴールまで）になるよう、実際に走らせて合わせた
+ */
+const HER_KART_PERF = { top: 1.42, accel: 2.05, grip: 1.5 };
 import { DEFAULT_THEME } from './themes.js';
 
 /**
@@ -141,10 +148,10 @@ export function createWorld(renderer, scene, {
   }
   const tennisBalls = grabbables.filter((prop) => prop.userData.tennis);
 
-  // カート 2 台。スタートの枠の前（プレイヤー、青）と後ろ（女の子、ピンク）に置く
+  // カート 2 台。女の子のカートは速め（HER_KART_PERF）。スタートの枠の前（プレイヤー、青）と後ろ（女の子、ピンク）に置く
   const karts = {
     player: createKart({ color: 0x2b6fd6, number: '1', name: 'playerKart' }),
-    her: createKart({ color: 0xe0609a, number: '2', name: 'herKart' }),
+    her: createKart({ color: 0xe0609a, number: '2', name: 'herKart', perf: HER_KART_PERF }),
   };
   for (const [kart, slot] of [[karts.player, 0], [karts.her, 1]]) {
     const g = gridSlot(slot);

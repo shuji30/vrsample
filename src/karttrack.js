@@ -30,14 +30,74 @@ export const KART_TRACK = {
   area: { minX: 5.0, maxX: 27.0, minZ: -33.2, maxZ: -5.0 },
 };
 
+/**
+ * 中心線の点ごとの高さ（m）。少しだけ上り下りを入れる。スタート / ゴールの前後
+ * （ホームストレートと最終コーナー）は平らにして、スタートの枠とゲートは地面の高さのまま。
+ * 右奥のコーナーへ上って（最大 1.0m）、S 字で下り、奥の右でもう一度小さく上る。
+ * 勾配は 10% ほどまで（子どものカートで、上りで少し遅くなる程度）。
+ */
+const HEIGHTS = [0, 0, 0.25, 0.7, 1.0, 0.75, 0.35, 0.15, 0.4, 0.65, 0.45, 0.15, 0, 0.2, 0.1, 0];
+
 const curve = new THREE.CatmullRomCurve3(
-  CENTER.map(([x, z]) => new THREE.Vector3(x, 0, z)), true, 'centripetal',
+  CENTER.map(([x, z], i) => new THREE.Vector3(x, HEIGHTS[i], z)), true, 'centripetal',
 );
 const SAMPLES = 600;
 /** 中心線を等間隔（長さで）に並べた点。探すのはこの点列で行う */
 const points = curve.getSpacedPoints(SAMPLES).slice(0, SAMPLES);
 const tangents = points.map((_, i) => curve.getTangentAt(i / SAMPLES).setY(0).normalize());
 export const TRACK_LENGTH = curve.getLength();
+
+// ---------------------------------------------------------------------------
+// 地面の高さ
+// ---------------------------------------------------------------------------
+//
+// 路面の高さは中心線の高さ。路面の外は、端から SLOPE だけかけて地面（0）へなだらかに下ろす
+// （土手）。コースの別の区間が近くを通るところで段差ができないよう、中心線の各点が作る
+// 「山」の高いほう（max）を取る。毎フレーム探すと重いので、走れる範囲に 0.25m ごとの表を
+// 作っておき、そこから読む（まわりの 4 つの値の間を取る）。
+
+const EDGE = KART_TRACK.width / 2 + KART_TRACK.curb + 0.25;
+const SLOPE = 3.0;
+const CELL = 0.25;
+const { minX: GX0, minZ: GZ0 } = KART_TRACK.area;
+const GW = Math.ceil((KART_TRACK.area.maxX - GX0) / CELL) + 1;
+const GH = Math.ceil((KART_TRACK.area.maxZ - GZ0) / CELL) + 1;
+const heightGrid = new Float32Array(GW * GH);
+{
+  const raised = points.filter((q) => q.y > 1e-3);
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) {
+      const x = GX0 + i * CELL;
+      const z = GZ0 + j * CELL;
+      let h = 0;
+      for (const q of raised) {
+        if (q.y <= h) continue;
+        const d = Math.hypot(q.x - x, q.z - z);
+        if (d >= EDGE + SLOPE) continue;
+        const t = d <= EDGE ? 1 : 1 - (d - EDGE) / SLOPE;
+        const w = t * t * (3 - 2 * t);
+        h = Math.max(h, q.y * w);
+      }
+      heightGrid[j * GW + i] = h;
+    }
+  }
+}
+
+/** 地面の高さ（m）。カートコースの起伏。コースの外（走れる範囲の外）は 0 */
+export function groundHeight(x, z) {
+  const fx = (x - GX0) / CELL;
+  const fz = (z - GZ0) / CELL;
+  if (fx < 0 || fz < 0 || fx >= GW - 1 || fz >= GH - 1) return 0;
+  const i = Math.floor(fx);
+  const j = Math.floor(fz);
+  const tx = fx - i;
+  const tz = fz - j;
+  const a = heightGrid[j * GW + i];
+  const b = heightGrid[j * GW + i + 1];
+  const c = heightGrid[(j + 1) * GW + i];
+  const d = heightGrid[(j + 1) * GW + i + 1];
+  return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+}
 
 /** 中心線の u（0..1、1 周）での点と接線 */
 export function trackPoint(u, out = new THREE.Vector3()) {
@@ -148,10 +208,13 @@ function bannerTexture(text) {
  * 中心線に沿った帯（リボン）。from..to は中心線からの横のずれ（m、右が +）。
  * v は長さ方向の m、u は横方向の 0..1
  */
-function ribbon(from, to, y, segments = SAMPLES) {
+function ribbon(from, to, y, segments = SAMPLES, cols = 1) {
+  // 横（幅の向き）も cols に分ける。両端だけだと、起伏のある地面の上で路面の真ん中が
+  // 地面より低くなり、芝生が路面を突き抜けていた
   const positions = [];
   const uvs = [];
   const indices = [];
+  const row = cols + 1;
   let along = 0;
   for (let i = 0; i <= segments; i++) {
     const k = i % segments;
@@ -160,11 +223,18 @@ function ribbon(from, to, y, segments = SAMPLES) {
     if (i > 0) along += points[k].distanceTo(points[(i - 1) % segments]);
     const rx = -t.z;
     const rz = t.x;
-    positions.push(p.x + rx * from, y, p.z + rz * from, p.x + rx * to, y, p.z + rz * to);
-    uvs.push(0, along, 1, along);
+    for (let c = 0; c <= cols; c++) {
+      const off = from + ((to - from) * c) / cols;
+      const x = p.x + rx * off;
+      const z = p.z + rz * off;
+      positions.push(x, groundHeight(x, z) + y, z);
+      uvs.push(c / cols, along);
+    }
     if (i < segments) {
-      const a = i * 2;
-      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+      const a = i * row;
+      for (let c = 0; c < cols; c++) {
+        indices.push(a + c, a + row + c, a + c + 1, a + c + 1, a + row + c, a + row + c + 1);
+      }
     }
   }
   const geometry = new THREE.BufferGeometry();
@@ -183,15 +253,16 @@ function ribbon(from, to, y, segments = SAMPLES) {
 }
 
 /** コース一式（路面・縁石・白線・スタート / ゴールのゲート）を作る */
-export function createKartCourse() {
+export function createKartCourse({ grass = null } = {}) {
   const group = new THREE.Group();
   group.name = 'kartCourse';
   const half = KART_TRACK.width / 2;
+  if (grass) group.add(createTerrain(grass));
 
   const asphalt = asphaltTexture();
   asphalt.repeat.set(1, 0.25);
   const road = new THREE.Mesh(
-    ribbon(-half, half, 0.012),
+    ribbon(-half, half, 0.016, SAMPLES, 8),
     new THREE.MeshStandardMaterial({ map: asphalt, roughness: 0.92, metalness: 0 }),
   );
   road.receiveShadow = true;
@@ -204,11 +275,11 @@ export function createKartCourse() {
   for (const side of [-1, 1]) {
     const a = side * half;
     const b = side * (half + KART_TRACK.curb);
-    const curb = new THREE.Mesh(ribbon(Math.min(a, b), Math.max(a, b), 0.02), curbMaterial);
+    const curb = new THREE.Mesh(ribbon(Math.min(a, b), Math.max(a, b), 0.024), curbMaterial);
     curb.receiveShadow = true;
     group.add(curb);
     const line = new THREE.Mesh(
-      ribbon(side * (half - 0.14), side * (half - 0.06), 0.016),
+      ribbon(side * (half - 0.14), side * (half - 0.06), 0.021),
       new THREE.MeshStandardMaterial({ color: 0xf2f2ee, roughness: 0.8 }),
     );
     group.add(line);
@@ -224,7 +295,7 @@ export function createKartCourse() {
   );
   // 寝かせた板の横（ローカル X）が、コースを横切る向きになるように
   finish.rotation.set(-Math.PI / 2, yaw, 0, 'YXZ');
-  finish.position.set(at.x, 0.022, at.z);
+  finish.position.set(at.x, groundHeight(at.x, at.z) + 0.027, at.z);
   group.add(finish);
 
   const gate = new THREE.Group();
@@ -244,7 +315,7 @@ export function createKartCourse() {
   banner.position.set(0, 2.8, 0);
   banner.castShadow = true;
   gate.add(banner);
-  gate.position.set(at.x, 0, at.z);
+  gate.position.set(at.x, groundHeight(at.x, at.z), at.z);
   gate.rotation.y = yaw;   // ゲートの横（ローカル X）がコースを横切る
   group.add(gate);
 
@@ -255,7 +326,9 @@ export function createKartCourse() {
     const t = trackTangent(KART_TRACK.startAt - back / TRACK_LENGTH);
     const box = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.08), gridMaterial);
     box.rotation.set(-Math.PI / 2, Math.atan2(t.x, t.z), 0, 'YXZ');
-    box.position.set(p.x - t.z * side, 0.02, p.z + t.x * side);
+    const bx = p.x - t.z * side;
+    const bz = p.z + t.x * side;
+    box.position.set(bx, groundHeight(bx, bz) + 0.027, bz);
     group.add(box);
   }
 
@@ -274,7 +347,9 @@ export function createKartCourse() {
         const m = new THREE.Mesh(tire, tireMaterial);
         m.rotation.x = Math.PI / 2;
         const off = half + KART_TRACK.curb + 0.7;
-        m.position.set(p.x - t.z * out * off + t.x * k * 0.62, 0.11 + level * 0.2, p.z + t.x * out * off + t.z * k * 0.62);
+        const mx = p.x - t.z * out * off + t.x * k * 0.62;
+        const mz = p.z + t.x * out * off + t.z * k * 0.62;
+        m.position.set(mx, groundHeight(mx, mz) + 0.11 + level * 0.2, mz);
         m.castShadow = true;
         group.add(m);
       }
@@ -282,4 +357,51 @@ export function createKartCourse() {
   }
 
   return group;
+}
+
+/**
+ * 起伏のある芝生（土手）。庭の芝生（高さ 0 の板）の上に張る。材質は庭の芝生と同じものを
+ * 使い、UV も庭の芝生の板（70m 四方、中心 (0, -20)）に合わせて、つなぎ目で模様がずれないようにする。
+ */
+function createTerrain(grass) {
+  const step = 0.5;
+  const nx = Math.ceil((KART_TRACK.area.maxX - GX0) / step) + 1;
+  const nz = Math.ceil((KART_TRACK.area.maxZ - GZ0) / step) + 1;
+  const positions = [];
+  const uvs = [];
+  const heights = [];
+  for (let j = 0; j < nz; j++) {
+    for (let i = 0; i < nx; i++) {
+      const x = GX0 + i * step;
+      const z = GZ0 + j * step;
+      // 路面・縁石の下になるところは少し下げる（芝生が路面から顔を出さないように）
+      const under = nearestOnTrack(x, z).distance < KART_TRACK.width / 2 + KART_TRACK.curb + 0.1;
+      const h = groundHeight(x, z) - (under ? 0.06 : 0);
+      heights.push(h);
+      positions.push(x, h, z);
+      uvs.push((x + 35) / 70, (-(z + 20) + 35) / 70);
+    }
+  }
+  const indices = [];
+  for (let j = 0; j < nz - 1; j++) {
+    for (let i = 0; i < nx - 1; i++) {
+      const a = j * nx + i;
+      const b = a + 1;
+      const c = a + nx;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  // 走れる範囲をまるごとおおう（高さ 0 のところは庭の芝生の 5mm 上。同じ模様なので、
+  // 重なってもちらつきは見えない）。手前に描く設定（polygonOffset）を使うと、路面（地面の
+  // 1.6cm 上）より芝生が手前に出て、路面が隠れてしまった
+  const mesh = new THREE.Mesh(geometry, grass);
+  mesh.name = 'kartTerrain';
+  mesh.receiveShadow = true;
+  return mesh;
 }

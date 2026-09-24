@@ -3,7 +3,7 @@ import { ROOM } from './room.js';
 import { KART } from './kart.js';
 import { createKartAI } from './kartai.js';
 import { gardenPath } from './catchball.js';
-import { TRACK_LENGTH, trackPoint } from './karttrack.js';
+import { TRACK_LENGTH, groundHeight, trackPoint } from './karttrack.js';
 
 /**
  * カート（女の子の側）。プレイヤーがカートに乗ると、女の子もキャッチボール（テニス）を
@@ -87,9 +87,8 @@ export function createKartGame({ character, kart, playerKart, clamp, voice = nul
 
   /** 座席の位置（ワールド、足元の高さ込み） */
   function seatPoint(out) {
-    kart.group.localToWorld(out.set(0, 0, KART.seatZ - 0.08));
-    out.y = body.seatRootY(SEAT_TOP);
-    return out;
+    // 足元（ルート）の高さもカートのローカルで決める。坂でカートが傾いても、座席に乗ったまま
+    return kart.group.localToWorld(out.set(0, body.seatRootY(SEAT_TOP), KART.seatZ - 0.08));
   }
 
   function holdWheel() {
@@ -244,13 +243,13 @@ export function createKartGame({ character, kart, playerKart, clamp, voice = nul
         const k = Math.min(1, timer / GET_IN);
         const e = k * k * (3 - 2 * k);
         kart.side(side);
-        side.y = 0;
+        side.y = groundHeight(side.x, side.z);   // 坂の途中で降りても、地面に立つ
         body.position.lerpVectors(from, side, e);
         body.setSeat(1 - e, 'kart');
         if (k > 0.5) { body.reachHands(null); body.reach(null); }
         if (k >= 1) {
           body.setSeat(0, 'kart');
-          body.position.y = 0;
+          body.position.y = groundHeight(body.position.x, body.position.z);
           finish();
         }
         break;

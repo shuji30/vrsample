@@ -129,10 +129,16 @@ export function createDesktopControls(renderer, camera, world) {
       dx = inside.x - camera.position.x;
       dz = inside.z - camera.position.z;
     }
+    // 起伏（カートコースの土手など）を歩くときは、地面の高さの変わったぶんだけ目も上げ下げする
+    // （見回しでカメラの高さは少し変わるので、決まった高さへは戻さない）
+    const dy = (world.groundHeight?.(camera.position.x + dx, camera.position.z + dz) ?? 0)
+      - (world.groundHeight?.(camera.position.x, camera.position.z) ?? 0);
     camera.position.x += dx;
     camera.position.z += dz;
+    camera.position.y += dy;
     controls.target.x += dx;
     controls.target.z += dz;
+    controls.target.y += dy;
   }
 
   // --- PC でのキャッチボールとテニス ---------------------------------------

@@ -297,6 +297,11 @@ async function start() {
     if ((event.key === 'd' || event.key === 'D') && !kartDrive.driving) debugPanel.toggle();
     if (event.key === 'r' || event.key === 'R') world.resetProps();
     if (event.key === 'm' || event.key === 'M') music.toggle();
+    // 時間帯を順に（昼 → 夕方 → 夜）。夜は公園の奥で花火が上がる
+    if (event.key === 't' || event.key === 'T') {
+      const key = world.cycleTheme();
+      if (key) console.info(`時間帯: ${key}`);
+    }
     // 女の子の声を替える（入っている日本語の声を順に。選んだ声は覚えておく）
     if (event.key === 'v' || event.key === 'V') {
       const name = world.voice?.cycleVoice();

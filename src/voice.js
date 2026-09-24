@@ -30,6 +30,9 @@ export const LINES = {
   greet: ['なあに？', 'どうしたの？', 'えへへ', 'いいてんきだね'],
   tennisInvite: ['テニスしよ！', 'わたしもラケットとってくるね！', 'テニス？やるやる！'],
   kartInvite: ['わたしもカートにのるね！', 'カート？まけないよー！', 'よーし、きょうそうだ！'],
+  /** 夜の花火：はじめて開いた / 開くたびに（ときどき） */
+  fireworksStart: ['わあ、はなびだ！', 'みてみて、はなび！'],
+  fireworksBurst: ['たまやー！', 'きれい！', 'おっきいね！', 'わぁ…', 'かぎやー！'],
   /** ブランコ：乗りにいく / 座った / そろった / 高い / こいでと言う */
   burankoInvite: ['ブランコのろ！', 'となりにのるね！'],
   burankoReady: ['いっしょにこごう！', 'せーの！'],
@@ -179,7 +182,7 @@ function createBubble() {
 /** 1 拍の長さ（秒）。日本語の会話は 1 秒に 7〜8 拍 */
 const MORA = 0.13;
 /** 同じ場面の台詞を続けて言わない間（秒） */
-const COOLDOWN = { default: 3, burankoHigh: 12, burankoPump: 10, seesawDown: 5, seesawUp: 5, seesawHigh: 9, seesawKick: 8, bikeLap: 1, bikeBest: 1, racePass: 6, raceOvertaken: 6, raceGrid: 20, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
+const COOLDOWN = { default: 3, fireworksBurst: 7, burankoHigh: 12, burankoPump: 10, seesawDown: 5, seesawUp: 5, seesawHigh: 9, seesawKick: 8, bikeLap: 1, bikeBest: 1, racePass: 6, raceOvertaken: 6, raceGrid: 20, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
 
 /**
  * 声の選び方。名前に含まれる語で点をつける。

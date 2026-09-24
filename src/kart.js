@@ -99,12 +99,19 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
   const engine = add(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.22, 0.26), metal));
   engine.position.set(0.3, 0.22, -0.02);
 
-  // ハンドル（ステアリングコラムの先に、丸いハンドル）
-  const column = add(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.5, 8), metal));
-  column.position.set(0, 0.34, 0.78);
-  column.rotation.x = 0.95;
+  // 脚を覆うダッシュボード（カウル）。脚はこの下へ入れる。女の子のスカートは短く、
+  // 脚を前へ伸ばして座ると腿のつけ根が前を向いてしまうので、正面からの目線をここで
+  // さえぎる（後ろの縁が高く、座席に近いほど、上からの目線までさえぎれる）
+  const dash = add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.56), paint));
+  dash.position.set(0, 0.4, 0.58);
+  const dashTop = add(new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.02, 0.5), dark));
+  dashTop.position.set(0, 0.505, 0.6);
+  // ハンドル（ダッシュボードから伸びるコラムの先に、丸いハンドル）
+  const column = add(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.26, 8), metal));
+  column.position.set(0, 0.56, 0.64);
+  column.rotation.x = -0.61;
   const wheelPivot = new THREE.Group();
-  wheelPivot.position.set(0, 0.52, 0.62);
+  wheelPivot.position.set(0, 0.65, 0.57);
   wheelPivot.rotation.x = -0.62;    // ハンドルの面を運転する人へ傾ける
   body.add(wheelPivot);
   const steering = new THREE.Group();

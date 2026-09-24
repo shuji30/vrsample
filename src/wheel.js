@@ -17,9 +17,19 @@
  *   - ハンドルの回す角度（何度回すとカートのハンドルがいっぱいか）と、ハンコン全体の
  *     回転角も設定できる
  *
+ *   - 役割ごとに「どの機器の、どの軸か」を手で選ぶこともできる（割り当て）。ペダルは
+ *     「離した値」「踏みきった値」をボタンで記録でき、アクセル・ブレーキだけを覚え直せる
+ *   - Gamepad API に出てこないペダル（単体ペダルの一部）は、WebHID で直接つないで読む
+ *     （設定の画面の「HID で直接つなぐ」）。つないだ機器は、ほかの機器と同じく軸の一覧に並ぶ
+ *
+ * Chrome は、機器を一度動かすまで Gamepad API に出さない。キャリブレーションの途中で
+ * 現れた機器も拾えるよう、初めて見えたときの値を起点にする。
+ *
  * ゲームパッド（Xbox など、mapping が 'standard'）は、左スティックでハンドル、RT で
  * アクセル、LT でブレーキ。
  */
+
+import { looksLikeGamepad } from './gamepad.js';
 
 const STORE = 'vrsample.wheel2';
 
@@ -42,18 +52,112 @@ function save(config) {
 }
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const HID_STORE = 'vrsample.wheelHid';
+
+/**
+ * WebHID でつないだ機器を、Gamepad のような形（id / axes / buttons）にする。
+ * 入力の報告の、値の項目（8 ビット以上、定数でないもの）を軸として -1..1 に並べる。
+ * 軸の順は、報告の番号の順 → 報告の中の並び順。
+ */
+function createHidPad(device) {
+  const layout = [];   // { reportId, offset, size, min, max, signed }
+  const walk = (collections) => {
+    for (const c of collections ?? []) {
+      for (const r of c.inputReports ?? []) {
+        let offset = 0;
+        for (const item of r.items ?? []) {
+          for (let k = 0; k < item.reportCount; k++) {
+            if (!item.isArray && !item.isConstant && item.reportSize >= 8 && item.logicalMaximum > item.logicalMinimum) {
+              layout.push({ reportId: r.reportId ?? 0, offset, size: item.reportSize, min: item.logicalMinimum, max: item.logicalMaximum, signed: item.logicalMinimum < 0 });
+            }
+            offset += item.reportSize;
+          }
+        }
+      }
+      walk(c.children);
+    }
+  };
+  walk(device.collections);
+  const name = `${device.productName || 'HID'} (HID Vendor: ${device.vendorId.toString(16).padStart(4, '0')} Product: ${device.productId.toString(16).padStart(4, '0')})`;
+  const pad = { id: name, index: -1, connected: true, mapping: '', axes: layout.map(() => 0), buttons: [], hid: true, seen: false };
+  device.addEventListener('inputreport', (event) => {
+    const data = new Uint8Array(event.data.buffer, event.data.byteOffset, event.data.byteLength);
+    layout.forEach((a, i) => {
+      if (a.reportId !== event.reportId) return;
+      let v = 0;
+      for (let b = 0; b < a.size; b++) {
+        const bit = a.offset + b;
+        if ((data[bit >> 3] ?? 0) & (1 << (bit & 7))) v += 2 ** b;
+      }
+      if (a.signed && v >= 2 ** (a.size - 1)) v -= 2 ** a.size;
+      pad.axes[i] = clamp(((v - a.min) / (a.max - a.min)) * 2 - 1, -1, 1);
+    });
+    pad.seen = true;
+  });
+  return pad;
+}
 
 export function createWheelInput() {
   let config = load();
   /** 機器ごとの、最初に見たときの軸の値（ペダルの軸を見分けるのに使う） */
   const firstAxes = new Map();
 
+  /** WebHID でつないだ機器（Gamepad API に出てこないペダルなど） */
+  const hidPads = [];
+  let hidStatus = '';
+  const hidSupported = typeof navigator !== 'undefined' && 'hid' in navigator;
+
   function pads() {
-    if (typeof navigator === 'undefined' || !navigator.getGamepads) return [];
-    return [...navigator.getGamepads()].filter((p) => p && p.connected && p.axes.length > 0);
+    const list = typeof navigator !== 'undefined' && navigator.getGamepads
+      ? [...navigator.getGamepads()].filter((p) => p && p.connected && p.axes.length > 0) : [];
+    return list.concat(hidPads.filter((p) => p.seen && p.axes.length > 0));
   }
+
+  async function openHid(device) {
+    if (hidPads.some((p) => p.device === device)) return;
+    if (!device.opened) await device.open();
+    const pad = createHidPad(device);
+    pad.device = device;
+    hidPads.push(pad);
+    hidStatus = `${device.productName || 'HID の機器'} をつなぎました（軸 ${pad.axes.length} 本）。ペダルを踏むと一覧に出ます`;
+  }
+  /** HID で直接つなぐ（ボタンを押したときに呼ぶ） */
+  async function connectHid() {
+    if (!hidSupported) { hidStatus = 'このブラウザは WebHID に対応していません（Chrome / Edge で開いてください）'; return; }
+    try {
+      const picked = await navigator.hid.requestDevice({
+        filters: [
+          { usagePage: 0x01, usage: 0x04 }, { usagePage: 0x01, usage: 0x05 }, { usagePage: 0x01, usage: 0x08 },
+          { usagePage: 0x02 },
+        ],
+      });
+      for (const d of picked) {
+        await openHid(d);
+        try {
+          const saved = JSON.parse(localStorage.getItem(HID_STORE) ?? '[]');
+          const key = `${d.vendorId}:${d.productId}`;
+          if (!saved.includes(key)) localStorage.setItem(HID_STORE, JSON.stringify([...saved, key]));
+        } catch { /* 次は選び直し */ }
+      }
+    } catch (error) {
+      hidStatus = `HID でつなげませんでした（${error?.message ?? error}）`;
+    }
+  }
+  /** 前に許可した HID の機器を、ページを開いたときにつなぎ直す */
+  (async () => {
+    if (!hidSupported) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(HID_STORE) ?? '[]');
+      if (!saved.length) return;
+      for (const d of await navigator.hid.getDevices()) {
+        if (saved.includes(`${d.vendorId}:${d.productId}`)) await openHid(d).catch(() => {});
+      }
+    } catch { /* ボタンから */ }
+  })();
   /** ゲームパッドでない入力機器（ハンコン・ペダル・シフターなど） */
-  const isSimDevice = (pad) => pad.mapping !== 'standard';
+  // 'standard' でなくても、名前がゲームパッドらしい機器はハンコンとして扱わない
+  // （そうしないと、パッドがハンドルに選ばれてしまう）
+  const isSimDevice = (pad) => pad.mapping !== 'standard' && !looksLikeGamepad(pad);
   const byId = (id) => pads().find((p) => p.id === id) ?? null;
 
   /** 設定していない役割を、つながっている機器から推し量る */
@@ -116,17 +220,54 @@ export function createWheelInput() {
         pad: byId(roles.steer.id),
       };
     }
+    return readPad();
+  }
+
+  /** ゲームパッド（左スティック・RT・LT）の入力。触っていなければ null */
+  function readPad() {
     for (const pad of pads()) {
-      if (pad.mapping !== 'standard') continue;
+      if (!looksLikeGamepad(pad)) continue;
       const x = pad.axes[0] ?? 0;
       const steer = Math.abs(x) < 0.12 ? 0 : -x;
-      const throttle = pad.buttons[7]?.value ?? 0;
-      const brake = pad.buttons[6]?.value ?? 0;
+      // 'standard' は RT / LT。そうでないパッドは並びが機器しだいなので A / B で
+      const standard = pad.mapping === 'standard';
+      const throttle = (standard ? pad.buttons[7]?.value : pad.buttons[0]?.value) ?? 0;
+      const brake = (standard ? pad.buttons[6]?.value : pad.buttons[1]?.value) ?? 0;
       if (Math.abs(steer) > 0 || throttle > 0.02 || brake > 0.02 || pad.buttons.some((b) => b.pressed)) {
         return { steer, throttle, brake, kind: 'pad', angle: steer * 90, id: pad.id, pad };
       }
     }
     return null;
+  }
+
+  // --- ハンコンのボタン ------------------------------------------------------------
+  // ハンコンのボタンを、キー（E 乗る / 降りる、C 視点、H 設定）に割り当てる。
+  // 設定の画面で「覚える」を押してから、使いたいボタンを押す。
+  const BUTTON_ACTIONS = [['KeyE', 'e', '乗る / 降りる'], ['KeyC', 'c', '視点'], ['KeyH', 'h', '設定の画面']];
+  let learning = null;           // 覚えているキー（code）
+  const lastPressed = new Map(); // `${id}#${index}` → 押されていたか
+  const fireKey = (type, code, key) => window.dispatchEvent(new KeyboardEvent(type, { code, key, bubbles: true }));
+  function pollButtons() {
+    const buttons = config.buttons ?? {};
+    for (const pad of pads().filter(isSimDevice)) {
+      (pad.buttons ?? []).forEach((b, index) => {
+        const key = `${pad.id}#${index}`;
+        const down = Boolean(b?.pressed);
+        const was = Boolean(lastPressed.get(key));
+        if (down === was) return;
+        lastPressed.set(key, down);
+        if (learning && down) {
+          config.buttons = { ...buttons, [learning]: { id: pad.id, index } };
+          save(config);
+          learning = null;
+          return;
+        }
+        for (const [code, name] of BUTTON_ACTIONS) {
+          const m = buttons[code];
+          if (m && m.id === pad.id && m.index === index) fireKey(down ? 'keydown' : 'keyup', code, name);
+        }
+      });
+    }
   }
 
   // --- キャリブレーションと設定の画面（PC、H キー） ------------------------------
@@ -157,8 +298,9 @@ export function createWheelInput() {
   function biggestMove(exclude = []) {
     let best = null;
     for (const pad of pads().filter(isSimDevice)) {
+      // 途中で現れた機器（Chrome は動かすまで出さない）は、初めて見えた値を起点にする
+      if (!wizard.center.has(pad.id)) wizard.center.set(pad.id, pad.axes.slice());
       const center = wizard.center.get(pad.id);
-      if (!center) continue;
       pad.axes.forEach((v, i) => {
         if (exclude.some((e) => same(e, { id: pad.id, axis: i }))) return;
         const key = `${pad.id}#${i}`;
@@ -185,16 +327,43 @@ export function createWheelInput() {
       // 回しきれないときは「次へ」でも決められる
       if (t && t.max - t.rest > 0.05 && t.rest - t.min > 0.05 && Math.abs(t.now - t.rest) < 0.03) finishSteer(t);
     } else if (wizard.step === 'throttle' || wizard.step === 'brake') {
-      const exclude = [config.steer, wizard.step === 'brake' ? config.throttle : null].filter(Boolean);
-      const t = biggestMove(exclude);
-      if (t && t.max - t.min > 0.3 && Math.abs(t.now - t.rest) < 0.06) {
-        const full = Math.abs(t.max - t.rest) > Math.abs(t.min - t.rest) ? t.max : t.min;
-        config[wizard.step] = { id: t.id, axis: t.axis, rest: t.rest, full };
+      const other = wizard.step === 'brake' ? 'throttle' : 'brake';
+      const exclude = [config.steer, wizard.only ? config[other] : wizard.step === 'brake' ? config.throttle : null].filter(Boolean);
+      const t = pedalMove(exclude);
+      if (t) {
+        config[wizard.step] = { id: t.id, axis: t.axis, rest: t.now, full: t.full };
         save(config);
         wizard.track.clear();
-        wizard.step = wizard.step === 'throttle' ? 'brake' : 'done';
+        wizard.step = wizard.only || wizard.step === 'brake' ? 'done' : 'brake';
       }
     }
+  }
+
+  /**
+   * ペダルを踏んで離した軸を探す。初めて見えた値から最初に動いた向きの端を「踏みきった値」、
+   * そこから戻って止まった値を「離した値」とする。Chrome はペダルを動かすまで機器を
+   * 出さないので、初めて見えたのが踏んでいる途中でも決められるように、離した値は
+   * 最初の値ではなく、戻って止まった値で取る。
+   */
+  function pedalMove(exclude) {
+    let best = null;
+    for (const pad of pads().filter(isSimDevice)) {
+      pad.axes.forEach((v, i) => {
+        if (exclude.some((e) => same(e, { id: pad.id, axis: i }))) return;
+        const key = `${pad.id}#${i}`;
+        const t = wizard.track.get(key) ?? { id: pad.id, axis: i, first: v, full: v, dir: 0, last: v, still: 0 };
+        if (!t.dir && Math.abs(v - t.first) > 0.08) t.dir = Math.sign(v - t.first);
+        if (t.dir && (v - t.full) * t.dir > 0) t.full = v;
+        // 止まっているフレームを数える（画面の 1 フレームごとに呼ばれる。15 で約 0.25 秒）
+        t.still = Math.abs(v - t.last) > 0.01 ? 0 : t.still + 1;
+        t.last = v;
+        t.now = v;
+        wizard.track.set(key, t);
+        const back = (t.full - v) * t.dir;   // 踏みきった端から、どれだけ戻ったか
+        if (t.dir && back > 0.3 && t.still >= 15 && (!best || back > (best.full - best.now) * best.dir)) best = t;
+      });
+    }
+    return best;
   }
 
   function finishSteer(t) {
@@ -204,8 +373,42 @@ export function createWheelInput() {
     wizard.step = 'throttle';
   }
 
-  function startWizard() {
-    wizard = { step: 'center', center: new Map(), track: new Map() };
+  function startWizard(only = null) {
+    wizard = { step: only ?? 'center', only: Boolean(only), center: new Map(), track: new Map() };
+  }
+
+  // --- 手で割り当てる -----------------------------------------------------------
+  const ROLE_NAMES = { steer: 'ハンドル', throttle: 'アクセル', brake: 'ブレーキ' };
+  /** 役割に、機器の軸を割り当てる（値は今の値を「離した / 真ん中」として取る） */
+  function assign(role, id, axis) {
+    if (!id) { config[role] = null; save(config); return; }
+    const pad = byId(id);
+    const v = pad?.axes[axis] ?? 0;
+    if (role === 'steer') config.steer = { id, axis, rest: v, full: v - 1 };
+    else {
+      // 踏みきった値は、離した値の反対の端と仮に決める（「踏みきった値を記録」で直せる）
+      const full = Math.abs(v) > 0.5 ? -Math.sign(v) : 1;
+      config[role] = { id, axis, rest: v, full };
+    }
+    save(config);
+  }
+  /** 今の値を、ペダルの離した値（'rest'）か踏みきった値（'full'）として記録する */
+  function record(role, which) {
+    const current = guess()[role];
+    if (!current) return;
+    const v = axisValue(current);
+    if (v === null) return;
+    config[role] = { ...current, [which]: v };
+    save(config);
+  }
+  /** 向きを逆にする（ハンドルは左右、ペダルは離した値と踏みきった値の入れ替え） */
+  function flip(role) {
+    const current = guess()[role];
+    if (!current) return;
+    config[role] = role === 'steer'
+      ? { ...current, full: current.rest - (current.full - current.rest) }
+      : { ...current, rest: current.full, full: current.rest };
+    save(config);
   }
   function wizardNext() {
     if (wizard?.step === 'steer') {
@@ -245,6 +448,27 @@ export function createWheelInput() {
       ? bar('ハンドル', input.steer, true) + bar('アクセル', input.throttle) + bar('ブレーキ', input.brake)
         + `<small>ハンドルの角度 ${input.angle.toFixed(0)}°</small>`
       : '';
+    // 割り当ての選択肢（機器や軸が増えたときだけ作り直す）
+    const optionsKey = sims.map((p) => `${p.id}#${p.axes.length}`).join('|');
+    if (optionsKey !== panel.dataset.options) {
+      panel.dataset.options = optionsKey;
+      for (const sel of panel.querySelectorAll('[data-assign]')) {
+        const opts = ['<option value="">自動 / 未設定</option>'];
+        for (const p of sims) p.axes.forEach((_, i) => opts.push(`<option value="${encodeURIComponent(p.id)}#${i}">${short(p.id)} の軸 ${i}</option>`));
+        sel.innerHTML = opts.join('');
+      }
+    }
+    for (const sel of panel.querySelectorAll('[data-assign]')) {
+      if (document.activeElement === sel) continue;
+      const role = config[sel.dataset.assign];
+      const want = role ? `${encodeURIComponent(role.id)}#${role.axis}` : '';
+      if (sel.value !== want) sel.value = [...sel.options].some((o) => o.value === want) ? want : '';
+    }
+    panel.querySelector('[data-hidstatus]').textContent = hidStatus;
+    for (const el of panel.querySelectorAll('[data-btn]')) {
+      const m = config.buttons?.[el.dataset.btn];
+      el.textContent = learning === el.dataset.btn ? 'ボタンを押してください…' : m ? `${short(m.id)} のボタン ${m.index}` : '未設定';
+    }
     const stepEl = panel.querySelector('[data-step]');
     stepEl.textContent = wizard ? STEPS[wizard.step] : '';
     panel.querySelector('[data-next]').style.display = wizard?.step === 'center' || wizard?.step === 'steer' ? '' : 'none';
@@ -258,7 +482,8 @@ export function createWheelInput() {
     panel = document.createElement('div');
     panel.id = 'wheel-panel';
     panel.style.cssText = 'position:fixed;left:16px;bottom:16px;max-width:640px;padding:14px 16px;'
-      + 'background:rgba(16,20,28,0.94);color:#eef;font:14px/1.6 sans-serif;border-radius:10px;z-index:20';
+      + 'background:rgba(16,20,28,0.94);color:#eef;font:14px/1.6 sans-serif;border-radius:10px;z-index:20;'
+      + 'max-height:calc(100vh - 32px);overflow:auto';
     panel.innerHTML = `
       <b>ハンコンの設定</b>（H キーで閉じる）<br>
       <span data-devices></span><br>
@@ -267,7 +492,19 @@ export function createWheelInput() {
       <b data-step style="color:#ffd28a"></b>
       <button data-next>次へ</button><br>
       <button data-wizard>キャリブレーションを始める</button>
-      <button data-reset>設定を消す</button><br>
+      <button data-only="throttle">アクセルだけ覚え直す</button>
+      <button data-only="brake">ブレーキだけ覚え直す</button>
+      <button data-reset>設定を消す</button>
+      <div style="margin:6px 0">
+        <b>割り当て</b>（機器と軸を選ぶ。ペダルは離した状態で選ぶ）<br>
+        ${['steer', 'throttle', 'brake'].map((role) => `<div>${ROLE_NAMES[role]}：<select data-assign="${role}" style="max-width:320px"></select>
+          ${role === 'steer' ? '<button data-flip="steer">左右を反転</button>'
+            : `<button data-record="${role}:rest">離した値を記録</button><button data-record="${role}:full">踏みきった値を記録</button><button data-flip="${role}">反転</button>`}</div>`).join('')}
+        <b>ハンコンのボタン</b>（「覚える」を押してから、使いたいボタンを押す）<br>
+        ${BUTTON_ACTIONS.map(([code, , label]) => `${label}：<span data-btn="${code}"></span> <button data-learn="${code}">覚える</button>`).join('　')}<br>
+        <small>ペダルが一覧に出ないとき：一度踏んでみる。それでも出なければ</small>
+        <button data-hid>HID で直接つなぐ</button> <small data-hidstatus></small>
+      </div>
       ハンドルいっぱいまでの角度（中央から）：<input data-full type="number" min="20" max="540" step="10" style="width:5em">°
       　ハンコン全体の回転角：<input data-lock type="number" min="180" max="2520" step="10" style="width:5em">°
       <div data-ffb></div>`;
@@ -275,11 +512,21 @@ export function createWheelInput() {
     panel.querySelector('[data-full]').value = config.fullDegrees;
     panel.querySelector('[data-lock]').value = config.lockDegrees;
     panel.addEventListener('click', (event) => {
-      if (event.target.hasAttribute?.('data-wizard')) startWizard();
+      const el = event.target;
+      if (el.hasAttribute?.('data-wizard')) startWizard();
+      if (el.dataset?.only) startWizard(el.dataset.only);
+      if (el.dataset?.record) { const [role, which] = el.dataset.record.split(':'); record(role, which); }
+      if (el.dataset?.flip) flip(el.dataset.flip);
+      if (el.hasAttribute?.('data-hid')) connectHid();
+      if (el.dataset?.learn) learning = el.dataset.learn;
       if (event.target.hasAttribute?.('data-next')) wizardNext();
       if (event.target.hasAttribute?.('data-reset')) { config = { ...DEFAULT }; save(config); firstAxes.clear(); wizard = null; }
     });
     panel.addEventListener('change', (event) => {
+      if (event.target.dataset?.assign) {
+        const [id, axis] = event.target.value ? event.target.value.split('#') : [null, 0];
+        assign(event.target.dataset.assign, id ? decodeURIComponent(id) : null, Number(axis));
+      }
       if (event.target.hasAttribute('data-full')) config.fullDegrees = clamp(Number(event.target.value) || 90, 20, 540);
       if (event.target.hasAttribute('data-lock')) config.lockDegrees = clamp(Number(event.target.value) || 900, 180, 2520);
       save(config);
@@ -300,12 +547,21 @@ export function createWheelInput() {
   let onPanel = null;
   return {
     read,
+    readPad,
+    pollButtons,
     openPanel,
     closePanel,
     /** 検証用：キャリブレーションを進める */
     startCalibration() { startWizard(); },
     calibrationNext() { wizardNext(); },
     calibrationTick() { wizardStep(); return wizard?.step ?? null; },
+    /** 検証用：割り当て・記録・反転・ペダルだけの覚え直し */
+    assign(role, id, axis) { assign(role, id, axis); },
+    record(role, which) { record(role, which); },
+    flip(role) { flip(role); },
+    recalibrate(role) { startWizard(role); },
+    connectHid() { return connectHid(); },
+    learnButton(code) { learning = code; },
     get config() { return { ...config, ...guess() }; },
     /** 設定の画面を開いたときに呼ぶ（FFB の欄を足すのに使う） */
     set onPanel(fn) { onPanel = fn; },

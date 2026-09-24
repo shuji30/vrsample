@@ -201,12 +201,26 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     return out;
   }
 
-  /** いくつかの入力のうち、いちばん大きく入っているものを使う（ハンコンは常に優先） */
+  /**
+   * いくつかの入力のうち、いちばん大きく入っているものを使う。ハンコンがつながって
+   * いても、キー（W / S / A / D）とゲームパッドは効く。アクセル・ブレーキは大きいほう、
+   * ハンドルはキーやスティックを入れているあいだだけそちらを使う
+   * （以前はハンコンを常に優先していて、ペダルが読めないとキーでも進めなかった）
+   */
   function readInput(dt) {
     // VR のコントローラーは毎回読む（ハンコンで運転していても、グリップで降りられるように）
     const xr = xrInput(dt);
     const w = wheel.read();
-    if (w?.kind === 'wheel') return w;
+    if (w?.kind === 'wheel') {
+      const out = { ...w };
+      for (const extra of [keyboardInput(), wheel.readPad(), xr].filter(Boolean)) {
+        out.throttle = Math.max(out.throttle, extra.throttle);
+        out.brake = Math.max(out.brake, extra.brake);
+        if (Math.abs(extra.steer) > 0.05) { out.steer = extra.steer; out.angle = extra.steer * 90; }
+        if (extra.hands) out.hands = true;
+      }
+      return out;
+    }
     const candidates = [keyboardInput(), xr, w].filter(Boolean);
     let best = candidates[0];
     const size = (i) => Math.abs(i.steer) + i.throttle + i.brake;
@@ -242,6 +256,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   const clampKart = (x, z, from) => world.clampToBounds(x, z, 0.75, from);
 
   function update(dt) {
+    // ハンコンのボタンに割り当てたキー（乗り降り・視点など）
+    wheel.pollButtons();
     if (!driving) {
       ffb.update(dt, { angle: 0, fullDegrees: 90, speed: 0, maxSpeed: KART.maxSpeed, onCurb: false, onGrass: false, rpm: 0, driving: false });
       return;

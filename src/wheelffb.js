@@ -33,6 +33,9 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 // --- HID PID（usage page 0x0F） ------------------------------------------------
 const PID = 0x0f;
 const U = (usage) => (PID << 16) | usage;
+/** Generic Desktop の X 軸（軸の有効化に使う）と、序数の 1（向きの 1 本目の軸） */
+const GENERIC_X = (0x01 << 16) | 0x30;
+const ORDINAL_1 = (0x0a << 16) | 0x01;
 const USAGE = {
   setEffect: 0x21, blockIndex: 0x22, effectType: 0x25, constantForce: 0x26,
   duration: 0x50, samplePeriod: 0x51, gain: 0x52, triggerButton: 0x53, axesEnable: 0x55,
@@ -52,6 +55,31 @@ function itemUsages(item) {
     return list;
   }
   return [];
+}
+
+/**
+ * PID の「選ぶ種類」（配列の項目）の並び。仕様（Microsoft の見本の記述子）の順。
+ * Chrome が返す usages の並びは記述子の順とは限らない（CAMMUS DDWB では効果の種類が
+ * 逆順、操作の種類は 7a/79/7b と入れ替わって出てきた）ので、番号はこの順で数える。
+ * 効果の種類以外は、usage の番号の順（79 始める → 7a 単独で始める → 7b 止める など）。
+ */
+const EFFECT_ORDER = [0x26, 0x27, 0x30, 0x31, 0x32, 0x33, 0x34, 0x40, 0x41, 0x42, 0x43, 0x28];
+function arrayUsages(item) {
+  const rank = (u) => {
+    const i = EFFECT_ORDER.indexOf(u & 0xffff);
+    return (u >>> 16) === PID && i >= 0 ? i : 100 + (u & 0xffff);
+  };
+  return [...itemUsages(item)].sort((a, b) => rank(a) - rank(b));
+}
+/**
+ * 配列の番号の始まり。PID は 1 から数える。Chrome が logicalMinimum に食い違った値を
+ * 返すことがある（CAMMUS DDWB では 12..0 のように最小が最大より大きかった）ので、
+ * 筋の通らないときは 1 にする
+ */
+function arrayBase(item) {
+  const min = item.logicalMinimum;
+  const max = item.logicalMaximum;
+  return Number.isFinite(min) && min >= 0 && min <= max && max > 0 ? min : 1;
 }
 
 /** すべての報告を集める（コレクションの木を下りながら） */
@@ -80,7 +108,7 @@ function findReport(reports, usage, kind) {
  * 報告の中身を作る。values は 使い道 → 値。配列の項目（選ぶ種類）は、選ぶ使い道を
  * values に入れておく（値は無視して、その使い道の番号を書く）
  */
-function packReport(report, values) {
+function packReport(report, values, overrides = null) {
   let bits = 0;
   for (const item of report.items) bits += item.reportSize * item.reportCount;
   const bytes = new Uint8Array(Math.ceil(bits / 8));
@@ -93,13 +121,15 @@ function packReport(report, values) {
     }
   };
   for (const item of report.items) {
-    const usages = itemUsages(item);
+    const usages = item.isArray ? arrayUsages(item) : itemUsages(item);
     for (let k = 0; k < item.reportCount; k++) {
       let value = 0;
-      if (item.isArray) {
-        // 配列：選んだ使い道の番号（logicalMinimum から数える）
+      if (overrides?.has(item) && k === 0) {
+        value = overrides.get(item);
+      } else if (item.isArray) {
+        // 配列：選んだ使い道の番号（仕様の並びで、1 から数える）
         const chosen = usages.findIndex((u) => values.has(u));
-        value = chosen >= 0 ? (item.logicalMinimum ?? 0) + chosen : 0;
+        value = chosen >= 0 ? arrayBase(item) + chosen : 0;
       } else {
         const u = usages[Math.min(k, usages.length - 1)];
         if (values.has(u)) {
@@ -129,11 +159,11 @@ function unpackReport(report, data, usage) {
     return v;
   };
   for (const item of report.items) {
-    const usages = itemUsages(item);
+    const usages = item.isArray ? arrayUsages(item) : itemUsages(item);
     for (let k = 0; k < item.reportCount; k++) {
       const v = read(item.reportSize);
       if (item.isArray) {
-        if (usages[v - (item.logicalMinimum ?? 0)] === U(usage)) return v;
+        if (usages[v - arrayBase(item)] === U(usage)) return v;
       } else if (usages[Math.min(k, usages.length - 1)] === U(usage)) return v;
       offset += item.reportSize;
     }
@@ -157,19 +187,46 @@ function magnitudeRange(report) {
 
 function createPidDriver(device) {
   const reports = allReports(device);
-  const setEffect = findReport(reports, USAGE.effectType, 'outputReports') ?? findReport(reports, USAGE.setEffect, 'outputReports');
-  const setConstant = findReport(reports, USAGE.magnitude, 'outputReports');
+  // 報告はコレクションの usage でなく、中の項目で探す（CAMMUS DDWB は PID のコレクションが
+  // 見えず、すべての報告がいちばん上の Gamepad のコレクションに並んでいた）
+  const setEffect = findReport(reports, USAGE.effectType, 'outputReports')
+    ?? findReport(reports, USAGE.duration, 'outputReports') ?? findReport(reports, USAGE.setEffect, 'outputReports');
+  // 大きさ（0x70）は Set Periodic（周期 0x72・オフセット 0x6f を持つ）にもあるので、それを除く
+  const setConstant = reports.find((r) => r.kind === 'outputReports' && r.report.items?.some((it) => itemUsages(it).includes(U(USAGE.magnitude)))
+    && !r.report.items.some((it) => itemUsages(it).some((u) => u === U(0x72) || u === U(0x6f) || u === U(0x71))))
+    ?? findReport(reports, USAGE.magnitude, 'outputReports');
   const operation = findReport(reports, USAGE.opStart, 'outputReports') ?? findReport(reports, USAGE.operation, 'outputReports');
   const control = findReport(reports, USAGE.enableActuators, 'outputReports') ?? findReport(reports, USAGE.deviceControl, 'outputReports');
   const gain = findReport(reports, USAGE.deviceGain, 'outputReports');
-  const create = findReport(reports, USAGE.createNewEffect, 'featureReports') ?? findReport(reports, USAGE.byteCount, 'featureReports');
-  const blockLoad = findReport(reports, USAGE.blockLoadStatus, 'featureReports');
+  // Create New Effect は、効果の種類を選ぶ機能の報告（バイト数は PID の 0x59 でなく
+  // Generic Desktop の 0x3b で書く機器もある）。Block Load は読み込みの状態（0x8b / 0x8c）で探す
+  const create = findReport(reports, USAGE.createNewEffect, 'featureReports') ?? findReport(reports, USAGE.byteCount, 'featureReports')
+    ?? findReport(reports, USAGE.constantForce, 'featureReports');
+  const blockLoad = findReport(reports, USAGE.blockLoadStatus, 'featureReports') ?? findReport(reports, USAGE.blockLoadSuccess, 'featureReports');
   const ok = Boolean(setEffect && setConstant && operation);
   let block = 1;
   let restarted = performance.now();
   let range = setConstant ? magnitudeRange(setConstant.report) : { min: -10000, max: 10000 };
 
-  const send = (entry, values) => device.sendReport(entry.report.reportId, packReport(entry.report, values));
+  const send = (entry, values, overrides) => device.sendReport(entry.report.reportId, packReport(entry.report, values, overrides));
+
+  /**
+   * 力の向き。PID の向きは極座標で、0 度が Y（上）、90 度が X（右）。ハンドルは X 軸なので
+   * 90 度を入れる（0 のままだと、仕様どおりの機器では X へ力がかからない）。向きは
+   * Direction（0x57）のコレクションの中の序数（Ordinal 1 = 1 本目の軸）で書かれている。
+   * 同じ報告には、同じ序数を使う Type Specific Block Offset（最大 32765）もあるので、
+   * そちらは 0 のまま残す。
+   */
+  function directionOverride() {
+    if (!setEffect) return null;
+    const overrides = new Map();
+    const dir = setEffect.report.items.find((it) => {
+      const us = itemUsages(it);
+      return !it.isArray && it.logicalMaximum !== 32765 && (us[0] === ORDINAL_1 || us.includes(U(USAGE.direction)));
+    });
+    if (dir) overrides.set(dir, Math.round((dir.logicalMaximum + 1) / 4));
+    return overrides;
+  }
 
   return {
     ok,
@@ -194,11 +251,13 @@ function createPidDriver(device) {
           block = unpackReport(blockLoad.report, body, USAGE.blockIndex) ?? 1;
         }
       }
+      // 軸の有効化は、PID の 0x55 そのものか、その中の X 軸（Generic Desktop 0x30）で
+      // 書かれている（Microsoft の見本と CAMMUS は後者）。どちらでも X だけ立てる
       await send(setEffect, new Map([
         [U(USAGE.blockIndex), block], [U(USAGE.constantForce), 1], [U(USAGE.duration), 'inf'],
         [U(USAGE.samplePeriod), 0], [U(USAGE.gain), 'max'], [U(USAGE.triggerButton), 'null'],
-        [U(USAGE.axesEnable), 1], [U(USAGE.directionEnable), 1], [U(USAGE.direction), 0], [U(USAGE.startDelay), 0],
-      ]));
+        [U(USAGE.axesEnable), 1], [GENERIC_X, 1], [U(USAGE.directionEnable), 1], [U(USAGE.startDelay), 0],
+      ]), directionOverride());
       await send(setConstant, new Map([[U(USAGE.blockIndex), block], [U(USAGE.magnitude), 0]]));
       await send(operation, new Map([[U(USAGE.blockIndex), block], [U(USAGE.opStart), 1], [U(USAGE.loopCount), 'max']]));
     },

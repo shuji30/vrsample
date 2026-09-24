@@ -66,6 +66,10 @@ const ROUTE = [
  */
 const EXIT_NODE = 6;
 
+/** カートで座ったとき、スカートの前・横のボーンを下へ回す角度（ラジアン） */
+const SKIRT_DRAPE_FRONT = 1.3;
+const SKIRT_DRAPE_SIDE = 0.5;
+
 /** 背もたれに預けて座るときの腰のソファローカル z（背もたれの前面は -0.22） */
 const LOUNGE_SEAT_Z = -0.11;
 /** そのときの脚の付け根の、座面からの高さ（m） */
@@ -184,6 +188,26 @@ const LOUNGE_POSE = {
 };
 
 /**
+ * カートの座席に座る。腰は起こしたまま（倒すとスカートの前が持ち上がって、
+ * 正面から中が見えてしまった）、背すじだけ少し背もたれへ預ける。腿はほぼ水平から
+ * わずかに下げ、膝を軽く曲げて足先をペダルへ出す。膝はハンドルの下をくぐる
+ * （腿を上げると、膝がハンドルを突き抜けた）。腕は reachHands でハンドルを握る。
+ */
+const KART_POSE = {
+  hips: [-0.06, 0, 0],
+  spine: [-0.08, 0, 0],
+  chest: [0.02, 0, 0],
+  neck: [0.12, 0, 0],
+  head: [0.06, 0, 0],
+  leftUpperLeg: [-1.40, 0.04, -0.07],
+  rightUpperLeg: [-1.40, -0.04, 0.07],
+  leftLowerLeg: [0.32, 0, 0],
+  rightLowerLeg: [0.32, 0, 0],
+  leftFoot: [-0.30, 0, 0],
+  rightFoot: [-0.30, 0, 0],
+};
+
+/**
  * ソファに横になって眠る。座った向きのまま体を右へ倒し（腰を Z まわりに
  * 90 度）、右半身を下にして、背中を背もたれへ向ける。膝は軽く曲げる。
  */
@@ -253,7 +277,7 @@ const MOUTH_SHAPES = ['aa', 'ih', 'ou', 'ee', 'oh'];
 
 const POSE_BONES = [...new Set([
   ...Object.keys(STAND_POSE), ...Object.keys(SIT_POSE), ...Object.keys(CROSS_LEGS),
-  ...Object.keys(LOUNGE_POSE), ...Object.keys(NAP_POSE), 'hips', 'neck', 'head',
+  ...Object.keys(LOUNGE_POSE), ...Object.keys(KART_POSE), ...Object.keys(NAP_POSE), 'hips', 'neck', 'head',
 ])];
 
 /** 指を軽く握らせる。開いたままの手は VR で見ると妙に目につく */
@@ -472,6 +496,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   // 座り方。upright（ふつう）/ lounge（背もたれに預けて足を伸ばす）/ nap（横になって眠る）
   let lounge = 0;         // lounge の混ざり具合
   let napAmount = 0;      // 横になっている度合い
+  let kartSeat = 0;       // カートの座り方の度合い（setSeat から）
   let tuck = 0;           // 横になる途中で脚を引き寄せる度合い
   let legCross = 0;       // 足を組んでいる度合い（ふつうの座りのとき）
   let legCrossWant = 0;
@@ -610,6 +635,19 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
    * 腰へ移すと、歩いたときに脚がスカートを押し広げる動きは失われるが、
    * 裾はスプリングボーンが揺らすので見た目の破綻はない。
    */
+  const skirtWeightSets = [];
+  let skirtOnLegsNow = false;
+  /** スカートの重みを、腿に乗る元のもの（true）と腰へ移したもの（false）で切り替える */
+  function skirtOnLegs(on) {
+    if (on === skirtOnLegsNow) return;
+    skirtOnLegsNow = on;
+    for (const { mesh, relaxed, original } of skirtWeightSets) {
+      const set = on ? original : relaxed;
+      mesh.geometry.setAttribute('skinIndex', set.index);
+      mesh.geometry.setAttribute('skinWeight', set.weight);
+    }
+  }
+
   function relaxSkirtWeights(model) {
     let moved = 0;
 
@@ -630,6 +668,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
         else if (hips < 0 && /hips/i.test(name)) hips = i;
       });
       if (hips < 0 || skirt.size === 0 || thigh.size === 0) return;
+      // 元の（腿に乗る）重みも取っておく。カートのように腿を前へ出して座るときは、
+      // こちらに戻すと裾が腿の上をおおう（skirtOnLegs）
+      const original = { index: index.clone(), weight: weight.clone() };
 
       for (let v = 0; v < index.count; v++) {
         let isSkirt = false;
@@ -666,6 +707,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
       index.needsUpdate = true;
       weight.needsUpdate = true;
+      skirtWeightSets.push({ mesh, relaxed: { index, weight }, original });
     });
 
     return moved;
@@ -1088,6 +1130,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       const cross = CROSS_LEGS[name];
       if (cross) v = lerp(v, cross[i], legCross);
       v = lerp(v, LOUNGE_POSE[name]?.[i] ?? 0, lounge);
+      if (kartSeat > 0) v = lerp(v, KART_POSE[name]?.[i] ?? 0, kartSeat);
       v = lerp(v, NAP_POSE[name]?.[i] ?? 0, napAmount);
       const tuckValue = TUCK_POSE[name];
       if (tuckValue && tuck > 0) v = lerp(v, tuckValue[i], tuck);
@@ -1774,6 +1817,8 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     /** 体を任せる。null で部屋のうろうろに戻す（node はそこから歩き出す節点） */
     drive(next, node = null) {
       driver = next;
+      kartSeat = 0;
+      skirtOnLegs(false);
       if (!next) {
         crouchWant = 0; bendWant = 0; armWant = 0;
         attend = false; handOpenWant = 0;
@@ -1861,6 +1906,23 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     /** 投球の体幹・脚の姿勢。null で解除 */
     setThrowPose(pose) { throwPose = pose; },
     /**
+     * 外から座らせる（カートの座席など。drive しているときだけ効く）。amount は座りの
+     * 混ざり具合、style は 'kart'（カートの座席）か 'lounge'（背もたれに預けて脚を伸ばす）
+     */
+    setSeat(amount, style = 'kart') {
+      if (!driver) return;
+      sitAmount = clamp01(amount);
+      lounge = style === 'lounge' ? 1 : 0;
+      kartSeat = style === 'kart' && sitAmount > 0 ? 1 : 0;
+      skirtOnLegs(kartSeat > 0 && sitAmount > 0.35);
+      napAmount = 0;
+      tuck = 0;
+      legCross = 0;
+      legCrossWant = 0;
+    },
+    /** 座面の高さ top に、脚を前へ伸ばして座るときのルート（足元）の高さ */
+    seatRootY(top) { return top + LOUNGE_LIFT - hipsRestY - legTopOffset; },
+    /**
      * 左右の手を別々の点へ伸ばす（投球用）。null を渡すと両手で 1 点へ伸ばす
      * ふだんの reach に戻る。pole は肘を逃がす向き（ワールド）
      */
@@ -1931,6 +1993,41 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     if (sitAmount > 0.5 || settleSprings > 0) {
       if (settleSprings > 0) settleSprings--;
       vrm.springBoneManager?.reset?.();
+      if (kartSeat > 0 && sitAmount > 0.5) drapeSkirt();
+    }
+  }
+
+  /**
+   * カートの座席で、スカートの前（と横）を膝のほうへ垂らす。脚を前へ伸ばして座ると、
+   * スカートの前は腿の上に水平に乗ったままで、腿のあいだから中が見えてしまう。
+   * 前のスカートのボーンを、体の左右の軸まわりに下へ回して、腿のあいだへ垂らす。
+   * スプリングボーンのボーンは matrixAutoUpdate が切られているので、回したら
+   * updateMatrix を呼ぶ（呼ばないと描画に効かない。これで一度つまずいた）。
+   */
+  let drapeBones = null;
+  const _drapeAxis = new THREE.Vector3();
+  const _drapeLocal = new THREE.Vector3();
+  const _drapeParent = new THREE.Quaternion();
+  const _drapeQ = new THREE.Quaternion();
+  function drapeSkirt() {
+    if (!drapeBones) {
+      drapeBones = [];
+      for (const joint of vrm.springBoneManager?.joints ?? []) {
+        const bone = joint.bone;
+        // チェーンの根元（親がスカートのボーンでないもの）の、前と横
+        if (!/skirt/i.test(bone.name) || /coat/i.test(bone.name) || /skirt/i.test(bone.parent?.name ?? '')) continue;
+        if (/front/i.test(bone.name)) drapeBones.push({ bone, angle: SKIRT_DRAPE_FRONT });
+        else if (/side/i.test(bone.name)) drapeBones.push({ bone, angle: SKIRT_DRAPE_SIDE });
+      }
+    }
+    _drapeAxis.set(Math.cos(yaw), 0, -Math.sin(yaw));   // 体の左（+X）。この軸まわりの + が前を下げる向き
+    for (const { bone, angle } of drapeBones) {
+      bone.parent.updateWorldMatrix(true, false);
+      bone.parent.getWorldQuaternion(_drapeParent).invert();
+      _drapeQ.setFromAxisAngle(_drapeLocal.copy(_drapeAxis).applyQuaternion(_drapeParent), angle);
+      bone.quaternion.premultiply(_drapeQ);
+      bone.updateMatrix();
+      bone.updateMatrixWorld(true);
     }
   }
 

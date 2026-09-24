@@ -183,7 +183,11 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     return object ? { ...hit, object } : null;
   }
 
+  /** カートを運転しているあいだは、つかむ・歩く・向きを変えるを止める（kartdrive.js が体を動かす） */
+  let driving = false;
+
   function onSelectStart(event) {
+    if (driving) return;
     const controller = event.target;
     const hit = pick(controller);
     if (!hit) return;
@@ -358,6 +362,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
 
   function updateLocomotion(dt) {
     desired.set(0, 0, 0);
+    if (driving) { velocity.set(0, 0, 0); return; }
 
     const session = renderer.xr.getSession();
     if (!session) {
@@ -584,5 +589,22 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     stepsTaken = 0;
   }
 
-  return { player, bob, controllers, footsteps, update, reset };
+  /** 持っている物をすべて、その場で離す（カートに乗る前など） */
+  function releaseHeld() {
+    for (const controller of controllers) {
+      const object = controller.userData.held;
+      if (!object) continue;
+      scene.attach(object);
+      object.userData.held = false;
+      object.userData.heldBy = null;
+      object.userData.velocity.set(0, 0, 0);
+      controller.userData.held = null;
+    }
+  }
+
+  return {
+    player, bob, controllers, footsteps, update, reset, releaseHeld,
+    setDriving(value) { driving = Boolean(value); hasLastHead = false; },
+    get driving() { return driving; },
+  };
 }

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createDesktopSwing } from './swing.js';
+import { createGamepadInput } from './gamepad.js';
 
 /** PC で歩く速さ（m/s）。VR のスティック移動と同じにして感覚を揃える */
 const WALK_SPEED = 2.2;
@@ -95,11 +96,14 @@ export function createDesktopControls(renderer, camera, world) {
   const right = new THREE.Vector3();
   const step = new THREE.Vector3();
 
+  /** ゲームパッドの左スティック（gamepad.js）。キーと足し合わせる */
+  const stick = { x: 0, y: 0 };
+
   function walk(dt) {
-    const ahead = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0)
-      - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
-    const side = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0)
-      - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
+    const ahead = Math.max(-1, Math.min(1, (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0)
+      - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0) - stick.y));
+    const side = Math.max(-1, Math.min(1, (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0)
+      - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) + stick.x));
     if (ahead === 0 && side === 0) return;
 
     // 視線を地面に落とした向きを前とする（見上げていても前へ進む）
@@ -265,17 +269,54 @@ export function createDesktopControls(renderer, camera, world) {
     if (v.length() > 1.5 && toEye.dot(v) > 0 && toEye.length() < CATCH_RANGE) take(ball);
   }
 
+  // --- ゲームパッド ------------------------------------------------------------
+  const gamepad = createGamepadInput();
+  const spherical = new THREE.Spherical();
+  const orbit = new THREE.Vector3();
+  /** 右スティックで見回す（マウスのドラッグと同じく、注視点のまわりを回る） */
+  function lookAround(x, y, dt) {
+    if (!x && !y) return;
+    orbit.subVectors(camera.position, controls.target);
+    spherical.setFromVector3(orbit);
+    spherical.theta -= x * 2.4 * dt;
+    spherical.phi = Math.max(controls.minPolarAngle, Math.min(controls.maxPolarAngle, spherical.phi + y * 1.6 * dt));
+    orbit.setFromSpherical(spherical);
+    camera.position.copy(controls.target).add(orbit);
+  }
+
   let last = performance.now();
+  /** カートを運転しているあいだは、歩く・視点を回す・球を持つを止める（kartdrive.js がカメラを動かす） */
+  let driving = false;
 
   return {
     controls,
     swing,
+    setDriving(value) {
+      driving = Boolean(value);
+      controls.enabled = !driving;
+    },
+    /** 持っている物をすべて置く（カートに乗る前） */
+    dropAll() {
+      if (swing?.holding) swing.drop();
+      if (heldBall) {
+        const object = heldBall;
+        release(object);
+        object.position.copy(camera.localToWorld(holdSlot().clone()));
+        object.userData.velocity.set(0, 0, 0);
+      }
+    },
     /** @param {number} [dt] 呼び出し側が持っていれば渡す。無ければ自前で測る */
     update(dt) {
       if (renderer.xr.isPresenting) { last = performance.now(); return; }
       const now = performance.now();
       const seconds = dt ?? Math.min((now - last) / 1000, 0.05);
       last = now;
+      // ボタンは運転中も効く（X で降りる、Y で視点）。スティックは歩いているときだけ
+      const pad = gamepad.update();
+      if (driving) return;
+      stick.x = pad.move.x;
+      stick.y = pad.move.y;
+      lookAround(pad.look.x, pad.look.y, seconds);
       walk(seconds);
       controls.update();
       updateBall(seconds);

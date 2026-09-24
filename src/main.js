@@ -3,10 +3,25 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { createWorld } from './world.js';
 import { createPlayer } from './controllers.js';
 import { createDesktopControls } from './desktop.js';
+import { createKartDrive } from './kartdrive.js';
 import { createDebugPanel } from './debug.js';
 import { createMusic } from './music.js';
 
 const statusEl = document.getElementById('status');
+
+// 説明（オーバーレイ）は × で閉じ、「？ 説明」か I キーで開き直せる。閉じたことは覚えておく
+const overlayEl = document.getElementById('overlay');
+const OVERLAY_KEY = 'vrsample.overlayClosed';
+function setOverlay(open) {
+  overlayEl?.classList.toggle('closed', !open);
+  try { localStorage.setItem(OVERLAY_KEY, open ? '0' : '1'); } catch { /* 覚えられなくても動く */ }
+}
+try { if (localStorage.getItem(OVERLAY_KEY) === '1') overlayEl?.classList.add('closed'); } catch { /* 開いたまま */ }
+document.getElementById('overlay-close')?.addEventListener('click', () => setOverlay(false));
+document.getElementById('overlay-open')?.addEventListener('click', () => setOverlay(true));
+window.addEventListener('keydown', (event) => {
+  if (event.code === 'KeyI' && event.target?.tagName !== 'INPUT') setOverlay(overlayEl?.classList.contains('closed'));
+});
 const perfEl = document.getElementById('perf');
 const creditEl = document.getElementById('credit');
 const params = new URLSearchParams(location.search);
@@ -243,6 +258,8 @@ async function start() {
     muted: params.has('mute'),
   });
   const desktop = createDesktopControls(renderer, camera, world);
+  // カートの運転（乗り降り・操作・ハンコン・FFB）
+  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player });
 
   // three.js は左右の目が平行に向いている前提で、カリング用にひとつの視錐台を
   // 合成する（WebXRManager の setProjectionFromUnion）。Pimax のようにディスプレイが
@@ -276,7 +293,8 @@ async function start() {
   });
 
   window.addEventListener('keydown', (event) => {
-    if (event.key === 'd' || event.key === 'D') debugPanel.toggle();
+    // カートの運転中は D が右へのハンドルなので、デバッグ表示は切り替えない
+    if ((event.key === 'd' || event.key === 'D') && !kartDrive.driving) debugPanel.toggle();
     if (event.key === 'r' || event.key === 'R') world.resetProps();
     if (event.key === 'm' || event.key === 'M') music.toggle();
     // 女の子の声を替える（入っている日本語の声を順に。選んだ声は覚えておく）
@@ -335,6 +353,7 @@ async function start() {
 
       player.update(dt);
       desktop.update(dt);
+      kartDrive.update(dt);
       world.update(dt);
       // 女の子がしゃべっているあいだは BGM を下げる
       music.update(dt, { ducked: Boolean(world.voice?.speaking) });
@@ -348,7 +367,7 @@ async function start() {
     }
   });
 
-  Object.assign(window.__vrsample, { world, player, desktop, debugPanel, music });
+  Object.assign(window.__vrsample, { world, player, desktop, debugPanel, music, kartDrive });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する
   const voiceStatusEl = document.getElementById('voice-status');

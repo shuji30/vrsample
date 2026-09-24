@@ -33,6 +33,17 @@ export const LINES = {
   /** 夜の花火：はじめて開いた / 開くたびに（ときどき） */
   fireworksStart: ['わあ、はなびだ！', 'みてみて、はなび！'],
   fireworksBurst: ['たまやー！', 'きれい！', 'おっきいね！', 'わぁ…', 'かぎやー！'],
+  /** 乗馬：引きにいく / 見にいく / 引き馬を始める / 引きながら / 放す / 急かされて放す / 速歩 / 駈歩 / 止まる / 応援 */
+  horseInvite: ['うまにのるの？わたしがひいてあげる！', 'まっててね、いまいくね！'],
+  horseWatchInvite: ['みててあげるね！', 'がんばってー！'],
+  horseLeadStart: ['ゆっくりいくよー', 'じゃあ、あるくよ。いいこいいこ'],
+  horseLeadTalk: ['せなかをまっすぐにね', 'たづなはやさしくね', 'いいかんじ！', 'うま、おとなしいでしょ？', 'たかくてけしきがいいね'],
+  horseRelease: ['こんどはひとりでのってみて！', 'じょうず！ひとりでもだいじょうぶだね'],
+  horseSkip: ['じゃあ、ひとりでどうぞ！', 'はやくはしりたいんだね！'],
+  horseTrot: ['はやあし！じょうず！', 'ぱかぱか、いいかんじ！'],
+  horseCanter: ['かけあしだ！かっこいい！', 'はやーい！'],
+  horseHalt: ['どうどう、いいこ', 'じょうずにとまれたね'],
+  horseCheer: ['のりこなしてる！', 'かっこいいよー！', 'うまもたのしそう！'],
   /** 釣り：座りにいく / 座った / 浮きがしずんだ / 釣れた（{n} は魚と大きさ）/ 逃げた / 自分が釣れた / 待つあいだ */
   fishingInvite: ['つり？わたしもやる！', 'となりでつるね！'],
   fishingReady: ['どっちがたくさんつれるかな', 'しずかにね…'],
@@ -190,7 +201,7 @@ function createBubble() {
 /** 1 拍の長さ（秒）。日本語の会話は 1 秒に 7〜8 拍 */
 const MORA = 0.13;
 /** 同じ場面の台詞を続けて言わない間（秒） */
-const COOLDOWN = { default: 3, fishingBite: 4, fishingEscaped: 6, fishingChat: 20, fireworksBurst: 7, burankoHigh: 12, burankoPump: 10, seesawDown: 5, seesawUp: 5, seesawHigh: 9, seesawKick: 8, bikeLap: 1, bikeBest: 1, racePass: 6, raceOvertaken: 6, raceGrid: 20, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
+const COOLDOWN = { default: 3, horseLeadTalk: 8, horseTrot: 6, horseCanter: 6, horseHalt: 8, horseCheer: 12, fishingBite: 4, fishingEscaped: 6, fishingChat: 20, fireworksBurst: 7, burankoHigh: 12, burankoPump: 10, seesawDown: 5, seesawUp: 5, seesawHigh: 9, seesawKick: 8, bikeLap: 1, bikeBest: 1, racePass: 6, raceOvertaken: 6, raceGrid: 20, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
 
 /**
  * 声の選び方。名前に含まれる語で点をつける。

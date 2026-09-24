@@ -30,6 +30,13 @@ export const LINES = {
   greet: ['なあに？', 'どうしたの？', 'えへへ', 'いいてんきだね'],
   tennisInvite: ['テニスしよ！', 'わたしもラケットとってくるね！', 'テニス？やるやる！'],
   kartInvite: ['わたしもカートにのるね！', 'カート？まけないよー！', 'よーし、きょうそうだ！'],
+  /** シーソー：乗りにいく / 座った / 自分の側が下りた・上がった / 高い / けってと言う */
+  seesawInvite: ['シーソーしよ！', 'わたし、あっちにすわるね！'],
+  seesawReady: ['いくよー！', 'せーの！'],
+  seesawDown: ['ギッコン！', 'よいしょ！'],
+  seesawUp: ['バッタン！', 'わーい！'],
+  seesawHigh: ['たかーい！', 'きゃー、たのしい！'],
+  seesawKick: ['じめんをけって！', 'そっちもけってー！'],
   /** ポケバイ：見にいく / ラップ（{n} は秒）/ ベスト / 応援 */
   bikeInvite: ['ポケバイ？みててあげる！', 'タイムはかってあげるね！', 'がんばってー！'],
   bikeLap: ['{n}びょう！', 'いまのは{n}びょう！'],
@@ -166,7 +173,7 @@ function createBubble() {
 /** 1 拍の長さ（秒）。日本語の会話は 1 秒に 7〜8 拍 */
 const MORA = 0.13;
 /** 同じ場面の台詞を続けて言わない間（秒） */
-const COOLDOWN = { default: 3, bikeLap: 1, bikeBest: 1, racePass: 6, raceOvertaken: 6, raceGrid: 20, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
+const COOLDOWN = { default: 3, seesawDown: 5, seesawUp: 5, seesawHigh: 9, seesawKick: 8, bikeLap: 1, bikeBest: 1, racePass: 6, raceOvertaken: 6, raceGrid: 20, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
 
 /**
  * 声の選び方。名前に含まれる語で点をつける。

@@ -54,7 +54,9 @@ export function createKartAI(kart, { skill = 0.85 } = {}) {
       rivalAhead = du * TRACK_LENGTH;
       // 追いついてきたときだけ（こちらが速い、またはすぐ後ろ）。遠くからよけると遠回りで遅くなる
       const closing = speed > Math.abs(rival.speed) + 0.2 || rivalAhead < 2.5;
-      if (rivalAhead > 0 && rivalAhead < 4.5 && closing) {
+      // 止まっている・遅い相手は、早めによける
+      const reach = Math.abs(rival.speed) < 2 ? 8 : 4.5;
+      if (rivalAhead > 0 && rivalAhead < reach && closing) {
         const rivalLeft = -rival.state.lateral;
         const room = KART_TRACK.width / 2 - 0.4;
         if (Math.abs(inside - rivalLeft) < 1.2) {
@@ -77,22 +79,31 @@ export function createKartAI(kart, { skill = 0.85 } = {}) {
     while (alpha < -Math.PI) alpha += Math.PI * 2;
     const dist = Math.max(0.5, Math.hypot(dx, dz));
     const delta = Math.atan((2 * Math.sin(alpha) * KART.wheelBase) / dist);
-    const limit = KART.steerMax + (KART.steerMaxFast - KART.steerMax) * Math.min(1, speed / KART.maxSpeed);
+    const perf = s.perf ?? { top: 1, grip: 1 };
+    const fullSpeed = KART.maxSpeed * perf.top;
+    const limit = KART.steerMax + (KART.steerMaxFast - KART.steerMax) * Math.min(1, speed / fullSpeed);
     const steer = THREE.MathUtils.clamp(delta / limit, -1, 1);
 
     // --- 速さ：先の曲がりに間に合う速さ
-    const top = KART.maxSpeed * (0.72 + 0.26 * level) * (s.boost ?? 1);
-    const grip = KART.grip * (0.7 + 0.15 * level);
+    const top = KART.maxSpeed * perf.top * (0.72 + 0.26 * level) * (s.boost ?? 1);
+    const grip = KART.grip * perf.grip * (0.7 + 0.25 * level);
     let want = Math.min(top, speedCap);
     for (let d = 1; d <= 14; d += 1) {
       const kk = Math.abs(curvature(u + d / TRACK_LENGTH));
       if (kk < 1e-3) continue;
-      const corner = Math.sqrt(grip / kk);
+      // 曲がれる速さ：横のグリップと、ハンドルの切れ角（速いほど切れない）の小さいほう
+      let corner = Math.sqrt(grip / kk);
+      const needed = Math.atan(kk * KART.wheelBase) * 1.1;
+      if (needed >= KART.steerMax) corner = Math.min(corner, 1.5);
+      else if (needed > KART.steerMaxFast) {
+        corner = Math.min(corner, ((KART.steerMax - needed) / (KART.steerMax - KART.steerMaxFast)) * fullSpeed);
+      }
       // その曲がりまでにブレーキで落とせる速さ（v² = v0² + 2ad）
       want = Math.min(want, Math.sqrt(corner * corner + 2 * KART.brake * 0.7 * d));
     }
     // すぐ前に相手がいて、横へ出きれていないあいだは、相手の速さまで待つ
-    if (rivalAhead > 0 && rivalAhead < 1.5 && Math.abs(rival.state.lateral - s.lateral) < 0.8) {
+    // （止まっている相手のうしろで待つと、いつまでも抜けないので、相手が走っているときだけ）
+    if (rivalAhead > 0 && rivalAhead < 1.5 && Math.abs(rival.speed) > 2 && Math.abs(rival.state.lateral - s.lateral) < 0.8) {
       want = Math.min(want, Math.abs(rival.speed) + 0.3);
     }
     // 大きくずれている（コースの外、向きが違う）ときは、ゆっくり戻る

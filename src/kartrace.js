@@ -17,9 +17,9 @@ import { createSignalSound } from './audio.js';
  * 進み具合（progress）は「周」の単位で、スタートの線が 0。周を越えるたびに 1 増える。
  * コース上の位置 u（0..1）の変わりを、つなぎ目の飛びを直しながら足していく。
  *
- * 追い上げ（ラバーバンド）：女の子が離れて前にいるほど遅く、後ろにいるほど速く走る
- * （AI の skill を 0.55〜1.0 で変え、3m より離れて後ろなら最高速も最大 1 割上げる）。
- * 差が開きすぎないように。
+ * 女の子のペース：ひとりで走って 3 周 34.3 秒ほど（ピンクのカートは性能を上げてある）。
+ * 追い上げ（ラバーバンド）：後ろにいるときだけ、腕前を上げ、3m より離れていれば最高速も
+ * 最大 1 割上げる。前にいるときは遅くしない。
  *
  * 表示：PC は画面の上に DOM、VR（と PC の一人称）はプレイヤーのカートのダッシュボードの
  * 小さな画面。ゲートの灯りはどちらでも見える。
@@ -28,6 +28,9 @@ import { createSignalSound } from './audio.js';
 export const RACE = { laps: 3, countdown: 3, gridZone: 8, results: 6, waitPlayer: 25 };
 
 const START_HOLD = 1.2;
+/** 女の子のふだんの腕前（kartai の skill）。カートの性能（world.js の HER_KART_PERF）と合わせて、
+ *  ひとりで走ると 3 周 34.3 秒ほど */
+export const HER_SKILL = 0.9;
 /** 抜いた・抜かれたとみなす差（m）。行ったり来たりで何度もしゃべらないように */
 const PASS_MARGIN = 1.5;
 
@@ -45,7 +48,7 @@ export function createKartRace({ scene, playerKart, herKart, voice = null }) {
   let lastLapSaid = false;
   let leader = null;         // 'player' | 'her'（抜いた・抜かれたの判定用）
   let finishOrder = [];
-  let herSkill = 0.82;
+  let herSkill = HER_SKILL;
   let herBoost = 1;
   let playerDriving = false;
   let herSeated = false;
@@ -246,7 +249,9 @@ export function createKartRace({ scene, playerKart, herKart, voice = null }) {
           if (leader !== 'her' && gap < -PASS_MARGIN) { if (leader) voice?.say('racePass'); leader = 'her'; }
           if (!lastLapSaid && Math.max(p.progress, h.progress) >= RACE.laps - 1) { voice?.say('raceLastLap'); lastLapSaid = true; }
           // 追い上げ：プレイヤーより前にいるほど遅く、後ろにいるほど速く
-          herSkill = THREE.MathUtils.clamp(0.82 + gap * 0.025, 0.55, 1.0);
+          // 前にいても遅くはしない（決めたペースで走る。以前は前に離れるほど遅くしていて、
+          // 「遅すぎる」と言われた）。後ろにいるときだけ、腕前を上げて追う
+          herSkill = THREE.MathUtils.clamp(HER_SKILL + Math.max(0, gap) * 0.02, HER_SKILL, 1.0);
           // 3m より離れて後ろにいるときは、最高速も少し上げる（最大 1 割）。腕前を上げるだけでは、
           // 最高速が同じなので追いつけなかった
           herBoost = gap > 3 ? Math.min(1.1, 1 + (gap - 3) * 0.012) : 1;
@@ -284,7 +289,7 @@ export function createKartRace({ scene, playerKart, herKart, voice = null }) {
     lastBeep = -1;
     lastLapSaid = false;
     finishOrder = [];
-    herSkill = 0.82;
+    herSkill = HER_SKILL;
     herBoost = 1;
     voice?.say('raceReady');
   }

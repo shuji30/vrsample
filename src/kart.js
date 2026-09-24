@@ -56,7 +56,7 @@ function checkerDecal(color) {
  * カートを 1 台作る。
  * @param {{ color?: number, number?: string, name?: string }} options
  */
-export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {}) {
+export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart', perf = null } = {}) {
   const group = new THREE.Group();
   group.name = name;
   const body = new THREE.Group();   // ハンドルと車輪以外（乗るときにつかめる所）
@@ -146,7 +146,11 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
     lateral: 0,      // 中心線からのずれ（m）
     brakeHeld: 0,    // 止まってからブレーキを踏み続けている時間（バックに入るまで）
     hit: 0,
+    travelYaw: 0,    // 進んでいる向き（ハンドブレーキで滑ると、車の向き yaw とずれる）
+    slip: 0,         // 車の向きと進む向きのずれ（ラジアン）
     boost: 1,        // 最高速の倍率（レースの追い上げで女の子のカートだけ上げる）
+    // カートの性能の倍率（最高速・加速・曲がるときのグリップ）。女の子のカートは速めにしてある
+    perf: { top: 1, accel: 1, grip: 1, ...perf },
   };
   let spin = 0;
 
@@ -163,7 +167,8 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
   }
 
   function steerLimit() {
-    const k = Math.min(1, Math.abs(state.speed) / KART.maxSpeed);
+    // 速いほど切れなくなる。そのカートの最高速（性能の倍率込み）に対する割合で決める
+    const k = Math.min(1, Math.abs(state.speed) / (KART.maxSpeed * state.perf.top));
     return KART.steerMax + (KART.steerMaxFast - KART.steerMax) * k;
   }
 
@@ -176,6 +181,8 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
     place(x, z, yaw) {
       group.position.set(x, 0, z);
       state.yaw = yaw;
+      state.travelYaw = yaw;
+      state.slip = 0;
       state.speed = 0;
       state.steer = 0;
       state.trackIndex = -1;
@@ -184,12 +191,13 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
     /**
      * 1 フレームぶん走らせる。
      * @param {number} dt
-     * @param {{ throttle: number, brake: number, steer: number }} input
-     *   throttle / brake は 0..1、steer は -1（右）〜 1（左）
+     * @param {{ throttle: number, brake: number, steer: number, handbrake?: number }} input
+     *   throttle / brake / handbrake は 0..1、steer は -1（右）〜 1（左）。
+     *   handbrake は後輪だけのブレーキ：減速し、後輪が滑ってお尻が流れる（ハンドルを切ると回り込む）
      * @param {(x: number, z: number, from: {x: number, z: number}) => {x: number, z: number}} [clamp]
      *   走れる範囲に収める関数（壁に当たると止まる）
      */
-    update(dt, { throttle = 0, brake = 0, steer = 0 }, clamp = null) {
+    update(dt, { throttle = 0, brake = 0, steer = 0, handbrake = 0 }, clamp = null) {
       // ハンドルは一定の速さで追いかける（キーボードでもガクッと切れない）
       const ds = steer - state.steer;
       state.steer += Math.sign(ds) * Math.min(Math.abs(ds), KART.steerRate * dt);
@@ -202,11 +210,11 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
       state.onGrass = Math.abs(near.lateral) > KART_TRACK.width / 2 + KART_TRACK.curb;
 
       // 前後の加速
-      const top = state.onGrass ? KART.grassMaxSpeed : KART.maxSpeed * state.boost;
+      const top = state.onGrass ? KART.grassMaxSpeed : KART.maxSpeed * state.perf.top * state.boost;
       let a = 0;
       if (throttle > 0.01) {
         // 速さが上限に近いほど伸びなくなる
-        a += KART.accel * throttle * Math.max(0, 1 - state.speed / top);
+        a += KART.accel * state.perf.accel * throttle * Math.max(0, 1 - state.speed / top);
       }
       // ブレーキ：走っていれば止まる。止まってからも踏み続けると（0.4 秒）バックする。
       // 止まった瞬間にバックへ移ると、止まりたいだけのときにも下がってしまう
@@ -216,6 +224,11 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
         if (state.speed > 0.2) a -= KART.brake * brake;
         else if (state.brakeHeld > 0.4 || state.speed < -0.05) a -= KART.accel * 0.6 * brake * Math.max(0, 1 + state.speed / KART.reverseMax);
         else if (state.speed > 0) state.speed = Math.max(0, state.speed - KART.brake * brake * dt);
+      }
+      // ハンドブレーキ：後輪がロックして減速する（前へも後ろへも、止まるまで）
+      if (handbrake > 0.01 && Math.abs(state.speed) > 0.05) {
+        const d = Math.min(Math.abs(state.speed), KART.brake * 0.35 * handbrake * dt);
+        state.speed -= Math.sign(state.speed) * d;
       }
       const drag = (state.onGrass ? KART.grassDrag : KART.coast) + (state.speed > top ? 4 : 0);
       state.speed += a * dt;
@@ -232,15 +245,27 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
       const turnSpeed = Math.sign(state.speed || 1) * Math.max(Math.abs(state.speed), throttle * 0.9, brake * 0.6);
       let yawRate = (turnSpeed * Math.tan(delta)) / KART.wheelBase;
       const speed = Math.abs(state.speed);
+      // ハンドブレーキで後輪が滑ると、グリップの上限を超えて向きが変わる（お尻が流れる）
+      const slide = handbrake > 0.05 && speed > 1.2 ? handbrake : 0;
+      yawRate *= 1 + 0.9 * slide;
       if (speed > 0.5) {
-        const limit = KART.grip / speed;
+        const limit = ((KART.grip * state.perf.grip) / speed) * (1 + 1.5 * slide);
         yawRate = Math.max(-limit, Math.min(limit, yawRate));
       }
       state.yaw += yawRate * dt;
+      // 進む向き（travelYaw）は、ふだんはすぐ車の向きにそろう。後輪が滑っているあいだは
+      // ゆっくりしかそろわず、車は横を向いたまま流れる（ドリフト）。横を向いたぶんだけ遅くなる
+      let slip = state.yaw - state.travelYaw;
+      slip -= Math.round(slip / (Math.PI * 2)) * Math.PI * 2;
+      state.travelYaw += slip * Math.min(1, (slide > 0 ? 1.8 : 6) * dt);
+      slip = state.yaw - state.travelYaw;
+      slip -= Math.round(slip / (Math.PI * 2)) * Math.PI * 2;
+      state.slip = slip;
+      if (Math.abs(slip) > 0.05) state.speed -= state.speed * Math.min(1, Math.abs(Math.sin(slip)) * 1.2 * dt);
 
       const from = { x: group.position.x, z: group.position.z };
-      let nx = from.x + Math.sin(state.yaw) * state.speed * dt;
-      let nz = from.z + Math.cos(state.yaw) * state.speed * dt;
+      let nx = from.x + Math.sin(state.travelYaw) * state.speed * dt;
+      let nz = from.z + Math.cos(state.travelYaw) * state.speed * dt;
       state.hit = 0;
       if (clamp) {
         const c = clamp(nx, nz, from);

@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { PARK } from './park.js';
+import { ROOM } from './room.js';
 
 /**
  * テニスの道具（ラケットとテニスボール）と、ラケット面で球を打つ判定。
@@ -141,12 +143,12 @@ function rod(from, to, radius, material, segments = 10) {
  * ラケット。フレーム・弦・グリップをひとつのグループにまとめる。
  * つかむ判定は子のメッシュに当たるので、userData はグループに持たせる。
  */
-export function createRacket() {
+export function createRacket({ color = 0x1f5fb0, name = 'racket' } = {}) {
   const group = new THREE.Group();
-  group.name = 'racket';
+  group.name = name;
 
   const frameMaterial = new THREE.MeshPhysicalMaterial({
-    color: 0x1f5fb0, roughness: 0.32, metalness: 0.25, clearcoat: 0.8, clearcoatRoughness: 0.2,
+    color, roughness: 0.32, metalness: 0.25, clearcoat: 0.8, clearcoatRoughness: 0.2,
   });
   const accentMaterial = new THREE.MeshPhysicalMaterial({ color: 0xf4f4f0, roughness: 0.4, clearcoat: 0.5 });
   const gripMaterial = new THREE.MeshStandardMaterial({ map: createGripTexture(), roughness: 0.85 });
@@ -219,7 +221,7 @@ export function createRacket() {
     held: false,
     heldBy: null,
     hoverMaterial: frameMaterial,
-    baseColor: new THREE.Color(0x1f5fb0),
+    baseColor: new THREE.Color(color),
     baseEmissive: new THREE.Color(0x000000),
   };
   return group;
@@ -455,4 +457,163 @@ export function createRacketPhysics({ rackets, balls, onHit }) {
   }
 
   return { update };
+}
+
+// ---------------------------------------------------------------------------
+// テニスボールの物理（world.js の簡易物理と、女の子の先読みで共用する）
+// ---------------------------------------------------------------------------
+
+const GRAVITY = -9.8;
+/** 回転をもつ球が弾んだときの、回転の慣性モーメント（m r^2 の何倍か）。中空のテニスボールで 0.55 ほど */
+const BALL_INERTIA = 0.55;
+
+/** テニスコートのネット。中央 0.80m、ポスト 0.86m で、そのあいだはたるむ */
+export const NET = {
+  z: PARK.court.z,
+  halfSpan: PARK.court.width / 2 + 0.3,
+  height(x) {
+    const u = Math.min(1, Math.abs(x - PARK.court.x) / (PARK.court.width / 2 + 0.3));
+    return PARK.court.net + (PARK.court.netPost - PARK.court.net) * u * u;
+  },
+};
+
+/** 球がネットに掛かったか（前の z から今の位置へ動くあいだに、白帯より下で網をまたいだ） */
+export function hitsNet(prevZ, position, radius) {
+  if (Math.abs(position.x - PARK.court.x) > NET.halfSpan) return false;
+  const before = prevZ - NET.z;
+  const after = position.z - NET.z;
+  const crossed = (before > radius && after < radius) || (before < -radius && after > -radius);
+  return crossed && position.y - radius * 0.3 <= NET.height(position.x);
+}
+
+/** コート（外まわりまで）の中か */
+export function onCourt(x, z) {
+  const c = PARK.court;
+  return Math.abs(x - c.x) < c.width / 2 + c.runoffSide && Math.abs(z - c.z) < c.length / 2 + c.runoffEnd;
+}
+
+/** 床の場所ごとの弾みやすさ（テニスボール）。芝は弾まず、室内の床は少し弾まない */
+export function surfaceBounce(x, z) {
+  if (onCourt(x, z)) return 1;
+  if (z > ROOM.minZ) return 0.9;
+  return 0.72;
+}
+
+/**
+ * マグヌス効果の加速度を out に足す。回転の軸と進む向きの両方に直角な向きへ
+ * 曲がる（トップスピンは落ち、スライスは浮く）。揚力係数には上限があるので、
+ * 空気抵抗の 0.65 倍で頭打ちにする
+ */
+const magnusTmp = new THREE.Vector3();
+export function addMagnus(velocity, spin, data, dt) {
+  const speed = velocity.length();
+  if (!data.magnus || speed <= 0.5) return;
+  magnusTmp.crossVectors(spin, velocity).multiplyScalar(data.magnus);
+  const cap = 0.65 * (data.drag ?? 0.02) * speed * speed;
+  if (magnusTmp.length() > cap) magnusTmp.setLength(cap);
+  velocity.addScaledVector(magnusTmp, dt);
+}
+
+/**
+ * 回転している球が弾む。接地点の滑りを摩擦で打ち消し、そのぶん速さと回転を
+ * やりとりする（トップスピンは前へ伸び、バックスピンは止まる）。
+ * velocity.y は弾む前（負）の値で呼ぶ。
+ */
+export function spinBounce(velocity, spin, data, e) {
+  const r = data.halfSize;
+  const vyIn = velocity.y;
+  // 接地点の速さ：v + ω × (0, -r, 0)
+  const ux = velocity.x + r * spin.z;
+  const uz = velocity.z - r * spin.x;
+  const slip = Math.hypot(ux, uz);
+  velocity.y = -vyIn * e;
+  if (slip < 1e-5) return;
+  // 滑りが止まる（転がりになる）のに要る力積。摩擦の上限を超えたら滑ったまま
+  let jx = -ux / (1 + 1 / BALL_INERTIA);
+  let jz = -uz / (1 + 1 / BALL_INERTIA);
+  const limit = (data.bounceFriction ?? 0.5) * (1 + e) * Math.abs(vyIn);
+  const j = Math.hypot(jx, jz);
+  if (j > limit) { jx *= limit / j; jz *= limit / j; }
+  velocity.x += jx;
+  velocity.z += jz;
+  // 力積が回転を変える：Δω = (r_c × J) / (k r^2)、r_c = (0, -r, 0)
+  spin.x += -jz / (BALL_INERTIA * r);
+  spin.z += jx / (BALL_INERTIA * r);
+}
+
+/**
+ * テニスボールの飛び方を先読みする。world.js の物理と同じ式（空気抵抗・マグヌス・
+ * 回転のバウンド・床ごとの弾み・ネット）を、止まるかネットに掛かるまで進める。
+ * 返すのは 1/60 秒ごとの { t, p, v, bounces }。壁や柵は見ない。
+ */
+export function predictTennis(position, velocity, spin, data, { step = 1 / 60, maxTime = 3.0 } = {}) {
+  const p = position.clone();
+  const v = velocity.clone();
+  const w = spin.clone();
+  const r = data.halfSize;
+  const drag = data.drag ?? 0.02;
+  const samples = [];
+  let bounces = 0;
+  let net = false;
+  for (let t = step; t <= maxTime; t += step) {
+    const speed = v.length();
+    if (speed > 0.01) v.multiplyScalar(1 - Math.min(0.9, drag * speed * step));
+    addMagnus(v, w, data, step);
+    v.y += GRAVITY * step;
+    const prevZ = p.z;
+    p.addScaledVector(v, step);
+    if (hitsNet(prevZ, p, r)) { net = true; samples.push({ t, p: p.clone(), v: v.clone(), bounces, net }); break; }
+    if (p.y <= r && v.y < 0) {
+      p.y = r;
+      const e = (data.restitution ?? 0.7) * surfaceBounce(p.x, p.z);
+      if (-v.y * e < 0.32) break;
+      spinBounce(v, w, data, e);
+      bounces++;
+    }
+    w.multiplyScalar(Math.max(0, 1 - step * (data.spinDecay ?? 0.8)));
+    samples.push({ t, p: p.clone(), v: v.clone(), bounces, net });
+  }
+  return samples;
+}
+
+/**
+ * from から打って、target（地面の点）に落ちる初速を解く。flight は落ちるまでの
+ * 時間の目安（秒）。トップスピン（rad/s）をかけ、ネットの白帯を clearance だけ
+ * 越えるように、足りなければ山なりにする。
+ * 空気抵抗とマグヌスがあるので、先読みで落ちた点のずれを見て 5 回まで直す。
+ * @returns {{ velocity: THREE.Vector3, spin: THREE.Vector3, landing: THREE.Vector3 }}
+ */
+export function solveShot(from, target, data, { flight = 1.2, topspin = 40, clearance = 0.25 } = {}) {
+  const dir = new THREE.Vector3(target.x - from.x, 0, target.z - from.z);
+  const distance = dir.length() || 1;
+  dir.divideScalar(distance);
+  const spin = new THREE.Vector3(0, 1, 0).cross(dir).multiplyScalar(topspin);
+  const aim = new THREE.Vector3(target.x, 0, target.z);
+  const velocity = new THREE.Vector3();
+  let landing = null;
+  let t = flight;
+  for (let pass = 0; pass < 8; pass++) {
+    velocity.set((aim.x - from.x) / t, (data.halfSize - from.y - 0.5 * GRAVITY * t * t) / t, (aim.z - from.z) / t);
+    const samples = predictTennis(from, velocity, spin, data, { maxTime: t + 1.5 });
+    // ネットを越えるところの高さ
+    let netOk = true;
+    let prevZ = from.z;
+    landing = null;
+    for (const s of samples) {
+      if (s.net) { netOk = false; break; }
+      const crossed = (prevZ - NET.z) * (s.p.z - NET.z) <= 0;
+      if (crossed && Math.abs(s.p.x - PARK.court.x) < NET.halfSpan && s.p.y < NET.height(s.p.x) + clearance) netOk = false;
+      prevZ = s.p.z;
+      if (s.bounces > 0) { landing = s.p.clone(); break; }
+    }
+    if (!netOk) { t *= 1.12; continue; }       // 山なりにして越えさせる
+    if (!landing) break;
+    // 落ちた点のずれぶん、狙う点を先へ動かす
+    const ex = target.x - landing.x;
+    const ez = target.z - landing.z;
+    if (Math.hypot(ex, ez) < 0.08) break;
+    aim.x += ex;
+    aim.z += ez;
+  }
+  return { velocity, spin, landing: landing ?? aim.clone() };
 }

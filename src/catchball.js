@@ -170,7 +170,7 @@ function clampToArea(point) {
 }
 
 /** 点を動ける範囲に入れ、障害物の外へ押し出す */
-function settle(point, fromZ = point.y) {
+export function settle(point, fromZ = point.y) {
   clampToArea(point);
   for (const o of PARK.obstacles) {
     const c = coreClosest(o, point.x, point.y);
@@ -202,7 +202,7 @@ function settle(point, fromZ = point.y) {
  * 庭の中の道順。柵の向こう側へ行くなら切れ目を通し、途中の障害物は
  * 脇へよける点を 1 つ足してかわす（障害物はまばらなので、これで足りる）。
  */
-function gardenPath(from, to) {
+export function gardenPath(from, to) {
   const points = [from.clone()];
   const fz = PARK.fence.z;
   const sideA = Math.sign(from.y - fz);
@@ -652,8 +652,52 @@ export function createCatchGame({ character, ball, camera, scene, voice = null }
     state = 'goIn';
   }
 
+  /** body.drive に渡す窓口（検証のログに「いまの状態」を出す） */
+  const driver = { get state() { return state; } };
+
+  /**
+   * テニスに体を譲る。持っている球は置き、投げかけていたらやめる。
+   * 譲っているあいだ update は呼ばれない（world.js が止める）
+   */
+  function suspend() {
+    if (state === 'suspended') return;
+    throwing?.cancel();
+    throwing = null;
+    dropBall();
+    body.reach(null);
+    body.reachHands(null);
+    body.setThrowPose(null);
+    body.setCrouch(0);
+    body.setBend(0);
+    body.setFocus(false);
+    board.sprite.visible = false;
+    flight = null;
+    path = [];
+    state = 'suspended';
+  }
+
+  /** テニスから戻る。庭（コート）にいれば構えから、部屋にいれば部屋のうろうろから */
+  function resume() {
+    if (state !== 'suspended') return;
+    lastBall.copy(ball.position);
+    readPlayer();
+    if (body.position.z < OUTSIDE_Z) {
+      body.drive(driver);
+      body.setAttend(true);
+      spot = null;
+      spotFor = null;
+      spotRetry = 0;
+      timer = 0;
+      state = 'ready';
+      goToSpot();
+    } else {
+      body.drive(null);
+      state = 'off';
+    }
+  }
+
   function update(dt) {
-    if (!body.loaded) return;
+    if (!body.loaded || state === 'suspended') return;
     readPlayer();
     cooldown = Math.max(0, cooldown - dt);
     spotRetry = Math.max(0, spotRetry - dt);
@@ -679,7 +723,7 @@ export function createCatchGame({ character, ball, camera, scene, voice = null }
       case 'off': {
         if (outsideFor < 0.8) break;
         if (!body.free) { body.requestStand(); break; }
-        body.drive({ get state() { return state; } });
+        body.drive(driver);
         body.setAttend(true);
         voice?.say('invite');
         const route = body.exitRoute();
@@ -1026,6 +1070,8 @@ export function createCatchGame({ character, ball, camera, scene, voice = null }
   return {
     update,
     assistThrow,
+    suspend,
+    resume,
     get state() { return state; },
     get plan() { return plan; },
     stats,

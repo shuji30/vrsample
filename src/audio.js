@@ -125,3 +125,94 @@ export function createFootsteps({ muted = false, volume = 0.5 } = {}) {
     get muted() { return muted; },
   };
 }
+
+/**
+ * 球が当たる音。ラケットで打った「ポコン」、弾んだ「トン」、ネットの「バサッ」。
+ *
+ * ラケットの音は、張った弦が鳴る 500〜600Hz あたりの短い響きと、フェルトの
+ * 球がつぶれる「ポッ」というノイズの組み合わせ。足音と同じく、毎回少しずつ
+ * 変えて鳴らす。AudioContext は最初に鳴らすときに作る（ユーザー操作のあと）。
+ */
+export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
+  let context = null;
+  let master = null;
+  let noiseBuffer = null;
+
+  function ensureContext() {
+    if (context) return context;
+    // 操作の前に作ると、止まったままの AudioContext ができて警告が出る
+    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
+    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    try {
+      context = new AudioContextClass();
+    } catch {
+      return null;
+    }
+    master = context.createGain();
+    master.gain.value = volume;
+    master.connect(context.destination);
+    noiseBuffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.2), context.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    return context;
+  }
+
+  function tone(now, frequency, gain, decay, type = 'sine') {
+    const oscillator = context.createOscillator();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(frequency, now);
+    oscillator.frequency.exponentialRampToValueAtTime(frequency * 0.85, now + decay);
+    const envelope = context.createGain();
+    envelope.gain.setValueAtTime(0.0001, now);
+    envelope.gain.exponentialRampToValueAtTime(gain, now + 0.002);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, now + decay);
+    oscillator.connect(envelope).connect(master);
+    oscillator.start(now);
+    oscillator.stop(now + decay + 0.02);
+  }
+
+  function noise(now, frequency, Q, gain, decay) {
+    const source = context.createBufferSource();
+    source.buffer = noiseBuffer;
+    const filter = context.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = frequency;
+    filter.Q.value = Q;
+    const envelope = context.createGain();
+    envelope.gain.setValueAtTime(0.0001, now);
+    envelope.gain.exponentialRampToValueAtTime(gain, now + 0.002);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, now + decay);
+    source.connect(filter).connect(envelope).connect(master);
+    source.start(now);
+    source.stop(now + decay + 0.02);
+  }
+
+  /**
+   * @param {'racket' | 'bounce' | 'net'} kind
+   * @param {number} strength 0〜1
+   */
+  function play(kind, strength = 1) {
+    if (muted || strength < 0.02 || !ensureContext()) return;
+    if (context.state === 'suspended') context.resume().catch(() => {});
+    if (context.state !== 'running') return;
+    const now = context.currentTime;
+    const s = Math.min(1, strength);
+    const vary = 0.92 + Math.random() * 0.16;
+    if (kind === 'racket') {
+      tone(now, 560 * vary, 0.35 * s, 0.09, 'triangle');
+      tone(now, 1180 * vary, 0.12 * s, 0.05);
+      noise(now, 1800 * vary, 1.2, 0.5 * s, 0.035);
+    } else if (kind === 'bounce') {
+      tone(now, 210 * vary, 0.3 * s, 0.07);
+      noise(now, 900 * vary, 1.0, 0.25 * s, 0.03);
+    } else {
+      noise(now, 700 * vary, 0.6, 0.3 * s, 0.12);
+    }
+  }
+
+  return {
+    play,
+    setMuted(value) { muted = value; },
+  };
+}

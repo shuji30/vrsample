@@ -7,6 +7,8 @@ import { createLighting } from './lighting.js';
 import { createCharacter } from './character.js';
 import { createCatchGame } from './catchball.js';
 import { createVoice } from './voice.js';
+import { createRacketPhysics } from './tennis.js';
+import { createImpactSound } from './audio.js';
 import { DEFAULT_THEME } from './themes.js';
 
 /**
@@ -37,6 +39,10 @@ const BOUNCE_STOP = 0.32;
 const RESTITUTION = 0.38;   // 床の反発。木の床なので跳ねすぎない
 const WALL_RESTITUTION = 0.45;
 const FRICTION = 0.78;
+/** 回転をもつ球が弾んだときの、回転の慣性モーメント（m r^2 の何倍か）。中空のテニスボールで 0.55 ほど */
+const BALL_INERTIA = 0.55;
+/** ネットに当たったときの反発（網なので、ほとんど跳ね返らない） */
+const NET_RESTITUTION = 0.12;
 
 /**
  * @param {THREE.WebGLRenderer} renderer
@@ -161,7 +167,8 @@ export function createWorld(renderer, scene, {
   function resetProp(prop) {
     const data = prop.userData;
     prop.position.copy(data.home);
-    prop.rotation.set(0, 0, 0);
+    if (data.homeQuaternion) prop.quaternion.copy(data.homeQuaternion);
+    else prop.rotation.set(0, 0, 0);
     data.velocity.set(0, 0, 0);
     data.spin.set(0, 0, 0);
   }
@@ -181,6 +188,110 @@ export function createWorld(renderer, scene, {
       shadowOnCourt = false;
       lighting.setShadowFocus(0, -3.0);
     }
+  }
+
+  // ラケットで打つ。打った音と弾む音は、聞いている位置（camera）からの距離で小さくする
+  const impact = createImpactSound();
+  const hearing = new THREE.Vector3();
+  function soundAt(position, kind, strength) {
+    if (!camera) return;
+    camera.getWorldPosition(hearing);
+    const falloff = 1 / (1 + hearing.distanceTo(position) / 3);
+    impact.play(kind, strength * falloff);
+  }
+  const rackets = grabbables.filter((prop) => prop.userData.racket);
+  const tennisBalls = grabbables.filter((prop) => prop.userData.tennis);
+  const racketHits = [];
+  const racketPhysics = createRacketPhysics({
+    rackets,
+    balls: tennisBalls,
+    onHit: (hit) => {
+      soundAt(hit.position, 'racket', Math.min(1, 0.3 + hit.speed / 14));
+      for (const listener of racketHits) listener(hit);
+    },
+  });
+
+  // テニスコートのネット。中央 0.80m、ポスト 0.86m で、そのあいだはたるむ
+  const NET = {
+    z: PARK.court.z,
+    halfSpan: PARK.court.width / 2 + 0.3,
+    height: (x) => {
+      const u = Math.min(1, Math.abs(x - PARK.court.x) / (PARK.court.width / 2 + 0.3));
+      return PARK.court.net + (PARK.court.netPost - PARK.court.net) * u * u;
+    },
+  };
+  /** ネットを通り抜けようとした球を止める。網の面（z 一定）をまたいだかで見る */
+  function netCollision(prop, prevZ) {
+    const data = prop.userData;
+    const r = data.halfSize;
+    const x = prop.position.x;
+    if (Math.abs(x - PARK.court.x) > NET.halfSpan) return;
+    const before = prevZ - NET.z;
+    const after = prop.position.z - NET.z;
+    const crossed = (before > r && after < r) || (before < -r && after > -r);
+    if (!crossed) return;
+    if (prop.position.y - r * 0.3 > NET.height(x)) return;   // 白帯より上を越えた
+    const side = Math.sign(before);
+    prop.position.z = NET.z + side * r;
+    data.velocity.z = -data.velocity.z * NET_RESTITUTION;
+    data.velocity.x *= 0.5;
+    data.velocity.y *= 0.5;
+    data.spin.multiplyScalar(0.3);
+    soundAt(prop.position, 'net', Math.min(1, Math.abs(data.velocity.z) / 2 + 0.2));
+  }
+
+  /** 回転している球が弾む。接地点の滑りを摩擦で打ち消し、そのぶん速さと回転をやりとりする */
+  function spinBounce(data, vyIn, e) {
+    const r = data.halfSize;
+    const w = data.spin;
+    // 接地点の速さ：v + ω × (0, -r, 0)
+    const ux = data.velocity.x + r * w.z;
+    const uz = data.velocity.z - r * w.x;
+    const slip = Math.hypot(ux, uz);
+    data.velocity.y = -vyIn * e;
+    if (slip < 1e-5) return;
+    // 滑りが止まる（転がりになる）のに要る力積。摩擦の上限を超えたら滑ったまま
+    let jx = -ux / (1 + 1 / BALL_INERTIA);
+    let jz = -uz / (1 + 1 / BALL_INERTIA);
+    const limit = (data.bounceFriction ?? 0.5) * (1 + e) * Math.abs(vyIn);
+    const j = Math.hypot(jx, jz);
+    if (j > limit) { jx *= limit / j; jz *= limit / j; }
+    data.velocity.x += jx;
+    data.velocity.z += jz;
+    // 力積が回転を変える：Δω = (r_c × J) / (k r^2)、r_c = (0, -r, 0)
+    w.x += -jz / (BALL_INERTIA * r);
+    w.z += jx / (BALL_INERTIA * r);
+  }
+
+  /** 床の場所ごとの弾みやすさ（テニスボールだけ）。芝は弾まず、室内の床は少し弾まない */
+  function surfaceBounce(prop) {
+    const c = PARK.court;
+    const inCourt = Math.abs(prop.position.x - c.x) < c.width / 2 + c.runoffSide
+      && Math.abs(prop.position.z - c.z) < c.length / 2 + c.runoffEnd;
+    if (inCourt) return 1;
+    if (prop.position.z > ROOM.minZ) return 0.9;
+    return 0.72;
+  }
+
+  const magnus = new THREE.Vector3();
+  const flatQuaternion = new THREE.Quaternion();
+  const flatMatrix = new THREE.Matrix4();
+  const axisX = new THREE.Vector3();
+  const axisY = new THREE.Vector3();
+  const axisZ = new THREE.Vector3();
+  /** 床に落ちたラケットを、面を上か下にして寝かせる */
+  function layFlat(prop, dt) {
+    axisY.set(0, 1, 0).applyQuaternion(prop.quaternion);
+    axisY.y = 0;
+    if (axisY.lengthSq() < 1e-6) axisY.set(1, 0, 0).applyQuaternion(prop.quaternion).setY(0);
+    if (axisY.lengthSq() < 1e-6) axisY.set(1, 0, 0);
+    axisY.normalize();
+    const up = new THREE.Vector3(0, 0, 1).applyQuaternion(prop.quaternion).y >= 0 ? 1 : -1;
+    axisZ.set(0, up, 0);
+    axisX.crossVectors(axisY, axisZ);
+    flatQuaternion.setFromRotationMatrix(flatMatrix.makeBasis(axisX, axisY, axisZ));
+    prop.quaternion.slerp(flatQuaternion, Math.min(1, dt * 12));
+    prop.userData.spin.set(0, 0, 0);
   }
 
   function update(dt) {
@@ -203,6 +314,7 @@ export function createWorld(renderer, scene, {
       if (data.held) continue;
 
       const prevY = prop.position.y;
+      const prevZ = prop.position.z;
 
       // 空気抵抗。速さの二乗に比例するので、山なりに投げた球の飛距離と
       // 落ち際の速さがそれらしくなる。
@@ -212,8 +324,19 @@ export function createWorld(renderer, scene, {
         data.velocity.multiplyScalar(1 - loss);
       }
 
+      // マグヌス効果。回転の軸と進む向きの両方に直角な向きへ曲がる
+      // （トップスピンは落ち、スライスは浮く）。揚力係数には上限があるので、
+      // 空気抵抗の 0.65 倍で頭打ちにする
+      if (data.magnus && speed > 0.5) {
+        magnus.crossVectors(data.spin, data.velocity).multiplyScalar(data.magnus);
+        const cap = 0.65 * (data.drag ?? DRAG_DEFAULT) * speed * speed;
+        if (magnus.length() > cap) magnus.setLength(cap);
+        data.velocity.addScaledVector(magnus, dt);
+      }
+
       data.velocity.y += GRAVITY * dt;
       prop.position.addScaledVector(data.velocity, dt);
+      netCollision(prop, prevZ);
 
       // 着地面。テーブルの真上から落ちてきたときだけ天板に乗る
       const dx = prop.position.x - TABLE.center.x;
@@ -227,7 +350,8 @@ export function createWorld(renderer, scene, {
       if (prop.position.y <= restY + 1e-4) {
         prop.position.y = restY;
         if (data.velocity.y < 0) {
-          const bounce = -data.velocity.y * (data.restitution ?? RESTITUTION);
+          const restitution = (data.restitution ?? RESTITUTION) * (data.spinBounce ? surfaceBounce(prop) : 1);
+          const bounce = -data.velocity.y * restitution;
           if (bounce < BOUNCE_STOP) {
             // ただ床に載っているだけ。ここで衝突の摩擦を掛けてはいけない。
             //
@@ -236,6 +360,9 @@ export function createWorld(renderer, scene, {
             // 掛けていたので、転がり出したボールが 0.2 秒で止まっていた。
             // 転がっている間の減速は下の ROLL_FRICTION だけが受け持つ。
             data.velocity.y = 0;
+          } else if (data.spinBounce) {
+            spinBounce(data, data.velocity.y, restitution);
+            if (bounce > 0.8) soundAt(prop.position, 'bounce', Math.min(1, bounce / 5));
           } else {
             data.velocity.y = bounce;
             // 弾んだときだけの摩擦。水平成分を落とし、そのぶんを回転へまわす
@@ -257,7 +384,7 @@ export function createWorld(renderer, scene, {
       if (grounded) {
         const horizontal = Math.hypot(data.velocity.x, data.velocity.z);
         if (horizontal > 0.005) {
-          const decel = (data.rolls ? ROLL_FRICTION : SLIDE_FRICTION) * dt;
+          const decel = (data.rolls ? data.rollFriction ?? ROLL_FRICTION : SLIDE_FRICTION) * dt;
           const scale = Math.max(0, horizontal - decel) / horizontal;
           data.velocity.x *= scale;
           data.velocity.z *= scale;
@@ -281,8 +408,9 @@ export function createWorld(renderer, scene, {
         spinStep.setFromAxisAngle(spinAxis, spinRate * dt);
         prop.quaternion.premultiply(spinStep);
         // 転がっているあいだは速度から決め直すので、ここでは減衰させない
-        if (!(grounded && data.rolls)) data.spin.multiplyScalar(Math.max(0, 1 - dt * 0.8));
+        if (!(grounded && data.rolls)) data.spin.multiplyScalar(Math.max(0, 1 - dt * (data.spinDecay ?? 0.8)));
       }
+      if (grounded && data.laysFlat) layFlat(prop, dt);
 
       // 壁。歩ける範囲と同じ形で押し戻し、押し戻した向きに速度を反射する。
       // 掃き出し窓の開口ぶんはここが空いているので、ボールは庭へ抜けていく。
@@ -310,8 +438,12 @@ export function createWorld(renderer, scene, {
 
       // 念のため。窓から飛び出すなどして行方不明になったら戻す
       tmp.set(prop.position.x, 0, prop.position.z);
-      if (prop.position.y < -2 || tmp.length() > 30) resetProp(prop);
+      // （テニスコートの奥の柵が 30m 先にあるので、それより遠く）
+      if (prop.position.y < -2 || tmp.length() > 45) resetProp(prop);
     }
+
+    // --- ラケットで打つ ------------------------------------------------------
+    racketPhysics.update(dt);
   }
 
   return {
@@ -324,6 +456,10 @@ export function createWorld(renderer, scene, {
     park,
     furniture,
     ball: furniture.ball,
+    racket: furniture.racket,
+    tennisBall: furniture.tennisBall,
+    /** ラケットで打ったときに呼ばれる（{ racket, ball, speed, racketSpeed, by, position }） */
+    onRacketHit: (listener) => racketHits.push(listener),
     lighting,
     character,
     catchGame,
@@ -331,6 +467,7 @@ export function createWorld(renderer, scene, {
     update,
     setTheme: (key) => lighting.setTheme(key),
     getTheme: () => lighting.getTheme(),
-    resetProps: () => grabbables.forEach(resetProp),
+    // 持っている物はそのまま（手の子になっているので、位置を戻すと手元から飛ぶ）
+    resetProps: () => grabbables.filter((prop) => !prop.userData.held).forEach(resetProp),
   };
 }

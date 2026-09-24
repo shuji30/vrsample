@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createDesktopSwing } from './swing.js';
 
 /** PC で歩く速さ（m/s）。VR のスティック移動と同じにして感覚を揃える */
 const WALK_SPEED = 2.2;
@@ -47,10 +48,13 @@ export function createDesktopControls(renderer, camera, world) {
     pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
 
-    const hit = raycaster.intersectObjects(world.interactables, false)[0];
+    const hit = raycaster.intersectObjects(world.interactables, true)[0];
     if (!hit) return;
 
-    const object = hit.object;
+    // ラケットは部品（子のメッシュ）に当たるので、つかめる親までさかのぼる
+    let object = hit.object;
+    while (object && !object.userData.grabbable && !object.userData.interactive) object = object.parent;
+    if (!object || object.userData.held) return;
     if (object.userData.grabbable) {
       object.userData.velocity.set(
         (Math.random() - 0.5) * 1.2,
@@ -127,70 +131,133 @@ export function createDesktopControls(renderer, camera, world) {
     controls.target.z += dz;
   }
 
-  // --- PC でのキャッチボール ---------------------------------------------
+  // --- PC でのキャッチボールとテニス ---------------------------------------
   // ヘッドセットが無くても女の子とボールをやりとりできるように、F で近くの
   // ボールを拾う / 見ている方へ投げる。こちらへ飛んできた球は、顔の前を
   // 通るときに自動で受ける（マウスで捕る操作は難しすぎるため）。
+  //
+  // ラケットも F で拾う。持っているあいだは右手に構え、スペースを押すと
+  // 振りかぶり、離すと振る。テニスボールも持っていれば、スペースで目の前に
+  // トスして、落ちてくるところを自動で打つ。G でラケットを置く。
   const ball = world.ball;
-  const HOLD = new THREE.Vector3(0.20, -0.30, -0.45);   // カメラから見た持つ位置
+  const racket = world.racket;
+  const balls = [world.ball, world.tennisBall].filter(Boolean);
+  const HOLD = new THREE.Vector3(0.20, -0.30, -0.45);        // カメラから見た持つ位置
+  const HOLD_LEFT = new THREE.Vector3(-0.22, -0.30, -0.45);  // ラケットを持っているときは左手
   const PICK_RANGE = 1.8;
   const CATCH_RANGE = 0.6;
-  let holding = false;
+  /** 手に持っている球（無ければ null） */
+  let heldBall = null;
   const eye = new THREE.Vector3();
   const look = new THREE.Vector3();
+  const swing = racket ? createDesktopSwing(camera, racket) : null;
 
-  function ballFree() {
-    return ball && !ball.userData.held;
+  const free = (object) => object && !object.userData.held;
+  const holdSlot = () => (swing?.holding ? HOLD_LEFT : HOLD);
+
+  function take(object) {
+    if (object.userData.racket) {
+      swing.take();
+      return;
+    }
+    heldBall = object;
+    object.userData.held = true;
+    object.userData.heldBy = 'desktop';
+    object.userData.velocity.set(0, 0, 0);
+    object.userData.spin.set(0, 0, 0);
   }
 
-  function takeBall() {
-    holding = true;
-    ball.userData.held = true;
-    ball.userData.heldBy = 'desktop';
-    ball.userData.velocity.set(0, 0, 0);
-    ball.userData.spin.set(0, 0, 0);
+  function release(object) {
+    object.userData.held = false;
+    object.userData.heldBy = null;
+    if (heldBall === object) heldBall = null;
   }
 
   function throwBall() {
+    const object = heldBall;
     camera.getWorldPosition(eye);
     camera.getWorldDirection(look);
-    holding = false;
-    ball.userData.held = false;
-    ball.userData.heldBy = null;
-    ball.position.copy(camera.localToWorld(HOLD.clone()));
+    release(object);
+    object.position.copy(camera.localToWorld(holdSlot().clone()));
     // 見ている向きへ山なりに。水平を見て投げると 5m 先で胸の高さに届く
-    ball.userData.velocity.copy(look).multiplyScalar(7.0).add(new THREE.Vector3(0, 2.2, 0));
+    object.userData.velocity.copy(look).multiplyScalar(7.0).add(new THREE.Vector3(0, 2.2, 0));
     // 女の子のほうを見て投げたら、届く球筋に直す（マウスでは強さを加減できない）
-    world.catchGame?.assistThrow(ball.position, ball.userData.velocity, 1);
-    ball.userData.spin.set(-look.z, 0, look.x).multiplyScalar(40);
+    if (object === ball) world.catchGame?.assistThrow(object.position, object.userData.velocity, 1);
+    object.userData.spin.set(-look.z, 0, look.x).multiplyScalar(40);
+  }
+
+  /** 手の届くところにある、いちばん近い物（球とラケット） */
+  function nearest() {
+    camera.getWorldPosition(eye);
+    let best = null;
+    let bestDistance = Infinity;
+    const candidates = [...balls];
+    if (racket && !swing.holding) candidates.push(racket);
+    for (const object of candidates) {
+      if (!free(object)) continue;
+      const position = object.userData.racket ? racketGrip(object) : object.position;
+      const flat = Math.hypot(position.x - eye.x, position.z - eye.z);
+      const distance = position.distanceTo(eye);
+      if (flat >= PICK_RANGE || distance >= PICK_RANGE + 1.0) continue;
+      // ラケットを持っているときは、テニスボールを先に拾う
+      if (swing?.holding && object.userData.tennis) return object;
+      if (distance < bestDistance) {
+        best = object;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+  const gripPoint = new THREE.Vector3();
+  function racketGrip(object) {
+    // 面の中心あたりで測る（机に寝かせたラケットのどこを見ても拾えるように）
+    return object.localToWorld(gripPoint.set(0, 0.3, 0));
   }
 
   window.addEventListener('keydown', (event) => {
-    if (event.code !== 'KeyF' || renderer.xr.isPresenting || !ball) return;
-    if (holding) { throwBall(); return; }
-    camera.getWorldPosition(eye);
-    if (ballFree() && ball.position.distanceTo(eye) < PICK_RANGE + 1.0
-      && Math.hypot(ball.position.x - eye.x, ball.position.z - eye.z) < PICK_RANGE) takeBall();
+    if (renderer.xr.isPresenting) return;
+    if (event.code === 'KeyF') {
+      if (heldBall) { throwBall(); return; }
+      const object = nearest();
+      if (object) take(object);
+    } else if (event.code === 'KeyG' && swing?.holding) {
+      swing.drop();
+    } else if (event.code === 'Space' && swing?.holding) {
+      event.preventDefault();
+      if (event.repeat) return;
+      if (heldBall?.userData.tennis) {
+        const object = heldBall;
+        release(object);
+        swing.tossAndHit(object);
+      } else {
+        swing.backswing();
+      }
+    }
+  });
+  window.addEventListener('keyup', (event) => {
+    if (event.code === 'Space' && swing?.holding) swing.forward();
   });
 
-  function updateBall() {
-    if (!ball) return;
-    if (holding) {
-      if (ball.userData.heldBy !== 'desktop') { holding = false; return; }
-      ball.position.copy(camera.localToWorld(HOLD.clone()));
+  function updateBall(dt) {
+    swing?.update(dt);
+    if (heldBall) {
+      if (heldBall.userData.heldBy !== 'desktop') { heldBall = null; return; }
+      heldBall.position.copy(camera.localToWorld(holdSlot().clone()));
       return;
     }
-    if (!ballFree()) return;
+    // 飛んできたキャッチボールの球は、顔の前で自動で受ける
+    if (!free(ball)) return;
     camera.getWorldPosition(eye);
     const v = ball.userData.velocity;
     const toEye = look.subVectors(eye, ball.position);
-    if (v.length() > 1.5 && toEye.dot(v) > 0 && toEye.length() < CATCH_RANGE) takeBall();
+    if (v.length() > 1.5 && toEye.dot(v) > 0 && toEye.length() < CATCH_RANGE) take(ball);
   }
 
   let last = performance.now();
 
   return {
     controls,
+    swing,
     /** @param {number} [dt] 呼び出し側が持っていれば渡す。無ければ自前で測る */
     update(dt) {
       if (renderer.xr.isPresenting) { last = performance.now(); return; }
@@ -199,7 +266,7 @@ export function createDesktopControls(renderer, camera, world) {
       last = now;
       walk(seconds);
       controls.update();
-      updateBall();
+      updateBall(seconds);
     },
   };
 }

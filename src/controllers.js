@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createFootsteps } from './audio.js';
+import { VR_GRIP } from './tennis.js';
 
 const MOVE_SPEED = 1.45;        // m/s（室内なので歩く速さくらいに）
 const ACCELERATION = 8.0;       // m/s^2 歩き出し
@@ -162,10 +163,11 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
 
   function setHover(object, on) {
     if (!object || !object.userData.grabbable) return;
-    const emissive = object.material.emissive;
-    if (!emissive) return;
-    emissive.copy(on ? object.userData.baseColor : new THREE.Color(0x000000));
-    object.material.emissiveIntensity = on ? 0.45 : 0;
+    // ラケットのように部品を束ねた物は、光らせる材質を userData で指定する
+    const material = object.userData.hoverMaterial ?? object.material;
+    if (!material?.emissive) return;
+    material.emissive.copy(on ? object.userData.baseColor : new THREE.Color(0x000000));
+    material.emissiveIntensity = on ? 0.45 : 0;
   }
 
   function pick(controller) {
@@ -173,7 +175,12 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
     raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
     raycaster.far = 8;
-    return raycaster.intersectObjects(world.interactables, false)[0] ?? null;
+    const hit = raycaster.intersectObjects(world.interactables, true)[0];
+    if (!hit) return null;
+    // ラケットは部品（子のメッシュ）に当たるので、つかめる親までさかのぼる
+    let object = hit.object;
+    while (object && !object.userData.grabbable && !object.userData.interactive) object = object.parent;
+    return object ? { ...hit, object } : null;
   }
 
   function onSelectStart(event) {
@@ -194,7 +201,13 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
       object.userData.spin.set(0, 0, 0);
       setHover(object, false);
       controller.attach(object); // ワールド変換を保ったまま手の子にする
-      object.position.set(0, 0, -0.12); // 離れた場所からでも手元に引き寄せる
+      if (object.userData.racket) {
+        // ラケットは握る位置と向きを決めて持たせる（どこをつかんでもグリップを握る）
+        object.position.copy(VR_GRIP.position);
+        object.quaternion.copy(VR_GRIP.quaternion);
+      } else {
+        object.position.set(0, 0, -0.12); // 離れた場所からでも手元に引き寄せる
+      }
       controller.userData.held = object;
     } else if (object.userData.interactive && object.userData.onSelect) {
       object.userData.press = 1;
@@ -215,7 +228,8 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     // 向きを少しだけ相手へ寄せる（catchball.js の assistThrow）
     throwVelocity(controller, object.userData.velocity);
     sinceRelease = 0;
-    world.catchGame?.assistThrow(object.position, object.userData.velocity, 0.5);
+    // 相手へ寄せるのはキャッチボールの球だけ
+    if (object === world.ball) world.catchGame?.assistThrow(object.position, object.userData.velocity, 0.5);
     object.userData.spin.set(
       (Math.random() - 0.5) * 6,
       (Math.random() - 0.5) * 6,

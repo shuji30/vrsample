@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { ROOM } from './room.js';
 import { THEMES } from './themes.js';
+import { createRacket, createTennisBall } from './tennis.js';
 
 /**
  * 室内の家具と小物。
@@ -600,7 +601,8 @@ export function createFurniture(scene, tex, onSelectTheme) {
         clearcoatRoughness: 0.18,
       }),
     );
-    const angle = (i / PROPS.length) * Math.PI * 2 + 0.4;
+    // 奥半分（窓側）に弧を描いて並べる。手前半分にはラケットとテニスボールを置く
+    const angle = Math.PI + 0.35 + (i / (PROPS.length - 1)) * (Math.PI - 0.7);
     const home = new THREE.Vector3(
       TABLE.center.x + Math.cos(angle) * 0.36,
       TABLE.top + 0.0425,
@@ -675,5 +677,23 @@ export function createFurniture(scene, tex, onSelectTheme) {
   group.add(ball);
   grabbables.push(ball);
 
-  return { group, grabbables, buttons, lampSockets, ball };
+  // --- ラケットとテニスボール ---------------------------------------------
+  // 手前（部屋の入口側）に、面を上にして寝かせる。先端は +X（右）へ向ける
+  const racket = createRacket();
+  racket.userData.home.set(TABLE.center.x - 0.40, TABLE.top + racket.userData.halfSize, TABLE.center.z + 0.40);
+  racket.userData.homeQuaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0),
+  ));
+  racket.position.copy(racket.userData.home);
+  racket.quaternion.copy(racket.userData.homeQuaternion);
+  group.add(racket);
+  grabbables.push(racket);
+
+  const tennisBall = createTennisBall();
+  tennisBall.userData.home.set(TABLE.center.x - 0.28, TABLE.top + tennisBall.userData.halfSize, TABLE.center.z + 0.16);
+  tennisBall.position.copy(tennisBall.userData.home);
+  group.add(tennisBall);
+  grabbables.push(tennisBall);
+
+  return { group, grabbables, buttons, lampSockets, ball, racket, tennisBall };
 }

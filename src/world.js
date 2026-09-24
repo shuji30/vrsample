@@ -14,6 +14,9 @@ import { createRacketPhysics, createRacket, createTennisBall, createBallBasket, 
 import { createTennisGame, HER_RACKET_SPOT } from './tennisgame.js';
 import { createImpactSound } from './audio.js';
 import { createKartRace } from './kartrace.js';
+import { createBike } from './bike.js';
+import { BIKE_TRACK, bikeGridSlot } from './biketrack.js';
+import { createBikeGame } from './bikegame.js';
 
 /**
  * 女の子のカートの性能の倍率（最高速・加速・グリップ）。ふつうのカートの性能では、
@@ -158,6 +161,22 @@ export function createWorld(renderer, scene, {
     kart.place(g.x, g.z, g.yaw);
     scene.add(kart.group);
   }
+  // ポケバイ（プレイヤーが乗る）。スタートの線の後ろに置く
+  const bike = createBike({ name: 'playerBike' });
+  {
+    const g = bikeGridSlot();
+    bike.place(g.x, g.z, g.yaw);
+    scene.add(bike.group);
+  }
+  // プレイヤーがポケバイに乗ると、女の子はコースの横で応援して、ラップを計る
+  const bikeGame = camera ? createBikeGame({ character, bike, voice, scene }) : null;
+  if (bikeGame) {
+    bikeGame.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
+    };
+  }
+
   // プレイヤーがカートに乗ると、女の子もピンクのカートに乗る。スタートの枠に並ぶとレース
   const kartRace = camera ? createKartRace({ scene, playerKart: karts.player, herKart: karts.her, voice }) : null;
   const kartGame = camera
@@ -222,6 +241,9 @@ export function createWorld(renderer, scene, {
     // 継ぎ目が切れないように。0.2m だと庭の端で止まった）。テニスコートの右の柵
     // （x 4.5）とのあいだは庭の芝で、コートの外まわりとは重ならない
     { ...KART_TRACK.area },
+    // 庭の左のポケバイのコース（と、その手前の芝生）。庭（x -6 から）と 1m 重ねてつなぐ。
+    // テニスコートの左の柵（x -4.5）とは重ならない
+    { ...BIKE_TRACK.area },
   ];
 
   function courtRegion() {
@@ -301,15 +323,17 @@ export function createWorld(renderer, scene, {
     camera.getWorldPosition(eye);
     let next = shadowAt;
     if (eye.x > KART_TRACK.area.minX + 1.5) next = 'kart';
+    else if (eye.x < BIKE_TRACK.area.maxX - 1.5 && eye.z < -13.5) next = 'bike';
     else if (eye.x < KART_TRACK.area.minX - 0.5 || shadowAt !== 'kart') {
       if (shadowAt !== 'court' && eye.z < courtNear - 1.0) next = 'court';
       else if (shadowAt === 'court' && eye.z > courtNear + 1.0) next = 'house';
-      else if (shadowAt === 'kart') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
+      else if (shadowAt === 'kart' || shadowAt === 'bike') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
     }
     if (next === shadowAt) return;
     shadowAt = next;
     shadowOnCourt = next === 'court';
     if (next === 'kart') lighting.setShadowFocus(16.5, -19.5);
+    else if (next === 'bike') lighting.setShadowFocus(-11.5, -22.5);
     else if (next === 'court') lighting.setShadowFocus(PARK.court.x, PARK.court.z + 1.5);
     else lighting.setShadowFocus(0, -3.0);
   }
@@ -401,13 +425,23 @@ export function createWorld(renderer, scene, {
         kartGame.start();
       }
     }
-    if (!kartGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
+    // ポケバイはカートの次。カートで遊んでいないときに
+    if (!kartGame?.active && bikeGame?.wanted && !bikeGame.active) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        bikeGame.start();
+      }
+    }
+    if (!kartGame?.active && !bikeGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
       catchGame?.suspend();
       tennisGame.start();
     }
     if (kartGame?.active) kartGame.update(dt);
-    else if (tennisGame?.active) tennisGame.update(dt);
+    else if (bikeGame?.active) { /* 下で動かす */ } else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
+    // ポケバイは、女の子が見ていないあいだもラップを数えて、表示を出す
+    bikeGame?.update(dt);
     kartRace?.update(dt, { driving: Boolean(kartGame?.wanted), seated: Boolean(kartGame?.driving) });
     // カートコースの起伏の上を歩くときは、足元を地面の高さに（カートに乗り降りしているあいだは除く）
     if (character.body.loaded && !['getIn', 'drive', 'stopKart', 'getOut'].includes(kartGame?.state)) {
@@ -564,7 +598,7 @@ export function createWorld(renderer, scene, {
 
   return {
     grabbables,
-    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body],
+    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body],
     floor: room.floor,
     /** 地面の高さ（カートコースの起伏。ほかは 0） */
     groundHeight,
@@ -583,8 +617,14 @@ export function createWorld(renderer, scene, {
     kartGame,
     kartRace,
     /** kartdrive.js から：プレイヤーがカートに乗った / 降りた */
-    onKartEnter: () => { if (kartGame) kartGame.playerDriving = true; },
-    onKartExit: () => { if (kartGame) kartGame.playerDriving = false; },
+    onKartEnter: (v) => {
+      if (v === bike) { if (bikeGame) bikeGame.playerRiding = true; } else if (kartGame) kartGame.playerDriving = true;
+    },
+    onKartExit: (v) => {
+      if (v === bike) { if (bikeGame) bikeGame.playerRiding = false; } else if (kartGame) kartGame.playerDriving = false;
+    },
+    bike,
+    bikeGame,
     /** ラケットで打ったときに呼ばれる（{ racket, ball, speed, racketSpeed, by, position }） */
     onRacketHit: (listener) => racketHits.push(listener),
     lighting,

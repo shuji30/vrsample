@@ -1,12 +1,15 @@
 import * as THREE from 'three';
 import { KART } from './kart.js';
 import { KART_TRACK } from './karttrack.js';
+import { BIKE } from './bike.js';
+import { BIKE_TRACK } from './biketrack.js';
 import { createWheelInput } from './wheel.js';
 import { createWheelFFB } from './wheelffb.js';
 import { createEngineSound } from './audio.js';
 
 /**
- * プレイヤーがカートに乗って運転する。
+ * プレイヤーがカート（またはポケバイ）に乗って運転する。乗り物は近いほうに乗る。
+ * 乗り物はどれも同じ窓口（group / body / state / steering / place / update / eye / side / speed）。
  *
  * 乗る：カートに向けてトリガー（VR）、カートをクリックか近くで E（PC）
  * 降りる：グリップを 0.5 秒握る（VR）、E（PC）
@@ -22,7 +25,11 @@ import { createEngineSound } from './audio.js';
  * VR では、乗った瞬間の頭の位置を覚えておき、それが運転席の目の位置に来るように
  * プレイヤーのリグを置く。そのあとの頭の動き（のぞき込むなど）はそのまま効く。
  */
-export function createKartDrive({ renderer, camera, player, desktop, world, kart }) {
+export function createKartDrive({ renderer, camera, player, desktop, world, kart, bike = null }) {
+  const vehicles = [kart, bike].filter(Boolean);
+  /** いま乗っている（最後に乗った）乗り物 */
+  let vehicle = kart;
+  const specOf = (v) => (v.kind === 'bike' ? { spec: BIKE, track: BIKE_TRACK } : { spec: KART, track: KART_TRACK });
   const wheel = createWheelInput();
   const ffb = createWheelFFB();
   const engine = createEngineSound();
@@ -42,14 +49,22 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
 
   // --- 乗る / 降りる ---------------------------------------------------------
 
-  function near() {
+  /** 近く（2.2m 以内）にある乗り物。無ければ null */
+  function nearestVehicle() {
     camera.getWorldPosition(tmp);
-    kart.eye(tmp2);
-    return Math.hypot(tmp.x - tmp2.x, tmp.z - tmp2.z) < 2.2;
+    let best = null;
+    let bestD = 2.2;
+    for (const v of vehicles) {
+      v.eye(tmp2);
+      const d = Math.hypot(tmp.x - tmp2.x, tmp.z - tmp2.z);
+      if (d < bestD) { bestD = d; best = v; }
+    }
+    return best;
   }
 
-  function enter() {
+  function enter(target = null) {
     if (driving) return;
+    vehicle = target ?? nearestVehicle() ?? kart;
     driving = true;
     player.releaseHeld();
     desktop.dropAll();
@@ -57,7 +72,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     desktop.setDriving(true);
     engine.start();
     if (renderer.xr.isPresenting) calibrateHead();
-    world.onKartEnter?.(kart);
+    world.onKartEnter?.(vehicle);
   }
 
   /**
@@ -92,7 +107,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     desktop.setDriving(false);
     engine.stop();
     ffb.release();
-    kart.side(tmp);
+    vehicle.side(tmp);
     if (renderer.xr.isPresenting) {
       const rig = player.player;
       player.headWorldPosition(tmp2);
@@ -101,17 +116,19 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       rig.position.y = world.groundHeight?.(tmp.x, tmp.z) ?? 0;
     } else {
       // PC：カートの左に立って、カートのほうを向く
-      const ahead = new THREE.Vector3(Math.sin(kart.state.yaw), 0, Math.cos(kart.state.yaw));
+      const ahead = new THREE.Vector3(Math.sin(vehicle.state.yaw), 0, Math.cos(vehicle.state.yaw));
       // 目の高さは地面から 1.62m（坂の途中で降りても、地面に立つ）
       camera.position.set(tmp.x, 1.62 + (world.groundHeight?.(tmp.x, tmp.z) ?? 0), tmp.z);
       desktop.controls.target.set(tmp.x + ahead.x * 3, 1.2 + (world.groundHeight?.(tmp.x, tmp.z) ?? 0), tmp.z + ahead.z * 3);
       desktop.controls.update();
     }
-    world.onKartExit?.(kart);
+    world.onKartExit?.(vehicle);
   }
 
-  kart.body.userData.interactive = true;
-  kart.body.userData.onSelect = () => enter();
+  for (const v of vehicles) {
+    v.body.userData.interactive = true;
+    v.body.userData.onSelect = () => enter(v);
+  }
 
   window.addEventListener('keydown', (event) => {
     if (event.target?.tagName === 'INPUT') return;
@@ -119,7 +136,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     if (renderer.xr.isPresenting) return;
     if (event.code === 'KeyE') {
       if (driving) exit();
-      else if (near()) enter();
+      else if (nearestVehicle()) enter();
     }
     if (event.code === 'KeyC' && driving) view = view === 'first' ? 'chase' : 'first';
     if (event.code === 'KeyH') wheel.openPanel();
@@ -205,12 +222,18 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     // 両手がハンドルの近くにあれば、手の傾きでハンドルを切る
     const [c0, c1] = player.controllers;
     if (c0.visible && c1.visible) {
-      kart.steering.getWorldPosition(wheelCenter);
+      vehicle.steering.getWorldPosition(wheelCenter);
       const a = c0.getWorldPosition(new THREE.Vector3());
       const b = c1.getWorldPosition(new THREE.Vector3());
-      if (a.distanceTo(wheelCenter) < 0.45 && b.distanceTo(wheelCenter) < 0.45) {
-        kart.group.worldToLocal(a);
-        kart.group.worldToLocal(b);
+      if (vehicle.steerFromHands) {
+        // ポケバイ：ハンドルバーを握って回す（手を結ぶ線の向き）
+        vehicle.body.worldToLocal(a);
+        vehicle.body.worldToLocal(b);
+        const r = vehicle.steerFromHands(a, b);
+        if (r) { out.steer = r.steer; out.angle = r.angle; out.hands = true; }
+      } else if (a.distanceTo(wheelCenter) < 0.45 && b.distanceTo(wheelCenter) < 0.45) {
+        vehicle.group.worldToLocal(a);
+        vehicle.group.worldToLocal(b);
         // 左手・右手の区別がつかないこともあるので、カートの左（+X）にあるほうを左手とする
         const [l, r] = a.x > b.x ? [a, b] : [b, a];
         const angle = Math.atan2(r.y - l.y, l.x - r.x);   // 右手が下がると負（右へ切る）
@@ -261,9 +284,9 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   // --- 毎フレーム ---------------------------------------------------------------
 
   function placeView() {
-    kart.eye(eye);
+    vehicle.eye(eye);
     if (calibrateIn > 0 && renderer.xr.isPresenting && --calibrateIn === 0) calibrateHead();
-    const yaw = kart.state.yaw;
+    const yaw = vehicle.state.yaw;
     if (renderer.xr.isPresenting) {
       // 覚えた頭の位置が、運転席の目に来るようにリグを置く
       const rig = player.player;
@@ -280,11 +303,12 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     } else {
       // 追いかけ視点は、進む向き（travelYaw）の後ろから。ハンドブレーキで滑ると、カートが
       // 横を向いて流れるのが見える（車の向きの後ろにすると、滑っていても真後ろしか見えない）
-      const ty = kart.state.travelYaw ?? yaw;
+      const ty = vehicle.state.travelYaw ?? yaw;
       const tx = Math.sin(ty);
       const tz = Math.cos(ty);
-      camera.position.set(kart.group.position.x - tx * 3.8, 2.1, kart.group.position.z - tz * 3.8);
-      camera.lookAt(kart.group.position.x + tx * 2, 0.6, kart.group.position.z + tz * 2);
+      const gp = vehicle.group.position;
+      camera.position.set(gp.x - tx * 3.8, gp.y + 2.1, gp.z - tz * 3.8);
+      camera.lookAt(gp.x + tx * 2, gp.y + 0.6, gp.z + tz * 2);
     }
     camera.updateMatrixWorld(true);
   }
@@ -301,25 +325,26 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     const input = readInput(dt);
     if (!driving) return;       // 入力を読むあいだに降りた
     // レースのスタートの合図のあいだは動かない（ブレーキも離す。踏み続けるとバックするので）
-    if (world.kartRace?.locked) { input.throttle = 0; input.brake = Math.abs(kart.speed) > 0.2 ? 1 : 0; }
+    if (vehicle === kart && world.kartRace?.locked) { input.throttle = 0; input.brake = Math.abs(kart.speed) > 0.2 ? 1 : 0; }
     lastInput = input;
-    const before = kart.speed;
-    kart.update(dt, input, clampKart);
+    const { spec, track } = specOf(vehicle);
+    const before = vehicle.speed;
+    vehicle.update(dt, input, clampKart);
     // 壁に当たって急に止まった
-    const drop = before - kart.speed;
-    if (drop > 1.2) ffb.bump(Math.min(1, drop / 5), -kart.state.steer || 1);
-    const onCurb = !kart.state.onGrass && Math.abs(kart.state.lateral) > KART_TRACK.width / 2 - 0.05;
+    const drop = before - vehicle.speed;
+    if (drop > 1.2) ffb.bump(Math.min(1, drop / 5), -vehicle.state.steer || 1);
+    const onCurb = !vehicle.state.onGrass && Math.abs(vehicle.state.lateral) > track.width / 2 - 0.05;
     if (onCurb && !wasOnCurb) input.pad?.vibrationActuator?.playEffect?.('dual-rumble', { duration: 120, strongMagnitude: 0.2, weakMagnitude: 0.5 }).catch?.(() => {});
     wasOnCurb = onCurb;
-    const rpm = Math.min(1, Math.abs(kart.speed) / KART.maxSpeed * 0.85 + input.throttle * 0.15);
+    const rpm = Math.min(1, Math.abs(vehicle.speed) / spec.maxSpeed * 0.85 + input.throttle * 0.15);
     engine.update(rpm, input.throttle);
     ffb.update(dt, {
       angle: input.kind === 'wheel' ? input.angle : input.steer * 90,
       fullDegrees: wheel.config.fullDegrees,
-      speed: kart.speed,
-      maxSpeed: KART.maxSpeed,
+      speed: vehicle.speed,
+      maxSpeed: spec.maxSpeed,
       onCurb,
-      onGrass: kart.state.onGrass,
+      onGrass: vehicle.state.onGrass,
       rpm,
       driving: input.kind === 'wheel',
     });
@@ -331,6 +356,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     enter,
     exit,
     get driving() { return driving; },
+    /** いま乗っている（最後に乗った）乗り物 */
+    get vehicle() { return vehicle; },
     get input() { return lastInput; },
     wheel,
     ffb,

@@ -24,7 +24,11 @@ canvas { display: block; }
   border: 1px solid rgba(255, 255, 255, 0.12);
   line-height: 1.6;
   font-size: 14px;
-  pointer-events: none;
+  /* 説明が長いので、画面の高さに収めて中をスクロールできるようにする（閉じられるので、
+     説明の上でドラッグして見回せなくても困らない） */
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  box-sizing: border-box;
   transition: opacity 0.4s;
 }
 
@@ -53,7 +57,40 @@ canvas { display: block; }
 #credit:empty { display: none; }
 
 /* VR セッション中はオーバーレイを隠す */
-body.xr-presenting #overlay { opacity: 0; }
+body.xr-presenting #overlay { opacity: 0; pointer-events: none; }
+
+/* 説明を閉じる × と、開き直す「？ 説明」 */
+#overlay-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 18px;
+  line-height: 28px;
+  cursor: pointer;
+}
+#overlay-close:hover { background: rgba(255, 255, 255, 0.28); }
+#overlay.closed { display: none; }
+#overlay-open {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  background: rgba(10, 16, 34, 0.72);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  display: none;
+}
+#overlay.closed ~ #overlay-open { display: block; }
+body.xr-presenting #overlay-open { display: none !important; }
 
 /* 実測表示（?perf / ?debug）。等幅で 2 台の PC を見比べるためのもの */
 #perf {

@@ -3,6 +3,7 @@ import { createTextures } from './textures.js';
 import { createRoom, ROOM } from './room.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { KART_TRACK } from './karttrack.js';
+import { createKart, gridSlot } from './kart.js';
 import { createFurniture, TABLE } from './furniture.js';
 import { createLighting } from './lighting.js';
 import { createCharacter } from './character.js';
@@ -137,6 +138,17 @@ export function createWorld(renderer, scene, {
     grabbables.push(ball);
   }
   const tennisBalls = grabbables.filter((prop) => prop.userData.tennis);
+
+  // カート 2 台。スタートの枠の前（プレイヤー、青）と後ろ（女の子、ピンク）に置く
+  const karts = {
+    player: createKart({ color: 0x2b6fd6, number: '1', name: 'playerKart' }),
+    her: createKart({ color: 0xe0609a, number: '2', name: 'herKart' }),
+  };
+  for (const [kart, slot] of [[karts.player, 0], [karts.her, 1]]) {
+    const g = gridSlot(slot);
+    kart.place(g.x, g.z, g.yaw);
+    scene.add(kart.group);
+  }
 
   // テニス。プレイヤーがラケットを持ってコートに入ると、キャッチボールから体を引き取る
   const tennisGame = camera
@@ -512,7 +524,7 @@ export function createWorld(renderer, scene, {
 
   return {
     grabbables,
-    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons],
+    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body],
     floor: room.floor,
     bounds: regions,
     clampToBounds,
@@ -525,6 +537,7 @@ export function createWorld(renderer, scene, {
     /** テニスボールすべて（机の 1 個・かごの 12 個・コートの 3 個） */
     tennisBalls,
     basket,
+    karts,
     /** ラケットで打ったときに呼ばれる（{ racket, ball, speed, racketSpeed, by, position }） */
     onRacketHit: (listener) => racketHits.push(listener),
     lighting,

@@ -216,3 +216,63 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
     setMuted(value) { muted = value; },
   };
 }
+
+/**
+ * カートのエンジン音。のこぎり波と矩形波を少しずらして重ね、ローパスで丸める。
+ * 回転（rpm 0..1）で高さとこもり具合、アクセルで大きさを変える。
+ */
+export function createEngineSound({ volume = 0.5 } = {}) {
+  let context = null;
+  let nodes = null;
+
+  function ensure() {
+    if (context) return context;
+    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
+    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    try { context = new AudioContextClass(); } catch { return null; }
+    return context;
+  }
+
+  return {
+    start() {
+      if (nodes || !ensure()) return;
+      if (context.state === 'suspended') context.resume().catch(() => {});
+      const master = context.createGain();
+      master.gain.value = 0;
+      master.connect(context.destination);
+      const filter = context.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 600;
+      filter.connect(master);
+      const a = context.createOscillator();
+      a.type = 'sawtooth';
+      const b = context.createOscillator();
+      b.type = 'square';
+      const bGain = context.createGain();
+      bGain.gain.value = 0.35;
+      a.connect(filter);
+      b.connect(bGain).connect(filter);
+      a.start();
+      b.start();
+      nodes = { master, filter, a, b };
+    },
+    /** @param {number} rpm 0..1  @param {number} throttle 0..1 */
+    update(rpm, throttle) {
+      if (!nodes) return;
+      const now = context.currentTime;
+      const f = 38 + rpm * 110;
+      nodes.a.frequency.setTargetAtTime(f, now, 0.05);
+      nodes.b.frequency.setTargetAtTime(f * 1.51, now, 0.05);
+      nodes.filter.frequency.setTargetAtTime(500 + rpm * 1600 + throttle * 400, now, 0.05);
+      nodes.master.gain.setTargetAtTime(volume * (0.05 + throttle * 0.06 + rpm * 0.04), now, 0.08);
+    },
+    stop() {
+      if (!nodes) return;
+      const n = nodes;
+      nodes = null;
+      n.master.gain.setTargetAtTime(0, context.currentTime, 0.1);
+      setTimeout(() => { try { n.a.stop(); n.b.stop(); n.master.disconnect(); } catch { /* 止まっている */ } }, 600);
+    },
+  };
+}

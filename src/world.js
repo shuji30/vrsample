@@ -4,6 +4,7 @@ import { createRoom, ROOM } from './room.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { KART_TRACK } from './karttrack.js';
 import { createKart, gridSlot } from './kart.js';
+import { createKartGame } from './kartgame.js';
 import { createFurniture, TABLE } from './furniture.js';
 import { createLighting } from './lighting.js';
 import { createCharacter } from './character.js';
@@ -148,6 +149,19 @@ export function createWorld(renderer, scene, {
     const g = gridSlot(slot);
     kart.place(g.x, g.z, g.yaw);
     scene.add(kart.group);
+  }
+  // プレイヤーがカートに乗ると、女の子もピンクのカートに乗って走る
+  const kartGame = camera
+    ? createKartGame({
+      character, kart: karts.her, playerKart: karts.player, voice,
+      clamp: (x, z, from) => clampToBounds(x, z, 0.75, from),
+    })
+    : null;
+  if (kartGame) {
+    kartGame.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
+    };
   }
 
   // テニス。プレイヤーがラケットを持ってコートに入ると、キャッチボールから体を引き取る
@@ -370,11 +384,20 @@ export function createWorld(renderer, scene, {
 
   function update(dt) {
     updateShadowFocus();
-    if (tennisGame && !tennisGame.active && tennisGame.wanted) {
+    // カートがいちばん先。テニスの最中なら、テニスを片づけ終わってから（ラケットを戻して）
+    if (kartGame?.wanted && !kartGame.active) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        kartGame.start();
+      }
+    }
+    if (!kartGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
       catchGame?.suspend();
       tennisGame.start();
     }
-    if (tennisGame?.active) tennisGame.update(dt);
+    if (kartGame?.active) kartGame.update(dt);
+    else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
     character.update(dt);
     tennisGame?.afterPose();
@@ -538,6 +561,10 @@ export function createWorld(renderer, scene, {
     tennisBalls,
     basket,
     karts,
+    kartGame,
+    /** kartdrive.js から：プレイヤーがカートに乗った / 降りた */
+    onKartEnter: () => { if (kartGame) kartGame.playerDriving = true; },
+    onKartExit: () => { if (kartGame) kartGame.playerDriving = false; },
     /** ラケットで打ったときに呼ばれる（{ racket, ball, speed, racketSpeed, by, position }） */
     onRacketHit: (listener) => racketHits.push(listener),
     lighting,

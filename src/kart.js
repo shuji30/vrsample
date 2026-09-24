@@ -103,6 +103,10 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart' } = {
   const column = add(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.5, 8), metal));
   column.position.set(0, 0.34, 0.78);
   column.rotation.x = 0.95;
+  // ハンドルの前の、脚を覆う板（ナッソーパネル）。コラムはこの板を抜けて前へ伸びる
+  const panel = add(new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.24, 0.03), paint));
+  panel.position.set(0, 0.29, 0.88);
+  panel.rotation.x = -0.45;
   const wheelPivot = new THREE.Group();
   wheelPivot.position.set(0, 0.52, 0.62);
   wheelPivot.rotation.x = -0.62;    // ハンドルの面を運転する人へ傾ける

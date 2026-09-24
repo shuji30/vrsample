@@ -66,6 +66,10 @@ const ROUTE = [
  */
 const EXIT_NODE = 6;
 
+/** カートで座ったとき、スカートの前・横のボーンを下へ回す角度（ラジアン） */
+const SKIRT_DRAPE_FRONT = 1.3;
+const SKIRT_DRAPE_SIDE = 0.5;
+
 /** 背もたれに預けて座るときの腰のソファローカル z（背もたれの前面は -0.22） */
 const LOUNGE_SEAT_Z = -0.11;
 /** そのときの脚の付け根の、座面からの高さ（m） */
@@ -1989,6 +1993,41 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     if (sitAmount > 0.5 || settleSprings > 0) {
       if (settleSprings > 0) settleSprings--;
       vrm.springBoneManager?.reset?.();
+      if (kartSeat > 0 && sitAmount > 0.5) drapeSkirt();
+    }
+  }
+
+  /**
+   * カートの座席で、スカートの前（と横）を膝のほうへ垂らす。脚を前へ伸ばして座ると、
+   * スカートの前は腿の上に水平に乗ったままで、腿のあいだから中が見えてしまう。
+   * 前のスカートのボーンを、体の左右の軸まわりに下へ回して、腿のあいだへ垂らす。
+   * スプリングボーンのボーンは matrixAutoUpdate が切られているので、回したら
+   * updateMatrix を呼ぶ（呼ばないと描画に効かない。これで一度つまずいた）。
+   */
+  let drapeBones = null;
+  const _drapeAxis = new THREE.Vector3();
+  const _drapeLocal = new THREE.Vector3();
+  const _drapeParent = new THREE.Quaternion();
+  const _drapeQ = new THREE.Quaternion();
+  function drapeSkirt() {
+    if (!drapeBones) {
+      drapeBones = [];
+      for (const joint of vrm.springBoneManager?.joints ?? []) {
+        const bone = joint.bone;
+        // チェーンの根元（親がスカートのボーンでないもの）の、前と横
+        if (!/skirt/i.test(bone.name) || /coat/i.test(bone.name) || /skirt/i.test(bone.parent?.name ?? '')) continue;
+        if (/front/i.test(bone.name)) drapeBones.push({ bone, angle: SKIRT_DRAPE_FRONT });
+        else if (/side/i.test(bone.name)) drapeBones.push({ bone, angle: SKIRT_DRAPE_SIDE });
+      }
+    }
+    _drapeAxis.set(Math.cos(yaw), 0, -Math.sin(yaw));   // 体の左（+X）。この軸まわりの + が前を下げる向き
+    for (const { bone, angle } of drapeBones) {
+      bone.parent.updateWorldMatrix(true, false);
+      bone.parent.getWorldQuaternion(_drapeParent).invert();
+      _drapeQ.setFromAxisAngle(_drapeLocal.copy(_drapeAxis).applyQuaternion(_drapeParent), angle);
+      bone.quaternion.premultiply(_drapeQ);
+      bone.updateMatrix();
+      bone.updateMatrixWorld(true);
     }
   }
 

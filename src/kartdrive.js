@@ -30,7 +30,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   /** いま乗っている（最後に乗った）乗り物 */
   let vehicle = kart;
   const SEESAW_SPEC = { spec: { maxSpeed: 1 }, track: { width: 1e6 } };
-  const specOf = (v) => (v.kind === 'bike' ? { spec: BIKE, track: BIKE_TRACK } : v.kind === 'seesaw' ? SEESAW_SPEC : { spec: KART, track: KART_TRACK });
+  const specOf = (v) => (v.kind === 'bike' ? { spec: BIKE, track: BIKE_TRACK } : v.silent ? SEESAW_SPEC : { spec: KART, track: KART_TRACK });
   const wheel = createWheelInput();
   const ffb = createWheelFFB();
   const engine = createEngineSound();

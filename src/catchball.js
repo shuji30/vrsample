@@ -51,6 +51,15 @@ const PLAY_AREA = { minX: -5.4, maxX: 5.4, minZ: -12.4, maxZ: OUTSIDE_Z - 0.35 }
  * 共用していたときは、縁へ転がった球の 50cm 手前で止まって拾えなかった
  */
 const MOVE_AREA = { minX: -5.75, maxX: 5.75, minZ: -12.75, maxZ: OUTSIDE_Z - 0.35 };
+/**
+ * 庭の奥のテニスコート（外まわりまで）。球がコートへ転がって行ったら、
+ * そこまで拾いに行けるように、動ける範囲は庭とコートを合わせたものにする
+ */
+const COURT_AREA = (() => {
+  const c = PARK.court;
+  const halfW = c.width / 2 + c.runoffSide - 0.25;
+  return { minX: c.x - halfW, maxX: c.x + halfW, minZ: c.z - c.length / 2 - c.runoffEnd + 0.25 };
+})();
 /** 柵の切れ目のうち、体（半径 0.22m）が通り抜けられる x の範囲。押し戻しはこれで判定する */
 const GAP = {
   min: PARK.fence.gapX - PARK.fence.gap / 2 + 0.22,
@@ -139,10 +148,30 @@ function segmentToObstacle(ax, az, bx, bz, o) {
   return best;
 }
 
+/**
+ * 点を動ける範囲（庭とコートを合わせたもの）のいちばん近いところへ寄せる。
+ * 庭より奥でコートの幅から外れた点は、コートの横へ寄せるか庭の縁へ戻すか、
+ * 近いほうにする（いつもコートへ寄せると、庭の端から奥へ出た瞬間に横へ跳ぶ）
+ */
+function clampToArea(point) {
+  point.x = clamp(point.x, MOVE_AREA.minX, MOVE_AREA.maxX);
+  point.y = Math.min(point.y, MOVE_AREA.maxZ);
+  if (point.y >= MOVE_AREA.minZ) return;
+  const cx = clamp(point.x, COURT_AREA.minX, COURT_AREA.maxX);
+  const cz = Math.max(point.y, COURT_AREA.minZ);
+  const toCourt = Math.hypot(point.x - cx, point.y - cz);
+  const toGarden = MOVE_AREA.minZ - point.y;
+  if (toCourt <= toGarden) {
+    point.x = cx;
+    point.y = cz;
+  } else {
+    point.y = MOVE_AREA.minZ;
+  }
+}
+
 /** 点を動ける範囲に入れ、障害物の外へ押し出す */
 function settle(point, fromZ = point.y) {
-  point.x = clamp(point.x, MOVE_AREA.minX, MOVE_AREA.maxX);
-  point.y = clamp(point.y, MOVE_AREA.minZ, MOVE_AREA.maxZ);
+  clampToArea(point);
   for (const o of PARK.obstacles) {
     const c = coreClosest(o, point.x, point.y);
     const dx = point.x - c.x;

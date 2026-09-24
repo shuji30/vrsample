@@ -173,11 +173,27 @@ export function createLighting(renderer, scene, { windows, lampSockets, skyUnifo
     pmrem.dispose();
   }
 
+  /**
+   * 影を落とす範囲の中心を移す。影のカメラは ±11m しか覆わないので、
+   * プレイヤーが庭の奥のテニスコートへ出たら、そちらへ寄せる。
+   * 動かすのは境目をまたいだときだけ（毎フレーム動かすと影がちらつく）
+   */
+  const shadowFocus = sun.target.position.clone();
+  function setShadowFocus(x, z) {
+    if (Math.hypot(x - shadowFocus.x, z - shadowFocus.z) < 0.01) return;
+    const offset = sun.position.clone().sub(sun.target.position);
+    shadowFocus.set(x, shadowFocus.y, z);
+    sun.target.position.copy(shadowFocus);
+    sun.position.copy(shadowFocus).add(offset);
+    sun.target.updateMatrixWorld();
+  }
+
   return {
     sun,
     windowLights,
     lamps,
     setTheme,
+    setShadowFocus,
     refreshEnvironment,
     getTheme: () => currentTheme,
     dispose,

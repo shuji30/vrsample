@@ -708,13 +708,14 @@ function createBackdrop(tex, seed = 11) {
     }
   }
 
-  hedgeRow({ x: -24, z: -17.5 }, { x: 24, z: -17.5 }, 46);
-  hedgeRow({ x: -17.5, z: -20 }, { x: -17.5, z: 6 }, 26);
-  hedgeRow({ x: 17.5, z: -20 }, { x: 17.5, z: 6 }, 26);
+  // 奥の生け垣と木立は、テニスコートの向こうまで下げてある（以前は z = -17.5 / -22）
+  hedgeRow({ x: -24, z: -34 }, { x: 24, z: -34 }, 46);
+  hedgeRow({ x: -17.5, z: -36 }, { x: -17.5, z: 6 }, 40);
+  hedgeRow({ x: 17.5, z: -36 }, { x: 17.5, z: 6 }, 40);
 
-  treeRow({ x: -22, z: -22 }, { x: 22, z: -22 }, 16);
-  treeRow({ x: -20.5, z: -20 }, { x: -20.5, z: 6 }, 11);
-  treeRow({ x: 20.5, z: -20 }, { x: 20.5, z: 6 }, 11);
+  treeRow({ x: -22, z: -38.5 }, { x: 22, z: -38.5 }, 16);
+  treeRow({ x: -20.5, z: -36 }, { x: -20.5, z: 6 }, 17);
+  treeRow({ x: 20.5, z: -36 }, { x: 20.5, z: 6 }, 17);
 
   const matrix = new THREE.Matrix4();
   const quaternion = new THREE.Quaternion();
@@ -762,6 +763,18 @@ function createBackdrop(tex, seed = 11) {
  */
 export const PARK = {
   fence: { z: ROOM.minZ - ROOM.wall - 2.2, length: 13, gap: 2.2, gapX: 0 },
+  /**
+   * テニスコート。子ども用のミニテニス（ITF の「レッド」コート相当）で、
+   * 長さ 12.8m・幅 6.0m・ネット 0.8m。長い辺を奥行き（z）に向け、窓から見て
+   * ネットが横切るように置く。手前（家の側）のエンドから歩いて入れる。
+   * 大人のコート（23.8m × 11m）は庭に入らず、女の子の体格にも大きすぎる
+   */
+  court: {
+    x: 0, z: -22.2, length: 12.8, width: 6.0,
+    runoffEnd: 2.0, runoffSide: 1.5,
+    net: 0.80, netPost: 0.86,
+    serviceFromNet: 3.45,
+  },
   bench: { x: -2.4, z: -6.8, yaw: Math.PI + 0.35 },
   tree: { x: -1.6, z: -9.2 },
   smallTree: { x: -6.4, z: -12.6 },
@@ -785,6 +798,166 @@ export const PARK = {
     { x: 2.30, z: -9.30, x2: 0.90, z2: -6.87, r: 0.35, tall: true },    // シュート
   ],
 };
+
+
+/**
+ * テニスコート。表面（内側は青、外まわりは緑のハードコート）・白線・ネット・
+ * 柵をまとめて作る。原点はコートの中心（ネットの真下）。
+ */
+function createTennisCourt(tex) {
+  const c = PARK.court;
+  const group = new THREE.Group();
+  const halfL = c.length / 2;
+  const halfW = c.width / 2;
+  const outerL = c.length + c.runoffEnd * 2;
+  const outerW = c.width + c.runoffSide * 2;
+
+  // --- 表面 -----------------------------------------------------------------
+  // ハードコートの細かいざらつきは、塗り壁のテクスチャを弱く流用する
+  const surround = new THREE.Mesh(
+    new THREE.BoxGeometry(outerW, 0.03, outerL),
+    tex.material('plaster', { sizeX: outerW, sizeY: outerL, color: 0x3d7a55, roughness: 0.82, normalScale: new THREE.Vector2(0.15, 0.15) }),
+  );
+  surround.position.y = 0.0;
+  surround.receiveShadow = true;
+  group.add(surround);
+
+  const inner = new THREE.Mesh(
+    new THREE.PlaneGeometry(c.width, c.length),
+    tex.material('plaster', { sizeX: c.width, sizeY: c.length, color: 0x3a6f95, roughness: 0.8, normalScale: new THREE.Vector2(0.15, 0.15) }),
+  );
+  inner.rotation.x = -Math.PI / 2;
+  inner.position.y = 0.0155;
+  inner.receiveShadow = true;
+  group.add(inner);
+
+  // --- 白線 -----------------------------------------------------------------
+  // 幅 5cm。コートの外側の線（ベースライン・サイドライン）は線の外端がコートの端
+  const lineMaterial = new THREE.MeshStandardMaterial({ color: 0xf4f4ef, roughness: 0.6 });
+  const W = 0.05;
+  const lines = [];
+  const line = (x, z, sx, sz) => lines.push({ x, z, sx, sz });
+  line(0, halfL - W / 2, c.width, W);                 // ベースライン（手前）
+  line(0, -halfL + W / 2, c.width, W);                // ベースライン（奥）
+  line(halfW - W / 2, 0, W, c.length);                // サイドライン
+  line(-halfW + W / 2, 0, W, c.length);
+  line(0, c.serviceFromNet, c.width - W * 2, W);      // サービスライン
+  line(0, -c.serviceFromNet, c.width - W * 2, W);
+  line(0, 0, W, c.serviceFromNet * 2);                // センターサービスライン
+  line(0, halfL - 0.1 - W, W, 0.2);                   // センターマーク
+  line(0, -halfL + 0.1 + W, W, 0.2);
+  for (const l of lines) {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(l.sx, l.sz), lineMaterial);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(l.x, 0.0175, l.z);
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+
+  // --- ネット ---------------------------------------------------------------
+  const postMaterial = new THREE.MeshStandardMaterial({ color: 0x2c3a33, roughness: 0.5, metalness: 0.6 });
+  const postX = halfW + 0.3;
+  for (const x of [-postX, postX]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, c.netPost + 0.04, 12), postMaterial);
+    post.position.set(x, (c.netPost + 0.04) / 2, 0);
+    post.castShadow = true;
+    group.add(post);
+  }
+
+  // 網目はテクスチャで描いて透かす（1 目 4.5cm）
+  const netCanvas = document.createElement('canvas');
+  netCanvas.width = 64;
+  netCanvas.height = 64;
+  const nctx = netCanvas.getContext('2d');
+  nctx.clearRect(0, 0, 64, 64);
+  nctx.strokeStyle = 'rgba(20, 24, 22, 1)';
+  nctx.lineWidth = 6;
+  nctx.strokeRect(0, 0, 64, 64);
+  const netTexture = new THREE.CanvasTexture(netCanvas);
+  netTexture.wrapS = THREE.RepeatWrapping;
+  netTexture.wrapT = THREE.RepeatWrapping;
+  netTexture.repeat.set((postX * 2) / 0.045, c.net / 0.045);
+  netTexture.anisotropy = 4;
+  const netMaterial = new THREE.MeshStandardMaterial({
+    map: netTexture, alphaTest: 0.35, transparent: false, side: THREE.DoubleSide, roughness: 0.9,
+  });
+  // 上端は中央でわずかにたわむ（ポスト 0.86m → 中央 0.80m）
+  const netGeometry = new THREE.PlaneGeometry(postX * 2, 1, 24, 1);
+  const pos = netGeometry.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const top = c.net + (c.netPost - c.net) * (x / postX) ** 2;
+    const bottom = 0.05;
+    pos.setY(i, pos.getY(i) > 0 ? top : bottom);
+  }
+  netGeometry.computeVertexNormals();
+  const net = new THREE.Mesh(netGeometry, netMaterial);
+  net.castShadow = true;
+  group.add(net);
+
+  // 白いテープ（上端）とセンターストラップ
+  const tapeMaterial = new THREE.MeshStandardMaterial({ color: 0xf7f7f2, roughness: 0.55 });
+  const tapePoints = [];
+  for (let i = 0; i <= 24; i++) {
+    const x = -postX + (i / 24) * postX * 2;
+    tapePoints.push(new THREE.Vector3(x, c.net + (c.netPost - c.net) * (x / postX) ** 2, 0));
+  }
+  const tape = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(tapePoints), 48, 0.022, 6), tapeMaterial);
+  tape.castShadow = true;
+  group.add(tape);
+  const strap = new THREE.Mesh(new THREE.BoxGeometry(0.05, c.net - 0.05, 0.012), tapeMaterial);
+  strap.position.set(0, (c.net + 0.05) / 2, 0);
+  group.add(strap);
+
+  // --- 柵 -------------------------------------------------------------------
+  // 奥のエンドは高いバックフェンス、左右は低い柵。手前（家の側）は開けて、
+  // 庭から歩いて入れるようにする。柵の位置は歩ける範囲・ボールの跳ね返る
+  // 範囲（world.js）の境目とそろえてある
+  const meshCanvas = document.createElement('canvas');
+  meshCanvas.width = 64;
+  meshCanvas.height = 64;
+  const mctx = meshCanvas.getContext('2d');
+  mctx.strokeStyle = 'rgba(60, 70, 66, 1)';
+  mctx.lineWidth = 4;
+  mctx.beginPath();
+  mctx.moveTo(0, 32); mctx.lineTo(32, 0); mctx.lineTo(64, 32); mctx.lineTo(32, 64); mctx.closePath();
+  mctx.stroke();
+  const fencePostMaterial = new THREE.MeshStandardMaterial({ color: 0x3b4640, roughness: 0.5, metalness: 0.7 });
+  const fence = (x1, z1, x2, z2, height) => {
+    const length = Math.hypot(x2 - x1, z2 - z1);
+    const texture = new THREE.CanvasTexture(meshCanvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(length / 0.06, height / 0.06);
+    const panel = new THREE.Mesh(
+      new THREE.PlaneGeometry(length, height),
+      new THREE.MeshStandardMaterial({ map: texture, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.7, metalness: 0.4 }),
+    );
+    panel.position.set((x1 + x2) / 2, height / 2, (z1 + z2) / 2);
+    panel.rotation.y = Math.atan2(-(z2 - z1), x2 - x1);
+    group.add(panel);
+    const posts = Math.max(2, Math.round(length / 2.5) + 1);
+    for (let i = 0; i < posts; i++) {
+      const t = i / (posts - 1);
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, height + 0.05, 8), fencePostMaterial);
+      post.position.set(x1 + (x2 - x1) * t, (height + 0.05) / 2, z1 + (z2 - z1) * t);
+      post.castShadow = true;
+      group.add(post);
+    }
+    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, length, 8), fencePostMaterial);
+    rail.position.set((x1 + x2) / 2, height, (z1 + z2) / 2);
+    rail.rotation.z = Math.PI / 2;
+    rail.rotation.y = Math.atan2(-(z2 - z1), x2 - x1);
+    group.add(rail);
+  };
+  const ow = outerW / 2;
+  const ol = outerL / 2;
+  fence(-ow, -ol, ow, -ol, 2.6);        // 奥のバックフェンス
+  fence(-ow, -ol, -ow, ol, 1.0);        // 左の柵
+  fence(ow, -ol, ow, ol, 1.0);          // 右の柵
+
+  return group;
+}
 
 export function createPark(scene, tex) {
   const group = new THREE.Group();
@@ -868,6 +1041,11 @@ export function createPark(scene, tex) {
   group.add(bench);
 
   group.add(createBackdrop(tex));
+
+  // --- テニスコート ---------------------------------------------------------
+  const court = createTennisCourt(tex);
+  court.position.set(PARK.court.x, 0, PARK.court.z);
+  group.add(court);
 
   return { group, sky, skyUniforms };
 }

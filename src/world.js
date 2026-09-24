@@ -17,10 +17,10 @@ import { createKartRace } from './kartrace.js';
 
 /**
  * 女の子のカートの性能の倍率（最高速・加速・グリップ）。ふつうのカートの性能では、
- * 上手に走っても 3 周 43 秒ほどで「遅すぎる」と言われた。ひとりで走って 3 周 34.3 秒ほど
+ * 上手に走っても 3 周 43 秒ほどで「遅すぎる」と言われた。前をふさがれずに走って 3 周 34.3 秒
  * （スタートの枠から、合図の緑からゴールまで）になるよう、実際に走らせて合わせた
  */
-const HER_KART_PERF = { top: 1.8, accel: 3.0, grip: 1.9 };
+const HER_KART_PERF = { top: 1.42, accel: 2.05, grip: 1.5 };
 import { DEFAULT_THEME } from './themes.js';
 
 /**

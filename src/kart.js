@@ -148,6 +148,7 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart', perf
     hit: 0,
     travelYaw: 0,    // 進んでいる向き（ハンドブレーキで滑ると、車の向き yaw とずれる）
     slip: 0,         // 車の向きと進む向きのずれ（ラジアン）
+    sliding: false,  // 後輪が滑っている（滑りから戻っている）あいだ
     boost: 1,        // 最高速の倍率（レースの追い上げで女の子のカートだけ上げる）
     // カートの性能の倍率（最高速・加速・曲がるときのグリップ）。女の子のカートは速めにしてある
     perf: { top: 1, accel: 1, grip: 1, ...perf },
@@ -183,6 +184,7 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart', perf
       state.yaw = yaw;
       state.travelYaw = yaw;
       state.slip = 0;
+      state.sliding = false;
       state.speed = 0;
       state.steer = 0;
       state.trackIndex = -1;
@@ -255,11 +257,18 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart', perf
       state.yaw += yawRate * dt;
       // 進む向き（travelYaw）は、ふだんはすぐ車の向きにそろう。後輪が滑っているあいだは
       // ゆっくりしかそろわず、車は横を向いたまま流れる（ドリフト）。横を向いたぶんだけ遅くなる
+      // 滑っていないときは、進む向き＝車の向き（遅らせると、ふつうのカーブでも膨らんで
+      // 曲がれなくなった）。滑っているあいだと、滑りから戻るあいだだけ、遅れてそろう
+      if (slide > 0) state.sliding = true;
       let slip = state.yaw - state.travelYaw;
       slip -= Math.round(slip / (Math.PI * 2)) * Math.PI * 2;
-      state.travelYaw += slip * Math.min(1, (slide > 0 ? 1.8 : 6) * dt);
-      slip = state.yaw - state.travelYaw;
-      slip -= Math.round(slip / (Math.PI * 2)) * Math.PI * 2;
+      if (state.sliding) {
+        state.travelYaw += slip * Math.min(1, (slide > 0 ? 1.8 : 6) * dt);
+        slip = state.yaw - state.travelYaw;
+        slip -= Math.round(slip / (Math.PI * 2)) * Math.PI * 2;
+        if (slide === 0 && Math.abs(slip) < 0.03) state.sliding = false;
+      }
+      if (!state.sliding) { state.travelYaw = state.yaw; slip = 0; }
       state.slip = slip;
       if (Math.abs(slip) > 0.05) state.speed -= state.speed * Math.min(1, Math.abs(Math.sin(slip)) * 1.2 * dt);
 

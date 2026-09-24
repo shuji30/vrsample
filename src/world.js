@@ -21,6 +21,7 @@ import { createSeesaw } from './seesaw.js';
 import { createSeesawGame } from './seesawgame.js';
 import { createBuranko } from './buranko.js';
 import { createBurankoGame } from './burankogame.js';
+import { createFireworks } from './fireworks.js';
 
 /**
  * 女の子のカートの性能の倍率（最高速・加速・グリップ）。ふつうのカートの性能では、
@@ -28,7 +29,7 @@ import { createBurankoGame } from './burankogame.js';
  * （スタートの枠から、合図の緑からゴールまで）になるよう、実際に走らせて合わせた
  */
 const HER_KART_PERF = { top: 1.41, accel: 2.0, grip: 1.49 };
-import { DEFAULT_THEME } from './themes.js';
+import { DEFAULT_THEME, THEMES } from './themes.js';
 
 /**
  * 部屋と、窓の外の公園と、照明をまとめて組み立てる。
@@ -88,9 +89,15 @@ export function createWorld(renderer, scene, {
   const park = createPark(scene, tex);
 
   let lighting = null;
-  const furniture = createFurniture(scene, tex, (key) => {
+  // 時間帯。夜のあいだは花火を上げる（fireworks は下で作る）
+  let themeKey = DEFAULT_THEME;
+  let fireworks = null;
+  function applyTheme(key) {
+    themeKey = key;
     if (lighting) lighting.setTheme(key);
-  });
+    if (fireworks) fireworks.active = key === 'night';
+  }
+  const furniture = createFurniture(scene, tex, (key) => applyTheme(key));
 
   lighting = createLighting(renderer, scene, {
     windows: room.windows,
@@ -191,6 +198,17 @@ export function createWorld(renderer, scene, {
       catchGame?.resume();
     };
   }
+
+  // 夜の花火（公園の奥の空）。開いたら、女の子がときどき声をあげる
+  let fireworksShown = false;
+  fireworks = createFireworks({
+    scene,
+    onBurst: () => {
+      if (!fireworksShown) { fireworksShown = voice?.say('fireworksStart') ?? true; return; }
+      voice?.say('fireworksBurst', { chance: 0.35 });
+    },
+  });
+  fireworks.active = themeKey === 'night';
 
   // 二人乗りのブランコ（シーソーの左）。プレイヤーが右の席に乗ると、女の子が左の席に乗る
   const buranko = createBuranko();
@@ -488,6 +506,7 @@ export function createWorld(renderer, scene, {
     bikeGame?.update(dt);
     // プレイヤーが乗っていないシーソーは、ゆっくりプレイヤーの側へ下りて止まる
     if (!seesawGame?.wanted) seesaw.update(dt, {});
+    fireworks.update(dt, camera);
     // ブランコ：女の子の席はいつも、プレイヤーの席は乗っていないときだけ、ここで動かす
     buranko.updateGirl(dt);
     if (!burankoGame?.wanted) buranko.settle(dt);
@@ -687,7 +706,16 @@ export function createWorld(renderer, scene, {
     herRacket,
     voice,
     update,
-    setTheme: (key) => lighting.setTheme(key),
+    setTheme: (key) => applyTheme(key),
+    /** 時間帯を順に替える（昼 → 夕方 → 夜 → 昼）。替えた先を返す */
+    cycleTheme() {
+      const keys = Object.keys(THEMES);
+      const next = keys[(keys.indexOf(themeKey) + 1) % keys.length];
+      applyTheme(next);
+      return next;
+    },
+    get theme() { return themeKey; },
+    fireworks,
     getTheme: () => lighting.getTheme(),
     // 持っている物はそのまま（手の子になっているので、位置を戻すと手元から飛ぶ）
     resetProps: () => grabbables.filter((prop) => !prop.userData.held).forEach(resetProp),

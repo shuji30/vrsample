@@ -170,7 +170,12 @@ export function createBikeCourse() {
     ctx.textBaseline = 'middle';
     ctx.fillText('ポケバイ', 128, 50);
   }, 256, 96);
-  const board = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.52), new THREE.MeshStandardMaterial({ map: sign, roughness: 0.6, side: THREE.DoubleSide }));
+  // 表は庭の側。裏は無地の板（両面にすると、裏から鏡文字に見えた）
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.52), new THREE.MeshStandardMaterial({ map: sign, roughness: 0.6 }));
+  const boardBack = new THREE.Mesh(new THREE.PlaneGeometry(1.44, 0.56), new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.7 }));
+  boardBack.rotation.y = Math.PI;
+  boardBack.position.z = -0.01;
+  board.add(boardBack);
   board.position.set(-6.0, 1.3, -14.4);
   board.rotation.y = Math.PI / 2 + 0.3;
   const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 8), new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.5 }));

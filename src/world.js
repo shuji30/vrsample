@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createTextures } from './textures.js';
 import { createRoom, ROOM } from './room.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
+import { KART_TRACK } from './karttrack.js';
 import { createFurniture, TABLE } from './furniture.js';
 import { createLighting } from './lighting.js';
 import { createCharacter } from './character.js';
@@ -182,6 +183,10 @@ export function createWorld(renderer, scene, {
       minX: COURT_BACKSTOP.maxX, maxX: COURT_BACKSTOP.gapMaxX,
       minZ: COURT_BACKSTOP.z - 1.2, maxZ: COURT_BACKSTOP.z + 1.0,
     },
+    // 庭の右のカートコース。庭（x 6 まで）と 1m 重ねてつなぐ（inset 0.25 で両側から縮めても
+    // 継ぎ目が切れないように。0.2m だと庭の端で止まった）。テニスコートの右の柵
+    // （x 4.5）とのあいだは庭の芝で、コートの外まわりとは重ならない
+    { ...KART_TRACK.area },
   ];
 
   function courtRegion() {
@@ -254,16 +259,24 @@ export function createWorld(renderer, scene, {
   const courtNear = PARK.court.z + PARK.court.length / 2 + PARK.court.runoffEnd;
   const eye = new THREE.Vector3();
   let shadowOnCourt = false;
+  // カートコースへ出たら、コースの真ん中へ寄せる
+  let shadowAt = 'house';
   function updateShadowFocus() {
     if (!camera) return;
     camera.getWorldPosition(eye);
-    if (!shadowOnCourt && eye.z < courtNear - 1.0) {
-      shadowOnCourt = true;
-      lighting.setShadowFocus(PARK.court.x, PARK.court.z + 1.5);
-    } else if (shadowOnCourt && eye.z > courtNear + 1.0) {
-      shadowOnCourt = false;
-      lighting.setShadowFocus(0, -3.0);
+    let next = shadowAt;
+    if (eye.x > KART_TRACK.area.minX + 1.5) next = 'kart';
+    else if (eye.x < KART_TRACK.area.minX - 0.5 || shadowAt !== 'kart') {
+      if (shadowAt !== 'court' && eye.z < courtNear - 1.0) next = 'court';
+      else if (shadowAt === 'court' && eye.z > courtNear + 1.0) next = 'house';
+      else if (shadowAt === 'kart') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
     }
+    if (next === shadowAt) return;
+    shadowAt = next;
+    shadowOnCourt = next === 'court';
+    if (next === 'kart') lighting.setShadowFocus(16.5, -19.5);
+    else if (next === 'court') lighting.setShadowFocus(PARK.court.x, PARK.court.z + 1.5);
+    else lighting.setShadowFocus(0, -3.0);
   }
 
   // ラケットで打つ。打った音と弾む音は、聞いている位置（camera）からの距離で小さくする

@@ -293,8 +293,17 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
   let stepDistance = 0;
   let stepsTaken = 0;
 
+  /**
+   * 頭のワールドの位置・向き。renderer.xr.getCamera()（XR の ArrayCamera）は親を持たないので、
+   * その getWorldPosition / getWorldQuaternion は「XR の部屋の中の頭の姿勢」を返し、リグの位置や
+   * 向きが入らない（リグを動かしたり回したりしたあとで、頭の位置がずれていた）。リグの中の
+   * camera には、描画のたびに XR の頭の姿勢が写されるので、こちらから取る。
+   */
+  function headWorldPosition(out) { return camera.getWorldPosition(out); }
+  function headWorldQuaternion(out) { return camera.getWorldQuaternion(out); }
+
   function rotateAroundHead(angle) {
-    renderer.xr.getCamera().getWorldPosition(pivot);
+    headWorldPosition(pivot);
     player.position.sub(pivot);
     player.position.applyAxisAngle(UP, angle);
     player.position.add(pivot);
@@ -315,7 +324,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     const clamp = world.clampToBounds;
     if (!clamp) return;
 
-    renderer.xr.getCamera().getWorldPosition(pivot);
+    headWorldPosition(pivot);
     const inside = clamp(pivot.x, pivot.z, 0, hasLastHead ? lastHead : null);
     player.position.x += inside.x - pivot.x;
     player.position.z += inside.z - pivot.z;
@@ -370,7 +379,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
       return;
     }
 
-    renderer.xr.getCamera().getWorldQuaternion(camQuat);
+    headWorldQuaternion(camQuat);
     forward.set(0, 0, -1).applyQuaternion(camQuat);
     forward.y = 0;
     if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
@@ -508,14 +517,43 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
   // --- 毎フレーム更新 -----------------------------------------------------
   const worldPos = new THREE.Vector3();
 
+  /**
+   * 頭を、ワールドの (x, z) に、向き yaw（-Z を前とした向き。PC のカメラと同じ決め方）で
+   * 来るようにリグを動かす。VR を始めたとき、PC で見ていた場所と向きから続けるのに使う。
+   * 頭の姿勢は VR が始まって数フレームたたないと取れないので、frames 後に合わせる
+   */
+  let pendingAlign = null;
+  function alignHeadTo(x, z, yaw, frames = 3) { pendingAlign = { x, z, yaw, frames }; }
+  const _alignQ = new THREE.Quaternion();
+  const _alignF = new THREE.Vector3();
+  function applyAlign() {
+    if (!pendingAlign || !renderer.xr.isPresenting) return;
+    if (--pendingAlign.frames > 0) return;
+    const { x, z, yaw } = pendingAlign;
+    pendingAlign = null;
+    if (driving) return;   // カートに乗っているときは、カートの側で合わせる
+    player.updateMatrixWorld(true);
+    headWorldQuaternion(_alignQ);
+    _alignF.set(0, 0, -1).applyQuaternion(_alignQ);
+    const headYaw = Math.atan2(-_alignF.x, -_alignF.z);
+    rotateAroundHead(yaw - headYaw);
+    player.updateMatrixWorld(true);
+    headWorldPosition(pivot);
+    player.position.x += x - pivot.x;
+    player.position.z += z - pivot.z;
+    player.updateMatrixWorld(true);
+    hasLastHead = false;
+  }
+
   function update(dt) {
+    applyAlign();
     updateLocomotion(dt);
     updateGait(dt);
 
     // 足元の影を頭の真下へ。歩幅の沈み込みに合わせて少し濃くすると接地が出る
     groundShadow.visible = renderer.xr.isPresenting;
     if (groundShadow.visible) {
-      renderer.xr.getCamera().getWorldPosition(worldPos);
+      headWorldPosition(worldPos);
       groundShadow.position.set(worldPos.x, 0.012, worldPos.z);
       const sink = -bob.position.y / (BOB_HEIGHT || 1);
       groundShadow.material.opacity = 0.8 + sink * 0.35;
@@ -605,6 +643,10 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
   return {
     player, bob, controllers, footsteps, update, reset, releaseHeld,
     setDriving(value) { driving = Boolean(value); hasLastHead = false; },
+    alignHeadTo,
+    /** 頭のワールドの位置・向き（VR の最中。XR のカメラから直接取るとリグが入らない） */
+    headWorldPosition,
+    headWorldQuaternion,
     get driving() { return driving; },
   };
 }

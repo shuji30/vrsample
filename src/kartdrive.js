@@ -67,13 +67,16 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
    * 逆を向いていた）、左スティックを押し込んだときに合わせ直す。
    */
   function calibrateHead() {
+    // 頭の姿勢は player.headWorld*（リグの中のカメラ）から取る。renderer.xr.getCamera() の
+    // getWorldPosition はリグの位置が入らない値を返し、乗ったまま ENTER VR すると目線が
+    // まったく違う所になっていた
     const rig = player.player;
     rig.updateMatrixWorld(true);
-    renderer.xr.getCamera().getWorldPosition(tmp);
+    player.headWorldPosition(tmp);
     headLocal.copy(rig.worldToLocal(tmp.clone()));
     // 頭の向きのぶんだけリグを回して、前を向いているようにする
     const q = new THREE.Quaternion();
-    renderer.xr.getCamera().getWorldQuaternion(q);
+    player.headWorldQuaternion(q);
     const f = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
     const headYaw = Math.atan2(-f.x, -f.z) - rig.rotation.y;
     rigYawOffset = -headYaw;
@@ -92,7 +95,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     kart.side(tmp);
     if (renderer.xr.isPresenting) {
       const rig = player.player;
-      renderer.xr.getCamera().getWorldPosition(tmp2);
+      player.headWorldPosition(tmp2);
       rig.position.x += tmp.x - tmp2.x;
       rig.position.z += tmp.z - tmp2.z;
       rig.position.y = 0;

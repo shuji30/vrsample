@@ -314,8 +314,15 @@ async function start() {
     requestingSession = false;
     music.unlock();   // ENTER VR を押した操作の続きなので、ここで鳴らし始められる
     document.body.classList.add('xr-presenting');
-    player.reset(); // VR に入るときはリグを原点に戻す
+    // PC で見ていた場所と向きから VR を始める（以前はリグを部屋の原点へ戻していて、
+    // ENTER VR を押した場所と VR の中の場所が合わなかった）。頭の姿勢は数フレーム後に取れる
+    // ので、そのときに合わせる。カートに乗っているときは、カートの側で運転席に合わせる
+    camera.updateMatrixWorld(true);
+    const from = camera.getWorldPosition(new THREE.Vector3());
+    const look = camera.getWorldDirection(new THREE.Vector3());
+    player.reset();
     player.player.position.set(0, 0, 0.9);
+    player.alignHeadTo(from.x, from.z, Math.atan2(-look.x, -look.z));
 
     const layer = renderer.xr.getSession()?.renderState?.baseLayer;
     stats = {

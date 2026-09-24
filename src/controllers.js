@@ -303,14 +303,20 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
    * リグの原点ではなく **頭のワールド位置** で判定するのが要点。リグだけを
    * 制限しても、実空間で一歩踏み出せば頭は壁の外に出てしまう。
    */
+  // 直前に歩ける範囲の中にいた頭の位置。はみ出したら、この点のいた側へ戻す
+  // （防球ネットのような薄い仕切りで、向こう側へ抜けないように）
+  const lastHead = new THREE.Vector3();
+  let hasLastHead = false;
   function clampToBounds() {
     const clamp = world.clampToBounds;
     if (!clamp) return;
 
     renderer.xr.getCamera().getWorldPosition(pivot);
-    const inside = clamp(pivot.x, pivot.z);
+    const inside = clamp(pivot.x, pivot.z, 0, hasLastHead ? lastHead : null);
     player.position.x += inside.x - pivot.x;
     player.position.z += inside.z - pivot.z;
+    lastHead.set(inside.x, 0, inside.z);
+    hasLastHead = true;
   }
 
   function applyDeadzone(value) {
@@ -570,6 +576,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     }
     player.position.set(0, 0, 0);
     player.rotation.set(0, 0, 0);
+    hasLastHead = false;
     velocity.set(0, 0, 0);
     desired.set(0, 0, 0);
     bob.position.set(0, 0, 0);

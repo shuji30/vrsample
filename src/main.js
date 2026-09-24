@@ -350,6 +350,27 @@ async function start() {
 
   Object.assign(window.__vrsample, { world, player, desktop, debugPanel, music });
 
+  // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する
+  const voiceStatusEl = document.getElementById('voice-status');
+  world.voice?.onStatus((st) => {
+    if (!voiceStatusEl) return;
+    const short = (name) => name.replace(/^(Microsoft|Google|Apple)\s+/i, '').replace(/\s*-\s*Japanese.*$/i, '');
+    if (!st.enabled) {
+      voiceStatusEl.textContent = params.get('voice') === 'off'
+        ? '女の子の声：オフ（?voice=off）'
+        : '女の子の声：このブラウザは音声合成に対応していません（台詞は吹き出しで出ます）';
+    } else if (st.japanese) {
+      voiceStatusEl.textContent = `女の子の声：${short(st.name)}（日本語）　V キーで替えられます`;
+    } else if (st.searching) {
+      voiceStatusEl.textContent = '女の子の声：日本語の声を探しています…';
+    } else {
+      voiceStatusEl.textContent = '女の子の声：日本語の声が見つかりません。台詞は吹き出しだけになります。'
+        + 'Windows なら［設定］→［時刻と言語］→［言語と地域］→［日本語］の［言語のオプション］で'
+        + '「音声合成」を追加するか、Microsoft Edge / Google Chrome で開いてください。';
+    }
+    voiceStatusEl.style.color = st.enabled && !st.japanese && !st.searching ? '#a04e00' : '';
+  });
+
   // 実測表示（?perf / ?debug）
   const showPerf = params.has('perf') || params.has('debug');
   let perfTimer = 0;

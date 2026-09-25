@@ -289,8 +289,11 @@ export function createWheelInput() {
       const brake = (standard ? pad.buttons[6]?.value : pad.buttons[1]?.value) ?? 0;
       // ハンドブレーキ：'standard' は B
       const handbrake = standard ? pad.buttons[1]?.value ?? 0 : 0;
+      // シフト（GT3）：'standard' は RB で上げる、LB で下げる
+      const shiftUp = standard && Boolean(pad.buttons[5]?.pressed);
+      const shiftDown = standard && Boolean(pad.buttons[4]?.pressed);
       if (Math.abs(steer) > 0 || throttle > 0.02 || brake > 0.02 || pad.buttons.some((b) => b.pressed)) {
-        return { steer, throttle, brake, handbrake, kind: 'pad', angle: steer * 90, id: pad.id, pad };
+        return { steer, throttle, brake, handbrake, shiftUp, shiftDown, kind: 'pad', angle: steer * 90, id: pad.id, pad };
       }
     }
     return null;
@@ -299,7 +302,10 @@ export function createWheelInput() {
   // --- ハンコンのボタン ------------------------------------------------------------
   // ハンコンのボタンを、キー（E 乗る / 降りる、C 視点、H 設定）に割り当てる。
   // 設定の画面で「覚える」を押してから、使いたいボタンを押す。
-  const BUTTON_ACTIONS = [['KeyE', 'e', '乗る / 降りる'], ['KeyC', 'c', '視点'], ['KeyH', 'h', '設定の画面'], ['Space', ' ', 'ハンドブレーキ']];
+  // シフトアップ / ダウン（GT3 のパドル）も割り当てられる。Logitech（G29 / G920 / G923）は、はじめから
+  // 右のパドル（ボタン 4）がアップ、左のパドル（ボタン 5）がダウン
+  const BUTTON_ACTIONS = [['KeyE', 'e', '乗る / 降りる'], ['KeyC', 'c', '視点'], ['KeyH', 'h', '設定の画面'], ['Space', ' ', 'ハンドブレーキ'], ['KeyX', 'x', 'シフトアップ'], ['KeyZ', 'z', 'シフトダウン']];
+  const PADDLE_GUESS = /G29|G920|G923|Logitech/i;
   let learning = null;           // 覚えているキー（code）
   const lastPressed = new Map(); // `${id}#${index}` → 押されていたか
   const fireKey = (type, code, key) => window.dispatchEvent(new KeyboardEvent(type, { code, key, bubbles: true }));
@@ -319,7 +325,9 @@ export function createWheelInput() {
           return;
         }
         for (const [code, name] of BUTTON_ACTIONS) {
-          const m = buttons[code];
+          let m = buttons[code];
+          // パドルの割り当てが無ければ、Logitech のパドルの並びで
+          if (!m && PADDLE_GUESS.test(pad.id) && (code === 'KeyX' || code === 'KeyZ')) m = { id: pad.id, index: code === 'KeyX' ? 4 : 5 };
           if (m && m.id === pad.id && m.index === index) fireKey(down ? 'keydown' : 'keyup', code, name);
         }
       });

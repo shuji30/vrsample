@@ -259,7 +259,7 @@ async function start() {
   });
   const desktop = createDesktopControls(renderer, camera, world);
   // カートの運転（乗り降り・操作・ハンコン・FFB）
-  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.gt3].filter(Boolean) });
+  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.gt3].filter(Boolean) });
 
   // three.js は左右の目が平行に向いている前提で、カリング用にひとつの視錐台を
   // 合成する（WebXRManager の setProjectionFromUnion）。Pimax のようにディスプレイが

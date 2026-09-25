@@ -32,6 +32,7 @@ export function createSeesawGame({ character, seesaw, voice = null }) {
   const side = new THREE.Vector3();
   const left = new THREE.Vector3();
   const right = new THREE.Vector3();
+  const gripAxis = new THREE.Vector3();
   // 向かいのプレイヤーを見る的
   const gaze = new THREE.Object3D();
   gaze.userData = { held: false, velocity: new THREE.Vector3() };
@@ -87,10 +88,20 @@ export function createSeesawGame({ character, seesaw, voice = null }) {
     out.y = body.seatRootY(out.y);
     return out;
   }
+  /**
+   * 両脇のグリップを握る。どちらが左手かは、体の左（yaw から）に近いほう
+   */
   function holdHandles() {
     seesaw.girlHandle(1, left);
     seesaw.girlHandle(-1, right);
-    body.reachHands({ left: { target: left, amount: 1 }, right: { target: right, amount: 1 } });
+    const lx = Math.cos(body.yaw);
+    const lz = -Math.sin(body.yaw);
+    const leftness = (p) => (p.x - body.position.x) * lx + (p.z - body.position.z) * lz;
+    if (leftness(left) < leftness(right)) { const t = left.clone(); left.copy(right); right.copy(t); }
+    // 拳の穴をグリップに通す（親指は前 = 支点のほう）
+    const axis = seesaw.girlHandleAxis(gripAxis);
+    body.reachHands({ left: { target: left, amount: 1, grip: axis }, right: { target: right, amount: 1, grip: axis } });
+    body.setGrip(1);
   }
 
   let wasUp = false;
@@ -118,6 +129,8 @@ export function createSeesawGame({ character, seesaw, voice = null }) {
         body.turnTowards(seesaw.girlYaw(), dt);
         if (k > 0.5) body.setYaw(seesaw.girlYaw());
         body.setSeat(e, 'upright');
+        // いちばん下では、足を地面に着ける（地面へめり込ませない）
+        body.setFootFloor(0);
         if (k > 0.4) holdHandles();
         if (k >= 1) { state = 'ride'; seesaw.girlSeated = true; voice?.say('seesawReady'); }
         break;
@@ -152,7 +165,7 @@ export function createSeesawGame({ character, seesaw, voice = null }) {
         side.y = 0;
         body.position.lerpVectors(from, side, e);
         body.setSeat(1 - e, 'upright');
-        if (k > 0.5) body.reachHands(null);
+        if (k > 0.5) { body.reachHands(null); body.setGrip(0); }
         if (k >= 1) { body.setSeat(0, 'upright'); body.position.y = 0; finish(); }
         break;
       }
@@ -174,6 +187,8 @@ export function createSeesawGame({ character, seesaw, voice = null }) {
 
   function finish() {
     body.reachHands(null);
+    body.setGrip(0);
+    body.setFootFloor(null);
     body.setAttend(true);
     seesaw.girlSeated = false;
     state = 'off';

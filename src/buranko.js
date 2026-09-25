@@ -141,9 +141,17 @@ export function createBuranko({ x = -13.2, z = -9.0, yaw = 0 } = {}) {
     },
     girlSeat(out = new THREE.Vector3()) { return seatTop(girlSeat, out); },
     girlYaw() { return yaw; },
-    /** 女の子が握る鎖の点（左右） */
+    /**
+     * 女の子が握る鎖の点（左右）。席の 0.32m 上（胸の下）。以前の 0.52m は肩と同じ高さで
+     * （肩から 0.10m）、腕を曲げきれずに手が鎖から 11cm 離れていた
+     */
     girlChain(side, out = new THREE.Vector3()) {
-      return girlSeat.pivot.localToWorld(out.set(side * 0.2, -BURANKO.rope + 0.52, 0.02));
+      return girlSeat.pivot.localToWorld(out.set(side * 0.21, -BURANKO.rope + 0.32, 0));
+    },
+    /** 女の子の席の鎖の向き（ワールド、上向き）。握る手の親指の側 */
+    girlChainAxis(out = new THREE.Vector3()) {
+      girlSeat.pivot.updateMatrixWorld(true);
+      return out.set(0, 1, 0).transformDirection(girlSeat.pivot.matrixWorld);
     },
     girlSide(out = new THREE.Vector3()) {
       group.updateMatrixWorld(true);

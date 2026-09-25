@@ -6,10 +6,12 @@
   "description": "WebXR + three.js でつくる、ビルド不要の VR サンプル",
   "scripts": {
     "start": "node scripts/serve.mjs .",
-    "vendor": "node scripts/vendor.mjs"
+    "vendor": "node scripts/vendor.mjs",
+    "voice": "node scripts/voicevox.mjs"
   },
   "devDependencies": {
     "@pixiv/three-vrm": "3.5.5",
+    "lamejs": "1.2.1",
     "three": "0.186.0"
   }
 }

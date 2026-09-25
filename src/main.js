@@ -390,6 +390,9 @@ async function start() {
       voiceStatusEl.textContent = params.get('voice') === 'off'
         ? '女の子の声：オフ（?voice=off）'
         : '女の子の声：このブラウザは音声合成に対応していません（台詞は吹き出しで出ます）';
+    } else if (st.engine === 'voicevox') {
+      // VOICEVOX の利用規約で、声を使うときは「VOICEVOX:キャラクター名」の表記が要る
+      voiceStatusEl.textContent = `女の子の声：${st.credit}　V キーで替えられます`;
     } else if (st.japanese) {
       voiceStatusEl.textContent = `女の子の声：${short(st.name)}（日本語）　V キーで替えられます`;
     } else if (st.searching) {

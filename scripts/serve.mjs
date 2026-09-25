@@ -19,6 +19,8 @@ const MIME = {
   '.glb': 'model/gltf-binary',
   '.vrm': 'model/gltf-binary',
   '.ico': 'image/x-icon',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
 };
 
 createServer(async (req, res) => {

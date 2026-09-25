@@ -60,7 +60,8 @@ export function createBikeGame({ character, bike, voice = null, scene = null }) 
         const best = bestLap === null || lastLap < bestLap;
         if (best) bestLap = lastLap;
         const n = lastLap.toFixed(1);
-        if (state === 'watch') voice?.say(best && laps > 1 ? 'bikeBest' : 'bikeLap', { n });
+        // 声では秒を整数に丸める（VOICEVOX の声を前もって作っておける数にする。吹き出しは 1 桁まで）
+        if (state === 'watch') voice?.say(best && laps > 1 ? 'bikeBest' : 'bikeLap', { n, spoken: Math.round(lastLap) });
       }
       // スタートの線を越えたところから計りはじめる
       counting = true;

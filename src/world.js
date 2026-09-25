@@ -235,9 +235,10 @@ export function createWorld(renderer, scene, {
       if (!fishingGame?.seated) return;
       const n = info ? `${info.name} ${info.cm}センチ` : '';
       if (kind === 'bite') voice?.say('fishingBite');
-      else if (kind === 'caught') voice?.say('fishingCaught', { n });
+      // 声では魚の名前だけ（大きさは吹き出しに出す。VOICEVOX の声を前もって作っておけるように）
+      else if (kind === 'caught') voice?.say('fishingCaught', { n, spoken: info?.name });
       else if (kind === 'escaped') voice?.say('fishingEscaped', { chance: 0.7 });
-      else if (kind === 'girlCaught') voice?.say('fishingGirlCaught', { n });
+      else if (kind === 'girlCaught') voice?.say('fishingGirlCaught', { n, spoken: info?.name });
     },
   });
   fishingGame = camera ? createFishingGame({ character, fishing, voice }) : null;

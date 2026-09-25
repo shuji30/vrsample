@@ -14,7 +14,33 @@ import * as THREE from 'three';
  * V キーで入っている声を順に試せる（選んだ声は覚えておく）。
  *
  * 台詞は仮名で書く。口の形を母音から決めるためで、漢字だと読みが分からない。
+ *
+ * VOICEVOX の声：scripts/voicevox.mjs で台詞を前もって音声ファイルにしておくと
+ * （voices/voicevox/manifest.json）、その台詞はファイルで鳴らす。口は、ファイルに添えた
+ * 「拍ごとの母音と時間」で動かすので、声とぴったり合う。声は女の子の頭の位置から聞こえる
+ * （WebAudio の PannerNode。VR では向きで聞こえ方が変わる）。manifest に無い台詞
+ * （数が想定の外など）はブラウザの音声合成で読む。?voice=tts でいつもブラウザの音声合成にできる。
  */
+
+/**
+ * 数を入れる台詞（{n}）で、声を前もって作っておく数（scripts/voicevox.mjs が読む）。
+ * ゲームがこれ以外の数で言わせたときは、ブラウザの音声合成で読む。
+ * ポケバイの秒は、声では整数に丸める（吹き出しは 19.4 のまま）。釣りの魚は、声では名前だけ
+ * （大きさは吹き出しに出す）
+ */
+const range = (from, to, step = 1) => Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, i) => from + i * step);
+export const VOICE_NUMBERS = {
+  rally: range(5, 100, 5),
+  tennisRally: range(5, 100, 5),
+  bikeLap: range(5, 45),
+  bikeBest: range(5, 45),
+  fishingCaught: ['コイ', 'フナ', 'キンギョ', 'ニジマス'],
+  fishingGirlCaught: ['コイ', 'フナ', 'キンギョ', 'ニジマス'],
+};
+/** LINES のほかに声を作っておく台詞 */
+export const EXTRA_LINES = ['このこえ、どうかな？'];
+/** 数を入れた台詞（声のファイルを探すときと、作るときで同じにする） */
+export function spokenLine(line, n) { return line.replace('{n}', String(n ?? '')); }
 
 /** 場面ごとの台詞。同じ場面でも毎回違うものを選ぶ */
 export const LINES = {
@@ -196,6 +222,158 @@ function createBubble() {
   return { sprite, material, draw };
 }
 
+// --- VOICEVOX の音声ファイル --------------------------------------------------
+
+const CLIPS_URL = 'voices/voicevox/manifest.json';
+const ENGINE_KEY = 'vrsample.voiceEngine';
+function readEngine() {
+  try { return localStorage.getItem(ENGINE_KEY); } catch { return null; }
+}
+function saveEngine(value) {
+  try { localStorage.setItem(ENGINE_KEY, value); } catch { /* 覚えられなくても続ける */ }
+}
+
+/**
+ * 前もって作った声（manifest.json とファイル）。AudioContext はユーザーの操作のあとに作る
+ * （操作の前に作ると、止まったままの AudioContext ができて警告が出る）。
+ * ファイルは圧縮したまま持っておき、鳴らすときに decode する（全部 decode しておくと、
+ * 450 本 × 1.5 秒で 100MB を超える）
+ */
+function createClips(url, onLoad) {
+  let manifest = null;
+  let base = '';
+  let context = null;
+  let panner = null;
+  const raw = new Map();      // ファイル → Promise<ArrayBuffer>
+  let current = null;         // { source, start, entry, failed }
+  let token = 0;
+
+  (async () => {
+    try {
+      const res = await fetch(url, { cache: 'no-cache' });
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json?.lines && Object.keys(json.lines).length) {
+        manifest = json;
+        base = new URL('.', new URL(url, location.href)).href;
+      }
+    } catch {
+      // 無ければブラウザの音声合成だけで続ける
+    } finally {
+      onLoad?.();
+    }
+  })();
+
+  function ensure() {
+    if (context) return context;
+    if (typeof navigator !== 'undefined' && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
+    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    try { context = new AudioContextClass(); } catch { return null; }
+    panner = context.createPanner();
+    panner.panningModel = 'HRTF';
+    // 近くでは普通の大きさ、テニスのネットの向こう（12m）でも聞こえるくらいに落とす
+    panner.distanceModel = 'inverse';
+    panner.refDistance = 1.5;
+    panner.rolloffFactor = 0.6;
+    panner.maxDistance = 60;
+    const gain = context.createGain();
+    gain.gain.value = 1.1;
+    panner.connect(gain).connect(context.destination);
+    prefetch();
+    return context;
+  }
+
+  function fetchRaw(file) {
+    if (!raw.has(file)) {
+      const p = fetch(base + file).then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.arrayBuffer(); });
+      p.catch(() => raw.delete(file));
+      raw.set(file, p);
+    }
+    return raw.get(file);
+  }
+  /** 圧縮したままのファイルを、少しずつ先に読んでおく（合わせて 4MB ほど） */
+  let prefetched = false;
+  function prefetch() {
+    if (prefetched || !manifest) return;
+    prefetched = true;
+    const files = [...new Set(Object.values(manifest.lines).map((v) => v.f))];
+    let i = 0;
+    const next = () => {
+      if (i >= files.length) return;
+      fetchRaw(files[i++]).catch(() => {}).finally(() => setTimeout(next, 40));
+    };
+    setTimeout(next, 1500);
+  }
+
+  function setPosition(node, x, y, z) {
+    if (node.positionX) { node.positionX.value = x; node.positionY.value = y; node.positionZ.value = z; } else node.setPosition(x, y, z);
+  }
+
+  return {
+    get ready() { return Boolean(manifest); },
+    get credit() { return manifest?.credit ?? null; },
+    get speaker() { return manifest?.speaker ?? null; },
+    entry(text) { return manifest?.lines?.[text] ?? null; },
+    /** 鳴らす。鳴らせなければ false（AudioContext がまだ無いなど）。途中で失敗したら onFail */
+    play(text, onFail) {
+      const entry = manifest?.lines?.[text];
+      if (!entry || !ensure()) return false;
+      if (context.state === 'suspended') context.resume().catch(() => {});
+      this.stop();
+      const my = ++token;
+      current = { source: null, start: Infinity, entry };
+      fetchRaw(entry.f)
+        .then((buf) => context.decodeAudioData(buf.slice(0)))
+        .then((audio) => {
+          if (my !== token) return;
+          const source = context.createBufferSource();
+          source.buffer = audio;
+          source.connect(panner);
+          const start = context.currentTime + 0.03;
+          source.start(start);
+          current.source = source;
+          current.start = start;
+        })
+        .catch(() => {
+          if (my !== token) return;
+          current = null;
+          onFail?.();
+        });
+      return true;
+    },
+    stop() {
+      token++;
+      try { current?.source?.stop(); } catch { /* 止まっている */ }
+      current = null;
+    },
+    /** いま鳴っている台詞の、始まりからの時間（秒）。まだ鳴っていなければ負、鳴っていなければ null */
+    get elapsed() {
+      if (!current || !context) return null;
+      return context.currentTime - current.start;
+    },
+    /** 鳴らしている（鳴らす準備をしている）台詞。鳴り終わったら null */
+    get playing() {
+      if (!current || !context) return null;
+      return context.currentTime - current.start > current.entry.d + 0.2 ? null : current.entry;
+    },
+    /** 聞く人（カメラ）と、声の出る所（女の子の頭）を合わせる */
+    place(listenerPos, forward, up, source) {
+      if (!context) return;
+      const l = context.listener;
+      if (l.positionX) {
+        l.positionX.value = listenerPos.x; l.positionY.value = listenerPos.y; l.positionZ.value = listenerPos.z;
+        l.forwardX.value = forward.x; l.forwardY.value = forward.y; l.forwardZ.value = forward.z;
+        l.upX.value = up.x; l.upY.value = up.y; l.upZ.value = up.z;
+      } else {
+        l.setPosition(listenerPos.x, listenerPos.y, listenerPos.z);
+        l.setOrientation(forward.x, forward.y, forward.z, up.x, up.y, up.z);
+      }
+      setPosition(panner, source.x, source.y, source.z);
+    },
+  };
+}
+
 // --- 本体 --------------------------------------------------------------------
 
 /** 1 拍の長さ（秒）。日本語の会話は 1 秒に 7〜8 拍 */
@@ -258,12 +436,22 @@ function saveVoice(name) {
  * @param {THREE.Scene} options.scene
  * @param {THREE.Camera} options.camera
  * @param {boolean} [options.muted] 声を出さない（吹き出しと口だけ）
+ * @param {string|null} [options.clips] VOICEVOX の声の manifest.json（null で使わない。?voice=tts でも使わない）
  */
-export function createVoice({ character, scene, camera, muted = false }) {
+export function createVoice({ character, scene, camera, muted = false, clips: clipsUrl = CLIPS_URL }) {
   const body = character.body;
   const synth = !muted && typeof window !== 'undefined' ? window.speechSynthesis ?? null : null;
   const bubble = createBubble();
   scene.add(bubble.sprite);
+  const forceTts = typeof location !== 'undefined' && new URLSearchParams(location.search).get('voice') === 'tts';
+  /** いまの声：'voicevox'（前もって作った声）/ 'tts'（ブラウザの音声合成） */
+  let engineKind = 'tts';
+  const clips = !muted && !forceTts && clipsUrl && typeof fetch !== 'undefined'
+    ? createClips(clipsUrl, () => {
+      if (clips.ready && readEngine() !== 'tts') engineKind = 'voicevox';
+      notify();
+    })
+    : null;
 
   let voice = null;
   let tuning = VOICE_TUNING.default;
@@ -286,12 +474,19 @@ export function createVoice({ character, scene, camera, muted = false }) {
    */
   let searched = false;       // 探し終えた（見つかった / 見つからないまま時間切れ）
   const statusListeners = [];
-  const status = () => ({
-    enabled: Boolean(synth),
-    searching: Boolean(synth) && !voice && !searched,
-    name: voice?.name ?? null,
-    japanese: Boolean(voice),
-  });
+  const status = () => {
+    const vv = engineKind === 'voicevox';
+    return {
+      enabled: Boolean(synth) || Boolean(clips?.ready),
+      searching: !vv && Boolean(synth) && !voice && !searched,
+      name: vv ? clips.credit : voice?.name ?? null,
+      japanese: vv || Boolean(voice),
+      /** 'voicevox' か 'tts' */
+      engine: engineKind,
+      /** VOICEVOX の表記（「VOICEVOX:春日部つむぎ」）。VOICEVOX の声を使っているときだけ */
+      credit: vv ? clips.credit : null,
+    };
+  };
   const notify = () => { for (const fn of statusListeners) fn(status()); };
   function pickVoice() {
     const had = voice;
@@ -319,6 +514,9 @@ export function createVoice({ character, scene, camera, muted = false }) {
   }
 
   let morae = [];
+  /** VOICEVOX の声でしゃべっているときの口の表（[母音の始まり, 長さ, 母音]）。ブラウザの音声合成なら null */
+  let clipMorae = null;
+  let clipDuration = 0;
   let moraIndex = 0;
   let moraTime = 0;
   let speaking = false;
@@ -329,9 +527,32 @@ export function createVoice({ character, scene, camera, muted = false }) {
   let prevState = '';
   let greetNear = false;
 
-  /** 台詞を 1 つ言う。text はそのまま、kind は LINES から選ぶ */
-  function speak(text) {
-    morae = toMorae(text);
+  /**
+   * 台詞を 1 つ言う。text は吹き出しに出す文、voiceText は声で読む文（数を丸めたものなど）。
+   * VOICEVOX の声があればそれで、無ければブラウザの音声合成で読む
+   */
+  function speak(text, { voiceText = text } = {}) {
+    if (engineKind === 'voicevox' && clips?.entry(voiceText)) {
+      const entry = clips.entry(voiceText);
+      const started = clips.play(voiceText, () => { clipMorae = null; speakTts(text, voiceText); });
+      if (started) {
+        try { synth?.cancel(); } catch { /* 止まっている */ }
+        clipMorae = entry.m;
+        clipDuration = entry.d;
+        speaking = true;
+        showFor = entry.d + 1.4;
+        bubble.draw(text);
+        bubble.sprite.visible = true;
+        return;
+      }
+    }
+    speakTts(text, voiceText);
+  }
+
+  function speakTts(text, voiceText = text) {
+    clips?.stop();
+    clipMorae = null;
+    morae = toMorae(voiceText);
     moraIndex = 0;
     moraTime = 0;
     speaking = true;
@@ -344,7 +565,7 @@ export function createVoice({ character, scene, camera, muted = false }) {
     if (synth && voice && typeof SpeechSynthesisUtterance !== 'undefined') {
       try {
         synth.cancel();
-        const u = new SpeechSynthesisUtterance(text);
+        const u = new SpeechSynthesisUtterance(voiceText);
         u.lang = 'ja-JP';
         // 声の指定だけ失敗しても（型の合わない声オブジェクトなど）、発声は続ける
         try { if (voice) u.voice = voice; } catch { /* 既定の声でしゃべる */ }
@@ -363,10 +584,12 @@ export function createVoice({ character, scene, camera, muted = false }) {
 
   /**
    * 場面に合った台詞を言う。直前に同じ場面でしゃべっていたら言わない。
+   * spoken は声で読むときの数（ポケバイの秒を整数に丸める、釣りの魚は名前だけ、など）。
+   * 省けば n と同じ
    * @param {keyof typeof LINES} kind
-   * @param {{ n?: number, chance?: number }} [options]
+   * @param {{ n?: number|string, spoken?: number|string, chance?: number }} [options]
    */
-  function say(kind, { n, chance = 1 } = {}) {
+  function say(kind, { n, spoken, chance = 1 } = {}) {
     const lines = LINES[kind];
     if (!lines || Math.random() > chance) return false;
     const wait = COOLDOWN[kind] ?? COOLDOWN.default;
@@ -377,18 +600,59 @@ export function createVoice({ character, scene, camera, muted = false }) {
     const line = choices[Math.floor(Math.random() * choices.length)];
     lastLine[kind] = line;
     lastSaid[kind] = clock;
-    speak(line.replace('{n}', String(n ?? '')));
+    speak(spokenLine(line, n), { voiceText: spokenLine(line, spoken ?? n) });
     return true;
   }
 
   const head = new THREE.Vector3();
   const eye = new THREE.Vector3();
+  const forward = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  const camQ = new THREE.Quaternion();
+  function headPosition(out) {
+    const node = character.vrm?.humanoid?.getNormalizedBoneNode('head');
+    if (node) node.getWorldPosition(out);
+    else out.copy(body.position).setY(body.headHeight);
+    return out;
+  }
+
+  /** VOICEVOX の声の口：いまの時間の拍の母音で開き、拍の終わりで閉じる */
+  function clipMouth() {
+    const t = clips.elapsed;
+    if (t === null) { speaking = false; clipMorae = null; body.setMouth(null); return; }
+    if (t > clipDuration + 0.05) { speaking = false; clipMorae = null; body.setMouth(null); return; }
+    let shape = null;
+    for (const [start, length, vowel] of clipMorae) {
+      if (t < start) break;
+      if (t < start + length) {
+        const u = (t - start) / Math.max(length, 0.03);
+        // すばやく開いて、終わりで閉じる（長く伸ばす音は開いたまま）
+        const open = Math.min(1, u * 5) * (length > 0.2 ? 1 - Math.max(0, (u - 0.85) / 0.15) : Math.sin(Math.PI * Math.min(1, u * 0.95 + 0.05)));
+        const lower = vowel.toLowerCase();
+        const k = vowel === lower ? 1 : 0.35;   // 無声化した母音（大文字）は小さく
+        const base = SHAPE[lower];
+        if (base) shape = Object.fromEntries(Object.entries(base).map(([key, v]) => [key, v * k * (0.35 + 0.65 * open)]));
+        break;
+      }
+    }
+    body.setMouth(shape);
+  }
 
   function update(dt) {
     clock += dt;
 
-    // 口の動き。拍ごとに母音の形を入れ、拍の終わりで少し閉じる
-    if (speaking) {
+    // VOICEVOX の声：声の出る所を女の子の頭に、聞く所をカメラに
+    if (clips?.playing) {
+      camera.getWorldPosition(eye);
+      camera.getWorldQuaternion(camQ);
+      forward.set(0, 0, -1).applyQuaternion(camQ);
+      up.set(0, 1, 0).applyQuaternion(camQ);
+      clips.place(eye, forward, up, headPosition(head));
+    }
+    // 口の動き。VOICEVOX の声なら添えてある拍の表で、ブラウザの音声合成なら仮名から見積もった拍で
+    if (speaking && clipMorae) {
+      clipMouth();
+    } else if (speaking) {
       moraTime += dt;
       while (moraIndex < morae.length && moraTime >= morae[moraIndex].length * MORA) {
         moraTime -= morae[moraIndex].length * MORA;
@@ -414,10 +678,7 @@ export function createVoice({ character, scene, camera, muted = false }) {
         bubble.sprite.visible = false;
       } else {
         bubble.material.opacity = Math.min(1, showFor / 0.4);
-        const vrm = character.vrm;
-        const node = vrm?.humanoid?.getNormalizedBoneNode('head');
-        if (node) node.getWorldPosition(head);
-        else head.copy(body.position).setY(body.headHeight);
+        headPosition(head);
         // 見ている人から見て右上に出す（顔に重ならないように）。遠いと読めないので、
         // 1.8m より遠ければ距離に合わせて大きくする（最大 4 倍。テニスではネットの
         // 向こう 12m 先にいる）。ずらす量も同じだけ広げて、頭の上のラリー表示と重ならないようにする
@@ -454,9 +715,22 @@ export function createVoice({ character, scene, camera, muted = false }) {
      * 替えた声の名前を返す（声が 1 つも無ければ null）
      */
     cycleVoice() {
+      // VOICEVOX の声 → ブラウザの日本語の声 1 → 2 → … → VOICEVOX の声
       const ranked = rankedVoices().filter((v) => voiceScore(v.name) > -5);
-      if (ranked.length === 0) return null;
-      const next = ranked[(ranked.indexOf(voice) + 1) % ranked.length];
+      const options = [...(clips?.ready ? ['voicevox'] : []), ...ranked];
+      if (options.length === 0) return null;
+      const now = engineKind === 'voicevox' ? 'voicevox' : voice;
+      const next = options[(options.indexOf(now) + 1) % options.length];
+      if (next === 'voicevox') {
+        engineKind = 'voicevox';
+        saveEngine('voicevox');
+        notify();
+        speak('このこえ、どうかな？');
+        bubble.draw(`このこえ、どうかな？（${clips.speaker?.name ?? 'VOICEVOX'}）`);
+        return clips.credit;
+      }
+      engineKind = 'tts';
+      if (clips?.ready) saveEngine('tts');
       useVoice(next);
       saveVoice(next.name);
       notify();
@@ -471,7 +745,10 @@ export function createVoice({ character, scene, camera, muted = false }) {
     /** 声の状態が変わったら呼ぶ（見つかった / 替えた / 探し終えた） */
     onStatus(fn) { statusListeners.push(fn); fn(status()); },
     /** 検証用 */
-    get voiceName() { return voice?.name ?? null; },
+    get voiceName() { return engineKind === 'voicevox' ? clips.credit : voice?.name ?? null; },
+    get engine() { return engineKind; },
+    /** 検証用：VOICEVOX の声の再生 */
+    get clips() { return clips; },
     get voiceTuning() { return { ...tuning }; },
     bubble: bubble.sprite,
   };

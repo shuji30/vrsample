@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CIRCUIT_ZONE } from './circuit.js';
 
 /**
  * 海の見える丘。家・庭・公園は丘の上の平らな所（PLATEAU）にあり、まわりの土地が下っていく。
@@ -34,8 +35,17 @@ export function hillHeight(x, z) {
   const d = Math.hypot(dN + dS, dW + dE);
   const wobble = Math.sin(x * 0.021) * Math.cos(z * 0.017) * 5 + Math.sin((x + z) * 0.043) * 2 + Math.sin(x * 0.11 + z * 0.07) * 0.6;
   h += wobble * smooth(d / 40) * (dN > 0 ? 0.35 : 1);
-  // 平らな所の端は、ひとつ段を付けずになめらかに下り始める
-  return h;
+  // 東のふもとのサーキットの平らな所（y -10）。まわり 70m でなめらかにつなぐ
+  const w = circuitFlat(x, z);
+  return w > 0 ? h + (CIRCUIT_ZONE.y - h) * w : h;
+}
+
+/** サーキットの平らな所にどれだけ入っているか（1 = 中、0 = 70m より外） */
+export function circuitFlat(x, z) {
+  const Z = CIRCUIT_ZONE;
+  const dx = Math.max(Z.minX - x, 0, x - Z.maxX);
+  const dz = Math.max(Z.minZ - z, 0, z - Z.maxZ);
+  return 1 - smooth(Math.hypot(dx, dz) / 70);
 }
 
 /** 格子の座標：dense の範囲は step 間隔、その外は ratio 倍ずつ広げて limit まで。must は必ず入れる */
@@ -167,7 +177,7 @@ export function createHill(tex) {
     if (x > P.minX - 4 && x < P.maxX + 4 && z > P.minZ - 4 && z < P.maxZ + 4) continue;
     if (z < P.minZ - 10 && Math.abs(x) < 140) continue;     // 北の海への眺めを空けておく
     const y = hillHeight(x, z);
-    if (y < SEA_LEVEL + 2.5) continue;
+    if (y < SEA_LEVEL + 2.5 || circuitFlat(x, z) > 0.05) continue;
     spots.push([x, y, z, 5 + rand() * 6]);
   }
   const leaves = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 7), leafMat, spots.length);

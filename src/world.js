@@ -28,6 +28,9 @@ import { createHorse } from './horse.js';
 import { createHorseGame } from './horsegame.js';
 import { createCarousel, carouselBlocks } from './carousel.js';
 import { createCarouselGame } from './carouselgame.js';
+import { createCircuit } from './circuit.js';
+import { createGT3 } from './gt3.js';
+import { createGT3Race } from './gt3race.js';
 import { createFireworks } from './fireworks.js';
 
 /**
@@ -253,6 +256,49 @@ export function createWorld(renderer, scene, {
     };
   }
 
+  // 丘の東のふもとのサーキットと GT3。家の右の芝生に飾ってある GT3 に乗ると、暗くなって
+  // サーキットのグリッドへ移る（女の子も自分の GT3 で並ぶ）。降りると、暗くなって丘の上へ戻る
+  const circuit = createCircuit();
+  scene.add(circuit.group);
+  const GT3_PARK = { x: 14.5, z: -0.6, yaw: -Math.PI / 2, y: 0.08 };   // y は飾り台の上面
+  const gt3 = createGT3({ park: GT3_PARK });
+  scene.add(gt3.group);
+  {
+    const stage = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.3, 0.12, 40), new THREE.MeshStandardMaterial({ color: 0x3a3e46, roughness: 0.6, metalness: 0.3 }));
+    stage.position.set(GT3_PARK.x, 0.02, GT3_PARK.z);
+    stage.receiveShadow = true;
+    scene.add(stage);
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 192;
+    const x = c.getContext('2d');
+    x.fillStyle = '#16203a'; x.fillRect(0, 0, 512, 192);
+    x.fillStyle = '#fff'; x.font = 'bold 64px sans-serif'; x.textAlign = 'center';
+    x.fillText('サーキットへ', 256, 84);
+    x.font = '30px sans-serif';
+    x.fillText('GT3 に乗ると移動します', 256, 150);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.9), new THREE.MeshStandardMaterial({ map: t, roughness: 0.7 }));
+    sign.position.set(GT3_PARK.x + 3.8, 1.5, GT3_PARK.z);
+    sign.rotation.y = -Math.PI / 2;
+    scene.add(sign);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.1, 8), new THREE.MeshStandardMaterial({ color: 0x888888 }));
+    post.position.set(GT3_PARK.x + 3.85, 0.55, GT3_PARK.z);
+    scene.add(post);
+  }
+  const gt3Race = camera ? createGT3Race({ scene, character, playerCar: gt3, circuit, voice }) : null;
+  // 移るときに画面を暗くする幕（カメラの子。VR でも頭についてくる）
+  const fader = new THREE.Mesh(
+    new THREE.SphereGeometry(0.3, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, side: THREE.BackSide, depthTest: false, depthWrite: false, fog: false }),
+  );
+  fader.renderOrder = 10000;
+  fader.frustumCulled = false;
+  fader.visible = false;
+  camera?.add(fader);
+  let fade = 0;
+  const blackout = () => { fade = 1.4; fader.visible = true; fader.material.opacity = 1; };
+
   // 家の左の芝生のメリーゴーランド。プレイヤーが木馬に乗ると、女の子がすぐ内側の馬車に座る
   const carousel = createCarousel();
   scene.add(carousel.group);
@@ -353,6 +399,8 @@ export function createWorld(renderer, scene, {
     // 家の左の芝生（メリーゴーランド）。庭（x -6 まで）と 0.5m、ポケバイの範囲（z -5.5 まで）と 0.5m 重ねる。
     // 家（x -3 から）には重ならない。回転台の上は clampToBounds で外す
     { minX: -16.5, maxX: -5.5, minZ: -6.0, maxZ: 5.0 },
+    // 家の右の芝生（GT3 を飾っておく所）。庭（x 6 まで）と 0.5m、カートコースの範囲（z -5 まで）と 0.6m 重ねる
+    { minX: 5.5, maxX: 22.0, minZ: -5.6, maxZ: 4.5 },
   ];
 
   function courtRegion() {
@@ -378,7 +426,9 @@ export function createWorld(renderer, scene, {
     // 池の水の上には入れない（縁の石のぶん 0.2m 広く見る）。直前の点が池の外なら、
     // 縁に沿って滑らせる（桟橋の先から横へ落ちたとき、縁まで大きく飛ばさないように）
     // 厩の建物と馬場の柵、メリーゴーランドの回転台も同じように（馬場の入口は通れる）
-    const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset);
+    // 飾ってある GT3（丘の上にあるとき）も、歩いて通り抜けない
+    const gt3Blocks = (x, z) => !gt3.state.atCircuit && Math.abs(x - GT3_PARK.x) < 2.5 + inset && Math.abs(z - GT3_PARK.z) < 1.2 + inset;
+    const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || gt3Blocks(x, z);
     if (solid(p.x, p.z)) {
       if (!from || solid(from.x, from.z)) return p;
       if (!solid(p.x, from.z)) return { x: p.x, z: from.z };
@@ -450,6 +500,12 @@ export function createWorld(renderer, scene, {
   let shadowAt = 'house';
   function updateShadowFocus() {
     if (!camera) return;
+    // サーキットにいるあいだは、プレイヤーの車のまわりに影を落とす
+    if (gt3.state.atCircuit) {
+      lighting.setShadowFocus(gt3.group.position.x, gt3.group.position.z);
+      shadowAt = 'circuit';
+      return;
+    }
     camera.getWorldPosition(eye);
     let next = shadowAt;
     if (eye.x > KART_TRACK.area.minX + 1.5) next = 'kart';
@@ -460,7 +516,7 @@ export function createWorld(renderer, scene, {
     else if (eye.x < KART_TRACK.area.minX - 0.5 || shadowAt !== 'kart') {
       if (shadowAt !== 'court' && eye.z < courtNear - 1.0) next = 'court';
       else if (shadowAt === 'court' && eye.z > courtNear + 1.0) next = 'house';
-      else if (shadowAt === 'kart' || shadowAt === 'bike' || shadowAt === 'pond' || shadowAt === 'stable' || shadowAt === 'carousel') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
+      else if (shadowAt === 'kart' || shadowAt === 'bike' || shadowAt === 'pond' || shadowAt === 'stable' || shadowAt === 'carousel' || shadowAt === 'circuit') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
     }
     if (next === shadowAt) return;
     shadowAt = next;
@@ -553,6 +609,15 @@ export function createWorld(renderer, scene, {
 
   function update(dt) {
     updateShadowFocus();
+    // 暗くした幕を、少し待ってから明ける
+    if (fade > 0) {
+      fade = Math.max(0, fade - dt / 0.9);
+      fader.material.opacity = Math.min(1, fade * 1.5);
+      fader.visible = fade > 0;
+    }
+    // サーキットにいるあいだは、女の子はレースだけ（庭の遊びは止めておく）
+    if (gt3Race?.active) gt3Race.update(dt);
+    else {
     // カートがいちばん先。テニスの最中なら、テニスを片づけ終わってから（ラケットを戻して）
     if (kartGame?.wanted && !kartGame.active) {
       if (tennisGame?.active) tennisGame.stop();
@@ -624,6 +689,7 @@ export function createWorld(renderer, scene, {
     else if (carouselGame?.active) carouselGame.update(dt);
     else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
+    }
     // ポケバイは、女の子が見ていないあいだもラップを数えて、表示を出す
     bikeGame?.update(dt);
     // プレイヤーが乗っていないシーソーは、ゆっくりプレイヤーの側へ下りて止まる
@@ -796,7 +862,7 @@ export function createWorld(renderer, scene, {
 
   return {
     grabbables,
-    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body],
+    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, gt3.body],
     floor: room.floor,
     /** 地面の高さ（カートコースの起伏。ほかは 0） */
     groundHeight,
@@ -816,10 +882,27 @@ export function createWorld(renderer, scene, {
     kartRace,
     /** kartdrive.js から：プレイヤーがカートに乗った / 降りた */
     onKartEnter: (v) => {
-      if (v === bike) { if (bikeGame) bikeGame.playerRiding = true; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = true; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = true; } else if (v === fishing) { if (fishingGame) fishingGame.playerRiding = true; } else if (v === horse) { horseRidden = true; if (horseGame) horseGame.playerRiding = true; } else if (v === carousel) { carouselRidden = true; if (carouselGame) carouselGame.playerRiding = true; } else if (kartGame) kartGame.playerDriving = true;
+      if (v === bike) { if (bikeGame) bikeGame.playerRiding = true; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = true; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = true; } else if (v === fishing) { if (fishingGame) fishingGame.playerRiding = true; } else if (v === horse) { horseRidden = true; if (horseGame) horseGame.playerRiding = true; } else if (v === carousel) { carouselRidden = true; if (carouselGame) carouselGame.playerRiding = true; } else if (v === gt3) {
+        // 暗くして、サーキットのグリッドへ。女の子も（していた遊びをやめて）自分の車へ
+        blackout();
+        if (tennisGame?.active) tennisGame.stop();
+        catchGame?.suspend();
+        gt3Race?.start();
+        if (!gt3Race) gt3.placeOnCircuit(250, -3);
+      } else if (kartGame) kartGame.playerDriving = true;
     },
     onKartExit: (v) => {
-      if (v === bike) { if (bikeGame) bikeGame.playerRiding = false; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = false; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = false; } else if (v === fishing) { fishing.leave(); if (fishingGame) fishingGame.playerRiding = false; } else if (v === horse) { horseRidden = false; horse.leave(); if (horseGame) horseGame.playerRiding = false; } else if (v === carousel) { carouselRidden = false; if (carouselGame) carouselGame.playerRiding = false; } else if (kartGame) kartGame.playerDriving = false;
+      if (v === bike) { if (bikeGame) bikeGame.playerRiding = false; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = false; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = false; } else if (v === fishing) { fishing.leave(); if (fishingGame) fishingGame.playerRiding = false; } else if (v === horse) { horseRidden = false; horse.leave(); if (horseGame) horseGame.playerRiding = false; } else if (v === carousel) { carouselRidden = false; if (carouselGame) carouselGame.playerRiding = false; } else if (v === gt3) {
+        // 暗くして、丘の上へ。車は飾っておく所に戻し、女の子は車の横に立ってから庭へ戻る
+        blackout();
+        gt3Race?.stop();
+        gt3.parkAtHome();
+        const b = character.body;
+        b.position.set(GT3_PARK.x - 0.5, 0, GT3_PARK.z + 2.4);
+        b.setYaw(Math.PI);
+        character.watch(furniture.ball);
+        catchGame?.resume();
+      } else if (kartGame) kartGame.playerDriving = false;
     },
     seesaw,
     seesawGame,
@@ -831,6 +914,9 @@ export function createWorld(renderer, scene, {
     horseGame,
     carousel,
     carouselGame,
+    circuit,
+    gt3,
+    gt3Race,
     stable,
     bike,
     bikeGame,

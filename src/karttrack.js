@@ -134,7 +134,7 @@ export function nearestOnTrack(x, z, hint = -1) {
 // 見た目
 // ---------------------------------------------------------------------------
 
-function asphaltTexture(size = 256) {
+export function asphaltTexture(size = 256) {
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;

@@ -30,7 +30,12 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   /** いま乗っている（最後に乗った）乗り物 */
   let vehicle = kart;
   const SEESAW_SPEC = { spec: { maxSpeed: 1 }, track: { width: 1e6 } };
-  const specOf = (v) => (v.kind === 'bike' ? { spec: BIKE, track: BIKE_TRACK } : v.silent ? SEESAW_SPEC : { spec: KART, track: KART_TRACK });
+  const GT3_SPEC = { spec: { maxSpeed: 75 }, track: { width: 12 } };
+  const specOf = (v) => (v.kind === 'bike' ? { spec: BIKE, track: BIKE_TRACK } : v.kind === 'gt3' ? GT3_SPEC : v.silent ? SEESAW_SPEC : { spec: KART, track: KART_TRACK });
+  // シフト（GT3）：押した回数をためて、次のフレームで車に渡す（+1 上げる / -1 下げる）
+  let shiftQueue = 0;
+  const padShift = { up: false, down: false };
+  const xrShift = { up: false, down: false };
   const wheel = createWheelInput();
   const ffb = createWheelFFB();
   const engine = createEngineSound();
@@ -134,6 +139,9 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   window.addEventListener('keydown', (event) => {
     if (event.target?.tagName === 'INPUT') return;
     keys.add(event.code);
+    // シフト：X で上げる、Z で下げる（ハンコンのボタンを割り当てると、このキーとして届く。VR でも効く）
+    if (!event.repeat && driving && event.code === 'KeyX') shiftQueue++;
+    if (!event.repeat && driving && event.code === 'KeyZ') shiftQueue--;
     if (renderer.xr.isPresenting) return;
     if (event.code === 'KeyE') {
       if (driving) exit();
@@ -208,6 +216,15 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       // 降りるのは左のグリップ（0.5 秒）。右のグリップはハンドブレーキ
       if (hand === 'left' && gp.buttons[1]?.pressed) gripped = true;
       if (hand === 'right') out.handbrake = gp.buttons[1]?.value ?? (gp.buttons[1]?.pressed ? 1 : 0);
+      // シフト（GT3）：右手の A で上げる、B で下げる（押した瞬間だけ）
+      if (hand === 'right') {
+        const up = Boolean(gp.buttons[4]?.pressed);
+        const down = Boolean(gp.buttons[5]?.pressed);
+        if (up && !xrShift.up) shiftQueue++;
+        if (down && !xrShift.down) shiftQueue--;
+        xrShift.up = up;
+        xrShift.down = down;
+      }
       if (hand === 'left') {
         const x = Math.abs(gp.axes[2] ?? 0) > Math.abs(gp.axes[0] ?? 0) ? gp.axes[2] ?? 0 : gp.axes[0] ?? 0;
         stickX = Math.abs(x) < 0.2 ? 0 : x;
@@ -308,7 +325,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       const tx = Math.sin(ty);
       const tz = Math.cos(ty);
       const gp = vehicle.group.position;
-      camera.position.set(gp.x - tx * 3.8, gp.y + 2.1, gp.z - tz * 3.8);
+      const back = vehicle.chaseBack ?? 3.8;
+      camera.position.set(gp.x - tx * back, gp.y + (vehicle.chaseUp ?? 2.1), gp.z - tz * back);
       camera.lookAt(gp.x + tx * 2, gp.y + 0.6, gp.z + tz * 2);
     }
     camera.updateMatrixWorld(true);
@@ -325,6 +343,16 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     }
     const input = readInput(dt);
     if (!driving) return;       // 入力を読むあいだに降りた
+    // パッドの RB / LB（押した瞬間）でもシフト
+    const pad = wheel.readPad();
+    if (pad) {
+      if (pad.shiftUp && !padShift.up) shiftQueue++;
+      if (pad.shiftDown && !padShift.down) shiftQueue--;
+      padShift.up = Boolean(pad.shiftUp);
+      padShift.down = Boolean(pad.shiftDown);
+    }
+    input.shift = shiftQueue;
+    shiftQueue = 0;
     // レースのスタートの合図のあいだは動かない（ブレーキも離す。踏み続けるとバックするので）
     if (vehicle === kart && world.kartRace?.locked) { input.throttle = 0; input.brake = Math.abs(kart.speed) > 0.2 ? 1 : 0; }
     lastInput = input;
@@ -338,7 +366,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     const onCurb = !vehicle.state.onGrass && Math.abs(vehicle.state.lateral) > track.width / 2 - 0.05;
     if (onCurb && !wasOnCurb) input.pad?.vibrationActuator?.playEffect?.('dual-rumble', { duration: 120, strongMagnitude: 0.2, weakMagnitude: 0.5 }).catch?.(() => {});
     wasOnCurb = onCurb;
-    const rpm = Math.min(1, Math.abs(vehicle.speed) / spec.maxSpeed * 0.85 + input.throttle * 0.15);
+    // GT3 はエンジンの回転数をそのまま（ギアで上下する）
+    const rpm = vehicle.rpm01 ?? Math.min(1, Math.abs(vehicle.speed) / spec.maxSpeed * 0.85 + input.throttle * 0.15);
     engine.update(rpm, input.throttle);
     ffb.update(dt, {
       angle: input.kind === 'wheel' ? input.angle : input.steer * 90,

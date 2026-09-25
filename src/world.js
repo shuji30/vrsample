@@ -31,6 +31,7 @@ import { createCarouselGame } from './carouselgame.js';
 import { createCircuit } from './circuit.js';
 import { createGT3 } from './gt3.js';
 import { createGT3Race } from './gt3race.js';
+import { createCorgi } from './corgi.js';
 import { createFireworks } from './fireworks.js';
 
 /**
@@ -298,6 +299,27 @@ export function createWorld(renderer, scene, {
   camera?.add(fader);
   let fade = 0;
   const blackout = () => { fade = 1.4; fader.visible = true; fader.material.opacity = 1; };
+
+  // 放し飼いのコーギー「こむぎ」。庭と公園を歩きまわり、ときどき全力で走りまわる
+  const corgiEye = new THREE.Vector3();
+  const corgi = camera ? createCorgi({
+    scene,
+    clamp: (x, z, inset, from) => clampToBounds(x, z, inset, from),
+    groundHeight: (x, z) => groundHeight(x, z),
+    playerPosition: () => camera.getWorldPosition(corgiEye),
+    // 女の子がサーキットにいるあいだは、ついていかない
+    girlPosition: () => (character.body.loaded && !gt3Race?.active ? character.body.position : null),
+    ball: furniture.ball,
+    voice,
+    areas: [
+      { minX: -5.5, maxX: 5.5, minZ: -13, maxZ: -4.5 },     // 庭
+      { minX: 6.5, maxX: 21, minZ: -5, maxZ: 4 },           // 家の右（GT3 の所）
+      { minX: -16, maxX: -6.5, minZ: -5.5, maxZ: 4.5 },     // 家の左（メリーゴーランドのまわり）
+      { minX: -16.5, maxX: -6, minZ: -13.5, maxZ: -6 },     // 遊び場
+      { minX: -30, maxX: -17.5, minZ: -8, maxZ: -6 },       // 池のほとり
+    ],
+  }) : null;
+  let corgiMode = '';
 
   // 家の左の芝生のメリーゴーランド。プレイヤーが木馬に乗ると、女の子がすぐ内側の馬車に座る
   const carousel = createCarousel();
@@ -696,6 +718,13 @@ export function createWorld(renderer, scene, {
     if (!seesawGame?.wanted) seesaw.update(dt, {});
     fireworks.update(dt, camera);
     park.hill.update(dt);
+    // こむぎ。走りまわりはじめたら、近くの女の子が声をあげる
+    if (corgi) {
+      corgi.update(dt);
+      if (corgi.mode !== corgiMode && corgi.mode === 'zoomies' && !gt3Race?.active
+        && character.body.position.distanceTo(corgi.position) < 10) voice?.say('corgiZoom', { chance: 0.6 });
+      corgiMode = corgi.mode;
+    }
     // ブランコ：プレイヤーの席は乗っていないときだけ、ここで動かす（女の子の席は上で先に）
     if (!burankoGame?.wanted) buranko.settle(dt);
     // 女の子の竿（座って釣っているあいだだけ出す）
@@ -862,7 +891,7 @@ export function createWorld(renderer, scene, {
 
   return {
     grabbables,
-    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, gt3.body],
+    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, gt3.body, ...(corgi ? [corgi.body] : [])],
     floor: room.floor,
     /** 地面の高さ（カートコースの起伏。ほかは 0） */
     groundHeight,
@@ -917,6 +946,7 @@ export function createWorld(renderer, scene, {
     circuit,
     gt3,
     gt3Race,
+    corgi,
     stable,
     bike,
     bikeGame,

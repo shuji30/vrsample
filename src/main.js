@@ -379,6 +379,8 @@ async function start() {
     }
   });
 
+  // こむぎを VR の手でなでられるように
+  world.corgi?.setHands(() => player.controllers);
   Object.assign(window.__vrsample, { world, player, desktop, debugPanel, music, kartDrive });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する

@@ -26,6 +26,8 @@ export const SEESAW = {
   kick: 1.35,          // けったときの角速度（rad/s）
   damping: 0.8,
 };
+/** 取っ手（席の中心から支点の側へ forward、板の中心から横へ side、板の上面から height） */
+const HANDLE = { forward: 0.1, side: 0.2, height: 0.42 };
 const MAX_ANGLE = Math.asin((SEESAW.pivotHeight - SEESAW.endClearance - 0.05) / SEESAW.halfLength);
 
 export function createSeesaw({ x = -9.6, z = -9.4, yaw = Math.PI / 2, color = 0xe8573a } = {}) {
@@ -60,17 +62,27 @@ export function createSeesaw({ x = -9.6, z = -9.4, yaw = Math.PI / 2, color = 0x
   const body = new THREE.Group();
   beam.add(body);
   const handles = [];
+  // 取っ手は席の両脇に立つ握り棒（上に前向きのグリップ）。以前の T 字（席の前の真ん中）は、
+  // 膝をそろえて前へ出した女の子の脚に当たり、女の子の側が上がると腕が届かなかった
+  // （肩から 0.63m。腕は手のひらまで 0.45m）。脇なら脚に当たらず、板のどの角度でも届く
+  const gripMat = new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.8 });
   for (const end of [1, -1]) {
     const seat = add(new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.07, 0.3), seatPaint), end > 0 ? body : beam);
     seat.position.set(end * SEESAW.seatAt, 0.08 + 0.035, 0);
     const handle = new THREE.Group();
-    handle.position.set(end * (SEESAW.seatAt - 0.34), 0.08, 0);
+    handle.position.set(end * (SEESAW.seatAt - HANDLE.forward), 0.08, 0);
     (end > 0 ? body : beam).add(handle);
-    const post = add(new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.36, 8), metal), handle);
-    post.position.y = 0.18;
-    const bar = add(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.34, 8), metal), handle);
-    bar.rotation.x = Math.PI / 2;
-    bar.position.y = 0.36;
+    for (const zs of [-1, 1]) {
+      const z = zs * HANDLE.side;
+      const bracket = add(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, HANDLE.side - 0.09), metal), handle);
+      bracket.position.set(0, -0.03, zs * (0.11 + (HANDLE.side - 0.11) / 2));
+      const post = add(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, HANDLE.height + 0.03, 8), metal), handle);
+      post.position.set(0, (HANDLE.height - 0.03) / 2, z);
+      // グリップ（ゴム）は板の向き（ローカル X）に沿って前へ
+      const grip = add(new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.16, 10), gripMat), handle);
+      grip.rotation.z = Math.PI / 2;
+      grip.position.set(-end * 0.05, HANDLE.height, z);
+    }
     handles.push(handle);
     // 端の下のゴム（地面に着くところ）
     const bumper = add(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.05, 12), new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.9 })), beam);
@@ -138,10 +150,15 @@ export function createSeesaw({ x = -9.6, z = -9.4, yaw = Math.PI / 2, color = 0x
       return beam.localToWorld(out.set(-SEESAW.seatAt, 0.08 + 0.07, 0));
     },
     girlYaw() { return yaw; },
-    /** 女の子の取っ手の握る所（左右） */
+    /** 女の子の取っ手の握る所（side = 1 / -1 で、板の両脇のどちらか。グリップの真ん中） */
     girlHandle(side, out = new THREE.Vector3()) {
       handles[1].updateMatrixWorld(true);
-      return handles[1].localToWorld(out.set(0, 0.36, side * 0.12));
+      return handles[1].localToWorld(out.set(0.05, HANDLE.height, side * HANDLE.side));
+    },
+    /** 女の子の取っ手（グリップ）の向き（ワールド、支点のほう = 女の子の前）。握る手の親指の側 */
+    girlHandleAxis(out = new THREE.Vector3()) {
+      beam.updateMatrixWorld(true);
+      return out.set(1, 0, 0).transformDirection(beam.matrixWorld);
     },
     /** 女の子の乗り降りする所 */
     girlSide(out = new THREE.Vector3()) {

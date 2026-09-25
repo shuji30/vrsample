@@ -34,6 +34,7 @@ export function createBurankoGame({ character, buranko, voice = null }) {
   const side = new THREE.Vector3();
   const left = new THREE.Vector3();
   const right = new THREE.Vector3();
+  const gripAxis = new THREE.Vector3();
   const gaze = new THREE.Object3D();
   gaze.userData = { held: false, velocity: new THREE.Vector3() };
 
@@ -78,15 +79,30 @@ export function createBurankoGame({ character, buranko, voice = null }) {
     return path.length === 0;
   }
 
+  /**
+   * 席の上に腰を下ろす位置。ふつうの座り方は腰が座る点より前に出るので、0.1m 後ろへ
+   * ずらして、鎖が体の両脇を通るようにする（そのままだと鎖が背中の後ろにあって握れない）
+   */
   function seatPoint(out) {
     buranko.girlSeat(out);
+    const yaw = buranko.girlYaw();
+    out.x -= Math.sin(yaw) * 0.1;
+    out.z -= Math.cos(yaw) * 0.1;
     out.y = body.seatRootY(out.y);
     return out;
   }
+  /** 両脇の鎖を握る。どちらが左手かは体の向きから */
   function holdChains() {
     buranko.girlChain(1, left);
     buranko.girlChain(-1, right);
-    body.reachHands({ left: { target: left, amount: 1 }, right: { target: right, amount: 1 } });
+    const lx = Math.cos(body.yaw);
+    const lz = -Math.sin(body.yaw);
+    const leftness = (p) => (p.x - body.position.x) * lx + (p.z - body.position.z) * lz;
+    if (leftness(left) < leftness(right)) { const t = left.clone(); left.copy(right); right.copy(t); }
+    // 拳の穴を鎖に通す（親指は上）
+    const axis = buranko.girlChainAxis(gripAxis);
+    body.reachHands({ left: { target: left, amount: 1, grip: axis }, right: { target: right, amount: 1, grip: axis } });
+    body.setGrip(1);
   }
 
   /** プレイヤーに揺れをそろえるように、こぐ力を決める */
@@ -130,6 +146,7 @@ export function createBurankoGame({ character, buranko, voice = null }) {
         body.turnTowards(buranko.girlYaw(), dt);
         if (k > 0.5) body.setYaw(buranko.girlYaw());
         body.setSeat(e, 'upright');
+        body.setFootFloor(0);
         if (k > 0.4) holdChains();
         if (k >= 1) { state = 'ride'; buranko.girlSeated = true; voice?.say('burankoReady'); }
         break;
@@ -166,7 +183,7 @@ export function createBurankoGame({ character, buranko, voice = null }) {
         side.y = 0;
         body.position.lerpVectors(from, side, e);
         body.setSeat(1 - e, 'upright');
-        if (k > 0.5) body.reachHands(null);
+        if (k > 0.5) { body.reachHands(null); body.setGrip(0); }
         if (k >= 1) { body.setSeat(0, 'upright'); body.position.y = 0; finish(); }
         break;
       }
@@ -188,6 +205,8 @@ export function createBurankoGame({ character, buranko, voice = null }) {
 
   function finish() {
     body.reachHands(null);
+    body.setGrip(0);
+    body.setFootFloor(null);
     body.setAttend(true);
     buranko.girlSeated = false;
     state = 'off';

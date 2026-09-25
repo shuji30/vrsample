@@ -45,20 +45,72 @@ export function outOfPond(x, z, margin = 0) {
   return { x: POND.cx + dx / k * 1.001, z: POND.cz + dz / k * 1.001 };
 }
 
+/**
+ * 釣れた魚。口に針が掛かって、頭を上・尾を下にぶら下がる形（原点が口）。
+ * 胴は横から平たい紡錘形（旋盤の回転体を横に押しつぶす）、尾びれは二股の平たい板、
+ * 背びれ・胸びれ・目・白い腹。以前は球と円すいで、吊るとイカのように見えた。
+ */
 function fishMesh(kind, lengthCm) {
   const g = new THREE.Group();
-  const s = lengthCm / 100;
-  const mat = new THREE.MeshStandardMaterial({ color: kind.color, roughness: 0.35, metalness: 0.25 });
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 10), mat);
-  body.scale.set(0.28 * s, 0.4 * s, 1.0 * s);
-  g.add(body);
-  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.2 * s, 0.3 * s, 8), mat);
-  tail.rotation.x = -Math.PI / 2;
-  tail.scale.set(0.3, 1, 1.4);
-  tail.position.z = -0.6 * s;
-  g.add(tail);
-  // 頭を下にぶら下げる（口に糸）
-  g.rotation.x = Math.PI / 2;
+  const L = lengthCm / 100;
+  const color = new THREE.Color(kind.color);
+  const skin = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.3 });
+  const belly = new THREE.MeshStandardMaterial({ color: color.clone().lerp(new THREE.Color(0xf4f1e8), 0.75), roughness: 0.4, metalness: 0.15 });
+  const fin = new THREE.MeshStandardMaterial({ color: color.clone().multiplyScalar(0.8), roughness: 0.5, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+  // 胴：口（y = 0）から尾の付け根（y = -0.8L）まで。いちばん太いのは頭寄り
+  const profile = [];
+  const N = 14;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const r = 0.5 * Math.sin(Math.PI * Math.pow(t, 0.75)) * (1 - 0.35 * t) + (i === N ? 0.04 : 0);
+    profile.push(new THREE.Vector2(Math.max(0.001, r * 0.28 * L), -t * 0.8 * L));
+  }
+  const bodyGeo = new THREE.LatheGeometry(profile, 18);
+  const bodyMesh = new THREE.Mesh(bodyGeo, skin);
+  bodyMesh.scale.set(0.55, 1, 1);          // 横（x）に押しつぶして平たく
+  bodyMesh.castShadow = true;
+  g.add(bodyMesh);
+  // 腹（手前 -z の下側を白く）：少し小さい同じ形を前へずらして重ねる
+  const bellyMesh = new THREE.Mesh(bodyGeo, belly);
+  bellyMesh.scale.set(0.5, 0.92, 0.8);
+  bellyMesh.position.set(0, -0.03 * L, -0.03 * L);
+  g.add(bellyMesh);
+  // 尾びれ（二股）：尾の付け根から下へ
+  const tail = new THREE.Shape();
+  const w = 0.2 * L;
+  tail.moveTo(0, 0);
+  tail.lineTo(-w, -0.22 * L);
+  tail.quadraticCurveTo(0, -0.12 * L, w, -0.22 * L);
+  tail.lineTo(0, 0);
+  const tailMesh = new THREE.Mesh(new THREE.ShapeGeometry(tail), fin);
+  tailMesh.rotation.y = Math.PI / 2;        // 板を体の縦の面（y-z）に
+  tailMesh.position.y = -0.78 * L;
+  g.add(tailMesh);
+  // 背びれ（+z 側）・腹びれ（-z 側）
+  const tri = (h, len) => { const sh = new THREE.Shape(); sh.moveTo(0, 0); sh.lineTo(h, -len * 0.3); sh.lineTo(0, -len); sh.lineTo(0, 0); return new THREE.ShapeGeometry(sh); };
+  const dorsal = new THREE.Mesh(tri(0.1 * L, 0.3 * L), fin);
+  dorsal.rotation.y = -Math.PI / 2;
+  dorsal.position.set(0, -0.25 * L, 0.11 * L);
+  g.add(dorsal);
+  const anal = new THREE.Mesh(tri(0.06 * L, 0.16 * L), fin);
+  anal.rotation.y = Math.PI / 2;
+  anal.position.set(0, -0.55 * L, -0.07 * L);
+  g.add(anal);
+  // 胸びれ（左右）と目
+  for (const side of [-1, 1]) {
+    const pec = new THREE.Mesh(tri(0.07 * L, 0.12 * L), fin);
+    pec.rotation.set(0, side * 0.5, side * 0.3);
+    pec.position.set(side * 0.06 * L, -0.2 * L, -0.02 * L);
+    g.add(pec);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.022 * L + 0.003, 10, 8), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.15 }));
+    eye.position.set(side * 0.072 * L, -0.07 * L, 0.02 * L);
+    g.add(eye);
+    const ring = new THREE.Mesh(new THREE.SphereGeometry(0.03 * L + 0.003, 10, 8), new THREE.MeshStandardMaterial({ color: 0xe8d9a0, roughness: 0.3 }));
+    ring.scale.set(0.4, 1, 1);
+    ring.position.set(side * 0.066 * L, -0.07 * L, 0.02 * L);
+    g.add(ring);
+  }
+  g.userData.length = 0.8 * L + 0.2 * L;
   return g;
 }
 
@@ -382,7 +434,7 @@ export function createFishing({ scene, onEvent = null } = {}) {
         // 竿先から 40cm 下に魚をぶら下げて見せる
         bobber.position.set(tip.x, tip.y - 0.45, tip.z);
         if (fish) {
-          fish.position.set(tip.x, tip.y - 0.55 - (fish.children[0].scale.z * 0.5), tip.z);
+          fish.position.set(tip.x, tip.y - 0.52, tip.z);   // 口（原点）を浮きの少し下の針の所に
           fish.rotation.y = Math.sin(state.timer * 6) * 0.5;
         }
         if (state.timer > 3 || (press && state.timer > 0.6)) {
@@ -438,7 +490,7 @@ export function createFishing({ scene, onEvent = null } = {}) {
       }
     } else if (girl.phase === 'show') {
       if (girl.fish) {
-        girl.fish.position.set(girlTip.x, girlTip.y - 0.55 - girl.fish.children[0].scale.z * 0.5, girlTip.z);
+        girl.fish.position.set(girlTip.x, girlTip.y - 0.52, girlTip.z);
         girl.fish.rotation.y = Math.sin(girl.timer * 6) * 0.5;
       }
       if (girl.timer > 2.8) {

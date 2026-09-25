@@ -583,6 +583,9 @@ export function createWorld(renderer, scene, {
       catchGame?.suspend();
       tennisGame.start();
     }
+    // ブランコの女の子の席は、女の子を座らせる（burankoGame）前に進める。あとで進めると、
+    // 体と手が 1 フレーム前の席と鎖に合わせたままになり、こいでいるあいだ手が鎖から離れて見えた
+    buranko.updateGirl(dt);
     if (kartGame?.active) kartGame.update(dt);
     else if (bikeGame?.active) { /* 下で動かす */ } else if (seesawGame?.active) seesawGame.update(dt);
     else if (burankoGame?.active) burankoGame.update(dt);
@@ -595,8 +598,7 @@ export function createWorld(renderer, scene, {
     // プレイヤーが乗っていないシーソーは、ゆっくりプレイヤーの側へ下りて止まる
     if (!seesawGame?.wanted) seesaw.update(dt, {});
     fireworks.update(dt, camera);
-    // ブランコ：女の子の席はいつも、プレイヤーの席は乗っていないときだけ、ここで動かす
-    buranko.updateGirl(dt);
+    // ブランコ：プレイヤーの席は乗っていないときだけ、ここで動かす（女の子の席は上で先に）
     if (!burankoGame?.wanted) buranko.settle(dt);
     // 女の子の竿（座って釣っているあいだだけ出す）
     fishing.updateGirl(dt, Boolean(fishingGame?.seated));

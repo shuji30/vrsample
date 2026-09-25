@@ -275,6 +275,9 @@ const REACTION_FACES = ['happy', 'relaxed', 'surprised', 'aa', 'ih', 'ou', 'ee',
 /** 口の形（しゃべるとき voice.js が入れる） */
 const MOUTH_SHAPES = ['aa', 'ih', 'ou', 'ee', 'oh'];
 
+/** 立っているときの、足の裏から足首・つま先のボーンまでの高さ（m。いまのモデルで測った値） */
+const FOOT_SOLE = { ankle: 0.085, toes: 0.032 };
+
 const POSE_BONES = [...new Set([
   ...Object.keys(STAND_POSE), ...Object.keys(SIT_POSE), ...Object.keys(CROSS_LEGS),
   ...Object.keys(LOUNGE_POSE), ...Object.keys(KART_POSE), ...Object.keys(NAP_POSE), 'hips', 'neck', 'head',
@@ -295,6 +298,16 @@ const FINGER_CURL = {
   Middle: [0.62, 0.72, 0.48],
   Ring: [0.72, 0.78, 0.50],
   Little: [0.82, 0.82, 0.50],
+};
+/**
+ * 棒を握った手（シーソーの取っ手・ブランコの鎖・竿・ハンドル）。付け根から深く曲げて、
+ * 指先が手のひらへ回り込む形。親指は棒の反対側から押さえる
+ */
+const FINGER_GRIP = {
+  Index: [1.15, 1.25, 0.85],
+  Middle: [1.25, 1.3, 0.85],
+  Ring: [1.3, 1.3, 0.85],
+  Little: [1.35, 1.3, 0.85],
 };
 
 /**
@@ -532,6 +545,10 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let attend = false;                       // ボールを見ていないときは相手（camera）の顔を見る
   let handOpen = 0;                         // 指の開き（0 = 軽く握る）
   let handOpenWant = 0;
+  let grip = 0;                             // 棒を握る（1 = しっかり握る）
+  let gripWant = 0;
+  /** 座っているとき、足の裏をこの高さ（ワールド）より下へ下ろさない。null で使わない */
+  let footFloor = null;
   // 笑顔のリアクション。いまの顔の重みを faceNow に持って、目標へ寄せる
   let reaction = null;                      // { recipe, start, until, strength }
   let lastReaction = '';
@@ -549,8 +566,8 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let throwPose = null;
   /** 片手ずつの目標。投球中は両手で 1 点ではなく、左右が別々に動く */
   const hands = {
-    left: { target: new THREE.Vector3(), amount: 0, pole: null },
-    right: { target: new THREE.Vector3(), amount: 0, pole: null },
+    left: { target: new THREE.Vector3(), amount: 0, pole: null, axis: null },
+    right: { target: new THREE.Vector3(), amount: 0, pole: null, axis: null },
     active: false,
   };                       // 姿勢が決まったあとに呼ぶ（持ったボールを手に付ける）
 
@@ -772,14 +789,14 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       for (const [finger, curls] of Object.entries(FINGER_CURL)) {
         ['Proximal', 'Intermediate', 'Distal'].forEach((joint, i) => {
           const node = humanoid.getNormalizedBoneNode(`${side}${finger}${joint}`);
-          if (node) fingerNodes.push({ node, axis: 'z', angle: sign * curls[i] });
+          if (node) fingerNodes.push({ node, axis: 'z', angle: sign * curls[i], grip: sign * FINGER_GRIP[finger][i] });
         });
       }
       // 親指は人差し指の脇へ寄せて、先を少し曲げる
       const thumb = humanoid.getNormalizedBoneNode(`${side}ThumbProximal`);
-      if (thumb) fingerNodes.push({ node: thumb, axis: 'y', angle: sign * -0.45 });
+      if (thumb) fingerNodes.push({ node: thumb, axis: 'y', angle: sign * -0.45, grip: sign * -0.75 });
       const thumbTip = humanoid.getNormalizedBoneNode(`${side}ThumbDistal`);
-      if (thumbTip) fingerNodes.push({ node: thumbTip, axis: 'y', angle: sign * -0.35 });
+      if (thumbTip) fingerNodes.push({ node: thumbTip, axis: 'y', angle: sign * -0.35, grip: sign * -0.6 });
     }
     applyFingers(0);
   }
@@ -790,10 +807,11 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
    */
   function applyFingers(dt) {
     handOpen += (handOpenWant - handOpen) * Math.min(1, dt * 8);
+    grip += (gripWant - grip) * Math.min(1, dt * 10);
     const k = 1 - handOpen * 0.7;
     for (const f of fingerNodes) {
       f.node.rotation.set(0, 0, 0);
-      f.node.rotation[f.axis] = f.angle * k;
+      f.node.rotation[f.axis] = (f.angle + (f.grip - f.angle) * grip) * k;
     }
   }
 
@@ -1624,10 +1642,63 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
     const a = lower.position.length();
     const b = hand.position.length();
+    // target は手のひらの中心。手首は曲げないので、手のひらは前腕の延長 7cm 先にある。
+    // 「前腕 + 手のひら」を 1 本の骨（長さ b + 0.07）として、その先を target に合わせて解く。
+    // 以前は手首を「肩→target の向きに 7cm 手前」に置いていて、肘を曲げて棒を握るときに
+    // 手のひらが 6〜13cm ずれ、握っていないように見えた（くり返し解き直しても収束しなかった）
+    solveTwoBone(side, upper, lower, hand, a, b + 0.07, target, amount, poleOverride);
+  }
+
+  /**
+   * 棒を握る腕。拳の穴（握った指の輪の中心）が target に、穴の向き（親指の側）が axis に
+   * そろうように、手首の位置と手の向きを決める。
+   *
+   * 正規化ボーンの手は、休止姿勢で 左手の指が +X・右手の指が -X、手のひらは -Y、親指は +Z
+   * （指は Z まわりに曲がるので、拳の穴は Z 向き）。握る向き F は肩から棒への向き（axis に
+   * 直角な成分）にして、手首がなるべく曲がらないようにする。手のひら P は F と axis から
+   * 決まる（左手 P = F × axis、右手 P = axis × F）。穴の中心は手首から F に 5.2cm・P に 1.8cm
+   * （握った中指の付け根・中・先の関節の位置から測った。7.5cm と見積もっていたときは、
+   * 棒が拳の外を通っていた）
+   */
+  const GRIP_HOLE = { along: 0.052, palm: 0.018 };
+  const _gF = new THREE.Vector3();
+  const _gP = new THREE.Vector3();
+  const _gT = new THREE.Vector3();
+  const _gW = new THREE.Vector3();
+  const _gM = new THREE.Matrix4();
+  const _gQ = new THREE.Quaternion();
+  const _gX = new THREE.Vector3();
+  const _gY = new THREE.Vector3();
+  function solveGrip(side, target, axis, amount, poleOverride) {
+    const upper = bones[`${side}UpperArm`];
+    const lower = bones[`${side}LowerArm`];
+    const hand = bones[`${side}Hand`];
+    if (!upper || !lower || !hand) return;
+    _gT.copy(axis);
     upper.getWorldPosition(_a);
-    _dir.subVectors(target, _a);
-    // target は手のひらの中心。手首はそこから手のひらぶん（7cm）手前に置く
-    const d = clamp(_dir.length() - 0.07, Math.abs(a - b) + 0.01, (a + b) * 0.985);
+    _gF.subVectors(target, _a);
+    _gF.addScaledVector(_gT, -_gF.dot(_gT));
+    if (_gF.lengthSq() < 1e-6) _gF.set(Math.sin(yaw), 0, Math.cos(yaw));
+    _gF.normalize();
+    if (side === 'left') _gP.crossVectors(_gF, _gT); else _gP.crossVectors(_gT, _gF);
+    _gW.copy(target).addScaledVector(_gF, -GRIP_HOLE.along).addScaledVector(_gP, -GRIP_HOLE.palm);
+    solveTwoBone(side, upper, lower, hand, lower.position.length(), hand.position.length(), _gW, amount, poleOverride);
+    // 手の向き：X = 指（左）/ 指の逆（右）、Y = 手の甲（-P）、Z = 親指（axis）
+    _gX.copy(_gF).multiplyScalar(side === 'left' ? 1 : -1);
+    _gY.copy(_gP).negate();
+    _gM.makeBasis(_gX, _gY, _gT);
+    _gQ.setFromRotationMatrix(_gM);
+    hand.parent.getWorldQuaternion(_pq);
+    _bq.copy(_pq).invert().multiply(_gQ);
+    hand.quaternion.slerp(_bq, amount);
+    hand.updateMatrixWorld(true);
+  }
+
+  /** 肩-肘の 2 関節を、先の骨（長さ b。前腕 + 手のひら）の先が wrist に来るように解く */
+  function solveTwoBone(side, upper, lower, hand, a, b, wrist, amount, poleOverride) {
+    upper.getWorldPosition(_a);
+    _dir.subVectors(wrist, _a);
+    const d = clamp(_dir.length(), Math.abs(a - b) + 0.01, (a + b) * 0.985);
     _dir.normalize();
     _goal.copy(_a).addScaledVector(_dir, d);
 
@@ -1738,6 +1809,51 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     return true;
   }
 
+  /**
+   * 座っていて足が footFloor より下へ行くとき（シーソーのいちばん下など）、膝を伸ばして
+   * 足を前の地面に着ける。膝を上げて縮める向きにすると、短いスカートの中が前から
+   * 見えてしまうので、脛を前へ出す向きにだけ直す。足首は、脛を前へ出したぶん
+   * つま先を下げて、足の裏を地面にそわせる。
+   * 足の裏は、立っているときの足首・つま先の高さ（FOOT_SOLE）で見積もる
+   */
+  const _floorA = new THREE.Vector3();
+  function soleY(side) {
+    const foot = bones[`${side}Foot`];
+    const toes = bones[`${side}Toes`];
+    foot.getWorldPosition(_floorA);
+    let y = _floorA.y - FOOT_SOLE.ankle;
+    if (toes) { toes.getWorldPosition(_floorA); y = Math.min(y, _floorA.y - FOOT_SOLE.toes); }
+    return y;
+  }
+  function applyFootFloor() {
+    if (footFloor === null || !driver || sitAmount < 0.3) return;
+    group.updateMatrixWorld(true);
+    for (const side of ['left', 'right']) {
+      const lower = bones[`${side}LowerLeg`];
+      const foot = bones[`${side}Foot`];
+      if (!lower || !foot) continue;
+      const bend = lower.rotation.x;
+      const ankle = foot.rotation.x;
+      const set = (b) => {
+        lower.rotation.x = b;
+        foot.rotation.x = ankle + (bend - b) * 0.8;
+        lower.updateMatrixWorld(true);
+      };
+      if (soleY(side) >= footFloor) continue;
+      // 膝の曲げを、足が床に着くところまで伸ばす（二分法。伸ばしきっても届かなければ伸ばしきる）
+      let lo = Math.min(0, bend);
+      let hi = bend;
+      set(lo);
+      if (soleY(side) < footFloor) continue;
+      for (let i = 0; i < 10; i++) {
+        const mid = (lo + hi) / 2;
+        set(mid);
+        if (soleY(side) >= footFloor) lo = mid; else hi = mid;
+      }
+      set(lo);
+    }
+  }
+
   function applyArms(dt) {
     if (applySeatedArms()) return;
     if (armFollow) {
@@ -1754,7 +1870,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       group.updateMatrixWorld(true);
       for (const side of ['left', 'right']) {
         const hand = hands[side];
-        if (hand.amount > 0.001) solveArm(side, hand.target, hand.amount, hand.pole);
+        if (hand.amount <= 0.001) continue;
+        if (hand.axis) solveGrip(side, hand.target, hand.axis, hand.amount, hand.pole);
+        else solveArm(side, hand.target, hand.amount, hand.pole);
       }
       palmCenter(catchPoint);
       return;
@@ -1819,6 +1937,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       driver = next;
       kartSeat = 0;
       skirtOnLegs(false);
+      // 握り・足の床は、体を任された遊びごとに入れ直す（前の遊びのものを持ち越さない）
+      gripWant = 0;
+      footFloor = null;
       if (!next) {
         crouchWant = 0; bendWant = 0; armWant = 0;
         attend = false; handOpenWant = 0;
@@ -1903,6 +2024,10 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     get reactionName() { return reaction && elapsed < reaction.until ? reaction.name : null; },
     /** 指を開く度合い（0 = 軽く握る、1 = 開く） */
     setHandOpen(value) { handOpenWant = clamp01(value); },
+    /** 棒を握る（0〜1）。取っ手・鎖・竿・ハンドルを持つあいだ 1 */
+    setGrip(value) { gripWant = clamp01(value); },
+    /** 座っているとき、足の裏をこの高さより下へ下ろさない（地面なら 0。null でやめる） */
+    setFootFloor(y) { footFloor = y ?? null; },
     /** 投球の体幹・脚の姿勢。null で解除 */
     setThrowPose(pose) { throwPose = pose; },
     /**
@@ -1940,6 +2065,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
         hands[side].amount = src ? clamp01(src.amount ?? 1) : 0;
         if (src?.target) hands[side].target.copy(src.target);
         hands[side].pole = src?.pole ?? null;
+        // 棒を握る：axis は握る棒の向き（親指の側）。target は棒の中心（拳の穴）になる
+        if (src?.grip) hands[side].axis = (hands[side].axis ?? new THREE.Vector3()).copy(src.grip).normalize();
+        else hands[side].axis = null;
       }
     },
     /** 片手の手のひらの中心（ワールド） */
@@ -1977,6 +2105,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     applyGaze(dt);
     applyCrouch(dt);
     applyThrow();
+    applyFootFloor();
     applyArms(dt);
     applyFingers(dt);
     onPosed?.();

@@ -9,7 +9,7 @@ import * as THREE from 'three';
  * 火の粉はすべて 1 つの Points にまとめ、毎フレーム CPU で動かす（VR の 2 回描きでも軽い）。
  *
  * 夜のテーマは霧が近い（38m で見えなくなる）ので、花火は霧を受けない（fog: false）。
- * 音は、開いた所からの距離ぶん遅れて（音速 343m/s）、ドンと鳴る。
+ * 音は、開いた所からの距離ぶん遅れて（音速 343m/s）、ドン・バン・ゴロゴロと鳴る（柳と二重の輪はパチパチも）。
  */
 
 const MAX = 4000;
@@ -33,34 +33,81 @@ function glowTexture() {
   return texture;
 }
 
-/** 遠くで鳴る「ドン」。雑音を低く絞って、短く減衰させる */
+/**
+ * 花火の音。開いたところから、距離ぶん遅れて鳴る。
+ *   ドン：低い正弦波を 90Hz から 35Hz へ下げる（胸に響く音）
+ *   バン：雑音を 1.2kHz より下で鳴らす破裂音
+ *   ゴロゴロ：低い雑音を 2 秒ほど残す（遠くの山にこだまする感じ）
+ *   パチパチ：柳・二重の輪のあとに、小さなはじける音を散らす
+ * 以前は雑音を 260Hz より下だけ残した「ドン」ひとつで、元の音のエネルギーがほとんど削れ、
+ * 70m 先の距離でさらに小さくしていたので、ほとんど聞こえなかった。
+ */
 function createBoom() {
   let context = null;
   let noise = null;
+  let out = null;
   function ensure() {
     if (context) return context;
     if (typeof navigator !== 'undefined' && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
     const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
     if (!AudioContextClass) return null;
     try { context = new AudioContextClass(); } catch { return null; }
-    noise = context.createBuffer(1, context.sampleRate * 1.5, context.sampleRate);
+    noise = context.createBuffer(1, context.sampleRate * 2.5, context.sampleRate);
     const data = noise.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (context.sampleRate * 0.35));
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    // 重なって割れないように、まとめて圧縮してから出す
+    const comp = context.createDynamicsCompressor();
+    comp.threshold.value = -14;
+    comp.ratio.value = 6;
+    out = context.createGain();
+    out.gain.value = 1;
+    out.connect(comp).connect(context.destination);
     return context;
   }
+  function envelope(gain, at, peak, attack, decay) {
+    gain.gain.setValueAtTime(0.0001, at);
+    gain.gain.exponentialRampToValueAtTime(peak, at + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + attack + decay);
+  }
+  function noiseBurst(at, { type = 'lowpass', freq, q = 0.7, peak, attack = 0.004, decay, offset = 0 }) {
+    const src = context.createBufferSource();
+    src.buffer = noise;
+    const filter = context.createBiquadFilter();
+    filter.type = type;
+    filter.frequency.value = freq;
+    filter.Q.value = q;
+    const gain = context.createGain();
+    envelope(gain, at, peak, attack, decay);
+    src.connect(filter).connect(gain).connect(out);
+    src.start(at, offset);
+    src.stop(at + attack + decay + 0.05);
+  }
   return {
-    play(delay, volume) {
+    /** delay 秒あとに鳴らす。volume は 0〜1、crackle でパチパチも */
+    play(delay, volume, crackle = false) {
       if (!ensure()) return;
       if (context.state === 'suspended') context.resume().catch(() => {});
-      const src = context.createBufferSource();
-      src.buffer = noise;
-      const filter = context.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.value = 260;
-      const gain = context.createGain();
-      gain.gain.value = volume;
-      src.connect(filter).connect(gain).connect(context.destination);
-      src.start(context.currentTime + delay);
+      const at = context.currentTime + delay;
+      // ドン
+      const osc = context.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(90, at);
+      osc.frequency.exponentialRampToValueAtTime(35, at + 0.6);
+      const g = context.createGain();
+      envelope(g, at, volume, 0.006, 0.9);
+      osc.connect(g).connect(out);
+      osc.start(at);
+      osc.stop(at + 1.0);
+      // バン
+      noiseBurst(at, { freq: 1200, peak: volume * 0.8, decay: 0.45, offset: Math.random() });
+      // ゴロゴロ
+      noiseBurst(at + 0.05, { freq: 160, peak: volume * 0.9, attack: 0.08, decay: 2.2, offset: Math.random() });
+      // パチパチ
+      if (crackle) {
+        for (let i = 0; i < 26; i++) {
+          noiseBurst(at + 0.5 + Math.random() * 1.6, { type: 'bandpass', freq: 2500 + Math.random() * 3000, q: 2, peak: volume * (0.12 + Math.random() * 0.2), attack: 0.002, decay: 0.03, offset: Math.random() * 2 });
+        }
+      }
     },
   };
 }
@@ -144,7 +191,8 @@ export function createFireworks({ scene, onBurst = null } = {}) {
         remove();
         burst(q.p, q.burst);
         const distance = listener.distanceTo(q.p);
-        boom.play(distance / 343, Math.min(0.5, 18 / distance));
+        // 遠いほど小さく。ただし 0.35 より小さくしない（庭から 70m 先でも、ちゃんと聞こえるように）
+        boom.play(distance / 343, THREE.MathUtils.clamp(30 / distance, 0.35, 0.9), q.burst.type !== 'peony');
         continue;
       }
       if (q.age >= q.life) remove();

@@ -1,14 +1,15 @@
 import * as THREE from 'three';
+import { SEA_LEVEL } from './hill.js';
 
 /**
- * 夜の花火。テーマが夜のあいだ、公園の奥（テニスコートのずっと向こう）で打ち上げる。
- * 庭からも家の窓からも、コートの向こうの空に見える。
+ * 夜の花火。テーマが夜のあいだ、丘の北の沖の海（テニスコートのずっと向こう）から打ち上げる。
+ * 庭からも家の窓からも、コートの向こうの海の上の空に見える。
  *
- * 1 発ごとに、火の玉が昇って、高さ 28〜42m で開く。開くと 110〜160 個の火の粉が
- * 丸く（半径 15m ほど）広がり、重力と空気の抵抗で垂れながら消える。種類は 3 つ（牡丹・柳・二重の輪）。
+ * 1 発ごとに、火の玉が海から昇って、丘の上から 28〜45m の高さで開く。開くと 110〜160 個の火の粉が
+ * 丸く（半径 22m ほど。丘から 110m 以上離れているので大きめ）広がり、重力と空気の抵抗で垂れながら消える。種類は 3 つ（牡丹・柳・二重の輪）。
  * 火の粉はすべて 1 つの Points にまとめ、毎フレーム CPU で動かす（VR の 2 回描きでも軽い）。
  *
- * 夜のテーマは霧が近い（38m で見えなくなる）ので、花火は霧を受けない（fog: false）。
+ * 花火は霧を受けない（fog: false。遠くても明るく見えるように）。
  * 音は、開いた所からの距離ぶん遅れて（音速 343m/s）、ドン・バン・ゴロゴロと鳴る（柳と二重の輪はパチパチも）。
  */
 
@@ -137,8 +138,9 @@ export function createFireworks({ scene, onBurst = null } = {}) {
   const listener = new THREE.Vector3();
 
   function launch() {
-    const from = new THREE.Vector3(THREE.MathUtils.randFloat(-14, 14), 0, THREE.MathUtils.randFloat(-75, -60));
-    const height = THREE.MathUtils.randFloat(28, 42);
+    // 丘の北の沖の海から打ち上げる（海岸は z -90 あたり）。開く高さは丘の上から見て 28〜45m
+    const from = new THREE.Vector3(THREE.MathUtils.randFloat(-30, 30), SEA_LEVEL, THREE.MathUtils.randFloat(-135, -105));
+    const height = THREE.MathUtils.randFloat(28, 45) - SEA_LEVEL;
     // 昇る速さ：その高さでちょうど止まる（v² = 2gh）
     const v = new THREE.Vector3(THREE.MathUtils.randFloat(-1, 1), Math.sqrt(-2 * GRAVITY * height), THREE.MathUtils.randFloat(-1, 1));
     parts.push({ p: from, v, color: new THREE.Color(0xffd9a0), life: v.y / -GRAVITY, age: 0, drag: 0, kind: 'rocket', burst: pickBurst() });
@@ -157,8 +159,8 @@ export function createFireworks({ scene, onBurst = null } = {}) {
       const phi = Math.acos(1 - 2 * t);
       const theta = Math.PI * (1 + Math.sqrt(5)) * i;
       const dir = new THREE.Vector3(Math.sin(phi) * Math.cos(theta), Math.cos(phi), Math.sin(phi) * Math.sin(theta));
-      // 開く大きさ（半径）はおよそ 速さ / 抵抗。牡丹で 15m ほど（60m 先で空の 1/4 ほど）
-      let speed = b.type === 'willow' ? 11 : 16;
+      // 開く大きさ（半径）はおよそ 速さ / 抵抗。牡丹で 22m ほど
+      let speed = b.type === 'willow' ? 16 : 23;
       let color = b.color;
       if (b.type === 'ring' && i % 2) { speed *= 0.55; color = b.color2; }
       parts.push({

@@ -15,9 +15,10 @@ export const THEMES = {
 
     skyTop: 0x3b7fd6,
     skyBottom: 0xcfe6f7,
+    // 霧は遠くまで（丘から海と沖の島が見えるように）。以前は 48m で白く溶かして、世界の端を隠していた
     fog: 0xcfe0ee,
-    fogNear: 10,
-    fogFar: 48,
+    fogNear: 60,
+    fogFar: 1500,
 
     sunColor: 0xfff4e2,
     sunIntensity: 4.2,
@@ -43,9 +44,9 @@ export const THEMES = {
 
     skyTop: 0x2c2a55,
     skyBottom: 0xff9c58,
-    fog: 0xd98a5c,
-    fogNear: 9,
-    fogFar: 42,
+    fog: 0xe6a070,
+    fogNear: 50,
+    fogFar: 1200,
 
     sunColor: 0xffa14e,
     sunIntensity: 3.1,
@@ -70,9 +71,9 @@ export const THEMES = {
 
     skyTop: 0x04060f,
     skyBottom: 0x111c3c,
-    fog: 0x0a1022,
-    fogNear: 8,
-    fogFar: 38,
+    fog: 0x0e1730,
+    fogNear: 30,
+    fogFar: 700,
 
     // 夜の「太陽」は月。青くて弱く、影はうっすら
     sunColor: 0x9fb4ff,

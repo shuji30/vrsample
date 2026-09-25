@@ -103,6 +103,8 @@ export function createWorld(renderer, scene, {
     themeKey = key;
     if (lighting) lighting.setTheme(key);
     if (fireworks) fireworks.active = key === 'night';
+    // 夜は沖の灯台が光る
+    park?.hill?.setNight(key === 'night');
   }
   const furniture = createFurniture(scene, tex, (key) => applyTheme(key));
 
@@ -627,6 +629,7 @@ export function createWorld(renderer, scene, {
     // プレイヤーが乗っていないシーソーは、ゆっくりプレイヤーの側へ下りて止まる
     if (!seesawGame?.wanted) seesaw.update(dt, {});
     fireworks.update(dt, camera);
+    park.hill.update(dt);
     // ブランコ：プレイヤーの席は乗っていないときだけ、ここで動かす（女の子の席は上で先に）
     if (!burankoGame?.wanted) buranko.settle(dt);
     // 女の子の竿（座って釣っているあいだだけ出す）

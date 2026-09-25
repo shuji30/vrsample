@@ -212,7 +212,7 @@ vrButton.addEventListener('click', (event) => {
 
 const scene = new THREE.Scene();
 // 天球が半径 300 あるので far はそれより外に取る
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 500);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 4000);   // 丘から海の沖まで
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;

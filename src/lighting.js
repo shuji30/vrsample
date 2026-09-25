@@ -157,6 +157,7 @@ export function createLighting(renderer, scene, { windows, lampSockets, skyUnifo
 
     skyUniforms.topColor.value.setHex(theme.skyTop);
     skyUniforms.bottomColor.value.setHex(theme.skyBottom);
+    skyUniforms.horizonColor?.value.setHex(theme.fog);
 
     if (!scene.fog) scene.fog = new THREE.Fog(theme.fog, theme.fogNear, theme.fogFar);
     scene.fog.color.setHex(theme.fog);

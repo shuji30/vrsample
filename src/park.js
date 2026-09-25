@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { ROOM } from './room.js';
 import { createKartCourse } from './karttrack.js';
 import { createBikeCourse } from './biketrack.js';
+import { createHill, PLATEAU } from './hill.js';
 
 /**
  * 窓の外の公園。さるすべりの木と滑り台がある。
@@ -207,6 +208,8 @@ function createSky() {
   const uniforms = {
     topColor: { value: new THREE.Color(0x2a6bd4) },
     bottomColor: { value: new THREE.Color(0xbfe4ff) },
+    // 地平線と、その下（霧の色にそろえて、遠くの海が霧に溶けるところと空をつなぐ）
+    horizonColor: { value: new THREE.Color(0xcfe0ee) },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -225,16 +228,27 @@ function createSky() {
     fragmentShader: /* glsl */ `
       uniform vec3 topColor;
       uniform vec3 bottomColor;
+      uniform vec3 horizonColor;
       varying vec3 vWorldPosition;
       void main() {
-        float h = clamp(normalize(vWorldPosition).y * 0.5 + 0.5, 0.0, 1.0);
-        gl_FragColor = vec4(mix(bottomColor, topColor, pow(h, 0.7)), 1.0);
+        // 見ている所からの向き（天球はカメラについてくるが、念のため）
+        float y = normalize(vWorldPosition - cameraPosition).y;
+        vec3 sky = mix(bottomColor, topColor, pow(clamp(y, 0.0, 1.0), 0.55));
+        // 地平線の少し上までは霧の色へ寄せ、地平線より下は霧の色
+        sky = mix(horizonColor, sky, smoothstep(-0.01, 0.12, y));
+        gl_FragColor = vec4(sky, 1.0);
       }
     `,
   });
 
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(300, 32, 16), material);
+  // 海（半径 1900m）より外。カメラについていく（どこにいても地平線が同じ高さに見える）
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(2600, 32, 16), material);
   sky.name = 'sky';
+  sky.frustumCulled = false;
+  sky.onBeforeRender = (renderer, scene, camera) => {
+    camera.getWorldPosition(sky.position);
+    sky.updateMatrixWorld();
+  };
   return { sky, uniforms };
 }
 
@@ -717,7 +731,9 @@ function createBackdrop(tex, seed = 11) {
   hedgeRow({ x: -32.5, z: -36 }, { x: -32.5, z: 6 }, 40);
   hedgeRow({ x: 28.5, z: -36 }, { x: 28.5, z: 6 }, 40);
 
-  treeRow({ x: -34.5, z: -38.5 }, { x: 31, z: -38.5 }, 23);
+  // 奥（北）は、丘の縁から海が見えるように木の列をやめ、両端にだけ木を残す（眺めの額縁）
+  treeRow({ x: -34.5, z: -38.5 }, { x: -24, z: -38.5 }, 5);
+  treeRow({ x: 21, z: -38.5 }, { x: 31, z: -38.5 }, 5);
   treeRow({ x: -34.5, z: -36 }, { x: -34.5, z: 6 }, 17);
   treeRow({ x: 31.5, z: -36 }, { x: 31.5, z: 6 }, 17);
 
@@ -1039,13 +1055,36 @@ export function createPark(scene, tex) {
   const { sky, uniforms: skyUniforms } = createSky();
   scene.add(sky);
 
+  // 丘のまわりの地形と海、丘の北の縁の柵（崖の上。ここから海が見える）
+  const hill = createHill(tex);
+  group.add(hill.group);
+  {
+    const fenceMat = new THREE.MeshStandardMaterial({ color: 0xf2efe6, roughness: 0.7 });
+    const z = PLATEAU.minZ + 0.4;
+    const n = 36;
+    for (let i = 0; i <= n; i++) {
+      const x = PLATEAU.minX + ((PLATEAU.maxX - PLATEAU.minX) * i) / n;
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.1, 0.1), fenceMat);
+      post.position.set(x, 0.55, z);
+      post.castShadow = true;
+      group.add(post);
+    }
+    for (const y of [0.5, 1.0]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(PLATEAU.maxX - PLATEAU.minX, 0.08, 0.05), fenceMat);
+      rail.position.set(0, y, z);
+      rail.castShadow = true;
+      group.add(rail);
+    }
+  }
+
   // --- 地面 ---------------------------------------------------------------
+  // 丘の上の平らな所（hill.js の PLATEAU）。まわりは丘の地形が下っていく
   const lawn = new THREE.Mesh(
-    new THREE.PlaneGeometry(70, 70),
-    tex.material('grass', { sizeX: 70, sizeY: 70, normalScale: new THREE.Vector2(0.6, 0.6) }),
+    new THREE.PlaneGeometry(PLATEAU.maxX - PLATEAU.minX, PLATEAU.maxZ - PLATEAU.minZ),
+    tex.material('grass', { sizeX: PLATEAU.maxX - PLATEAU.minX, sizeY: PLATEAU.maxZ - PLATEAU.minZ, normalScale: new THREE.Vector2(0.6, 0.6) }),
   );
   lawn.rotation.x = -Math.PI / 2;
-  lawn.position.set(0, -0.005, -20);
+  lawn.position.set((PLATEAU.minX + PLATEAU.maxX) / 2, -0.005, (PLATEAU.minZ + PLATEAU.maxZ) / 2);
   lawn.receiveShadow = true;
   group.add(lawn);
 
@@ -1123,5 +1162,5 @@ export function createPark(scene, tex) {
   group.add(createKartCourse({ grass: lawn.material }));
   group.add(createBikeCourse());
 
-  return { group, sky, skyUniforms };
+  return { group, sky, skyUniforms, hill };
 }

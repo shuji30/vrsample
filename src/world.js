@@ -28,6 +28,8 @@ import { createHorse } from './horse.js';
 import { createHorseGame } from './horsegame.js';
 import { createCarousel, carouselBlocks } from './carousel.js';
 import { createCarouselGame } from './carouselgame.js';
+import { createFerrisWheel, ferrisBlocks, FERRIS } from './ferriswheel.js';
+import { createFerrisGame } from './ferrisgame.js';
 import { createCircuit } from './circuit.js';
 import { createGT3 } from './gt3.js';
 import { createGT3Race } from './gt3race.js';
@@ -333,6 +335,18 @@ export function createWorld(renderer, scene, {
     };
   }
 
+  // 家の左の芝生の奥（池の北）の観覧車。プレイヤーがゴンドラに乗ると、女の子も隣に乗る
+  const ferris = createFerrisWheel();
+  scene.add(ferris.group);
+  let ferrisRidden = false;
+  const ferrisGame = camera ? createFerrisGame({ character, ferris, voice }) : null;
+  if (ferrisGame) {
+    ferrisGame.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
+    };
+  }
+
   // 池の奥の厩と馬場。馬に乗ると、はじめは女の子が引き馬で 1 周、そのあとは自分で乗る
   const stable = createStable();
   scene.add(stable.group);
@@ -421,6 +435,9 @@ export function createWorld(renderer, scene, {
     // 家の左の芝生（メリーゴーランド）。庭（x -6 まで）と 0.5m、ポケバイの範囲（z -5.5 まで）と 0.5m 重ねる。
     // 家（x -3 から）には重ならない。回転台の上は clampToBounds で外す
     { minX: -16.5, maxX: -5.5, minZ: -6.0, maxZ: 5.0 },
+    // 観覧車のまわり（池の北、メリーゴーランドの西）。池のまわり（z -5.5 まで）と 0.5m、
+    // メリーゴーランドの芝生（x -16.5 から）と 0.5m 重ねる。脚とゴンドラの通り道は clampToBounds で外す
+    { minX: -31.5, maxX: -16.0, minZ: -6.0, maxZ: 12.0 },
     // 家の右の芝生（GT3 を飾っておく所）。庭（x 6 まで）と 0.5m、カートコースの範囲（z -5 まで）と 0.6m 重ねる
     { minX: 5.5, maxX: 22.0, minZ: -5.6, maxZ: 4.5 },
   ];
@@ -450,7 +467,7 @@ export function createWorld(renderer, scene, {
     // 厩の建物と馬場の柵、メリーゴーランドの回転台も同じように（馬場の入口は通れる）
     // 飾ってある GT3（丘の上にあるとき）も、歩いて通り抜けない
     const gt3Blocks = (x, z) => !gt3.state.atCircuit && Math.abs(x - GT3_PARK.x) < 2.5 + inset && Math.abs(z - GT3_PARK.z) < 1.2 + inset;
-    const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || gt3Blocks(x, z);
+    const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || ferrisBlocks(x, z, inset) || gt3Blocks(x, z);
     if (solid(p.x, p.z)) {
       if (!from || solid(from.x, from.z)) return p;
       if (!solid(p.x, from.z)) return { x: p.x, z: from.z };
@@ -532,13 +549,14 @@ export function createWorld(renderer, scene, {
     let next = shadowAt;
     if (eye.x > KART_TRACK.area.minX + 1.5) next = 'kart';
     else if (eye.x < -5.5 && eye.x > -18.5 && eye.z > -6.5) next = 'carousel';
+    else if (eye.x <= -18.5 && eye.z > -6.5) next = 'ferris';
     else if ((eye.x < -18.5 || (shadowAt === 'stable' && eye.x < -17)) && eye.z < -17.5) next = 'stable';
     else if (eye.x < -18.5 || (shadowAt === 'pond' && eye.x < -17)) next = 'pond';
     else if (eye.x < BIKE_TRACK.area.maxX - 1.5 && eye.z < -13.5) next = 'bike';
     else if (eye.x < KART_TRACK.area.minX - 0.5 || shadowAt !== 'kart') {
       if (shadowAt !== 'court' && eye.z < courtNear - 1.0) next = 'court';
       else if (shadowAt === 'court' && eye.z > courtNear + 1.0) next = 'house';
-      else if (shadowAt === 'kart' || shadowAt === 'bike' || shadowAt === 'pond' || shadowAt === 'stable' || shadowAt === 'carousel' || shadowAt === 'circuit') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
+      else if (shadowAt === 'kart' || shadowAt === 'bike' || shadowAt === 'pond' || shadowAt === 'stable' || shadowAt === 'carousel' || shadowAt === 'ferris' || shadowAt === 'circuit') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
     }
     if (next === shadowAt) return;
     shadowAt = next;
@@ -548,6 +566,7 @@ export function createWorld(renderer, scene, {
     else if (next === 'pond') lighting.setShadowFocus(-24.0, -11.0);
     else if (next === 'stable') lighting.setShadowFocus(-25.0, -26.0);
     else if (next === 'carousel') lighting.setShadowFocus(-9.5, -1.5);
+    else if (next === 'ferris') lighting.setShadowFocus(FERRIS.x + 1, FERRIS.z);
     else if (next === 'court') lighting.setShadowFocus(PARK.court.x, PARK.court.z + 1.5);
     else lighting.setShadowFocus(0, -3.0);
   }
@@ -696,7 +715,15 @@ export function createWorld(renderer, scene, {
         carouselGame.start();
       }
     }
-    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
+    // 観覧車も同じ
+    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && ferrisGame?.wanted && !ferrisGame.active) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        ferrisGame.start();
+      }
+    }
+    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
       catchGame?.suspend();
       tennisGame.start();
     }
@@ -709,6 +736,7 @@ export function createWorld(renderer, scene, {
     else if (fishingGame?.active) fishingGame.update(dt);
     else if (horseGame?.active) horseGame.update(dt);
     else if (carouselGame?.active) carouselGame.update(dt);
+    else if (ferrisGame?.active) ferrisGame.update(dt);
     else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
     }
@@ -735,6 +763,9 @@ export function createWorld(renderer, scene, {
     // メリーゴーランド：乗っていないときは止まるまでゆるめる。音楽は聞く人との距離で
     if (!carouselRidden) carousel.idle(dt);
     if (camera) carousel.listen(camera.getWorldPosition(hearing));
+    // 観覧車：乗っていないときは、無人のままゆっくり回り続ける
+    if (!ferrisRidden) ferris.idle(dt);
+    ferris.setNight(themeKey === 'night');
     kartRace?.update(dt, { driving: Boolean(kartGame?.wanted), seated: Boolean(kartGame?.driving) });
     // カートコースの起伏の上を歩くときは、足元を地面の高さに（カートに乗り降りしているあいだは除く）
     if (character.body.loaded && !['getIn', 'drive', 'stopKart', 'getOut'].includes(kartGame?.state)) {
@@ -891,7 +922,7 @@ export function createWorld(renderer, scene, {
 
   return {
     grabbables,
-    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, gt3.body, ...(corgi ? [corgi.body] : [])],
+    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, gt3.body, ...(corgi ? [corgi.body] : [])],
     floor: room.floor,
     /** 地面の高さ（カートコースの起伏。ほかは 0） */
     groundHeight,
@@ -911,7 +942,13 @@ export function createWorld(renderer, scene, {
     kartRace,
     /** kartdrive.js から：プレイヤーがカートに乗った / 降りた */
     onKartEnter: (v) => {
-      if (v === bike) { if (bikeGame) bikeGame.playerRiding = true; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = true; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = true; } else if (v === fishing) { if (fishingGame) fishingGame.playerRiding = true; } else if (v === horse) { horseRidden = true; if (horseGame) horseGame.playerRiding = true; } else if (v === carousel) { carouselRidden = true; if (carouselGame) carouselGame.playerRiding = true; } else if (v === gt3) {
+      if (v === bike) { if (bikeGame) bikeGame.playerRiding = true; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = true; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = true; } else if (v === fishing) { if (fishingGame) fishingGame.playerRiding = true; } else if (v === horse) { horseRidden = true; if (horseGame) horseGame.playerRiding = true; } else if (v === carousel) { carouselRidden = true; if (carouselGame) carouselGame.playerRiding = true; } else if (v === ferris) {
+        // 暗くして、いちばん下のゴンドラを乗り場にぴったり止めてから乗る
+        blackout();
+        ferrisRidden = true;
+        ferris.board();
+        if (ferrisGame) ferrisGame.playerRiding = true;
+      } else if (v === gt3) {
         // 暗くして、サーキットのグリッドへ。女の子も（していた遊びをやめて）自分の車へ
         blackout();
         if (tennisGame?.active) tennisGame.stop();
@@ -921,7 +958,16 @@ export function createWorld(renderer, scene, {
       } else if (kartGame) kartGame.playerDriving = true;
     },
     onKartExit: (v) => {
-      if (v === bike) { if (bikeGame) bikeGame.playerRiding = false; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = false; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = false; } else if (v === fishing) { fishing.leave(); if (fishingGame) fishingGame.playerRiding = false; } else if (v === horse) { horseRidden = false; horse.leave(); if (horseGame) horseGame.playerRiding = false; } else if (v === carousel) { carouselRidden = false; if (carouselGame) carouselGame.playerRiding = false; } else if (v === gt3) {
+      if (v === bike) { if (bikeGame) bikeGame.playerRiding = false; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = false; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = false; } else if (v === fishing) { fishing.leave(); if (fishingGame) fishingGame.playerRiding = false; } else if (v === horse) { horseRidden = false; horse.leave(); if (horseGame) horseGame.playerRiding = false; } else if (v === carousel) { carouselRidden = false; if (carouselGame) carouselGame.playerRiding = false; } else if (v === ferris) {
+        // 1 周して乗り場に着いていればそのまま降りる。途中なら暗くして乗り場へ（女の子も）
+        const midway = ferris.phase !== 'arrived';
+        if (midway) blackout();
+        ferrisRidden = false;
+        if (ferrisGame) {
+          ferrisGame.playerRiding = false;
+          if (midway) ferrisGame.dropAtStation();
+        }
+      } else if (v === gt3) {
         // 暗くして、丘の上へ。車は飾っておく所に戻し、女の子は車の横に立ってから庭へ戻る
         blackout();
         gt3Race?.stop();
@@ -943,6 +989,8 @@ export function createWorld(renderer, scene, {
     horseGame,
     carousel,
     carouselGame,
+    ferris,
+    ferrisGame,
     circuit,
     gt3,
     gt3Race,

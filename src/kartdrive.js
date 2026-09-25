@@ -318,6 +318,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     if (view === 'first') {
       camera.position.copy(eye);
       camera.lookAt(eye.x + fx * 6, eye.y - 0.35, eye.z + fz * 6);
+    } else if (vehicle.chase) {
+      vehicle.chase(camera);      // 観覧車など、その場で動く乗り物は自分で決める
     } else {
       // 追いかけ視点は、進む向き（travelYaw）の後ろから。ハンドブレーキで滑ると、カートが
       // 横を向いて流れるのが見える（車の向きの後ろにすると、滑っていても真後ろしか見えない）

@@ -31,6 +31,11 @@ export const GT3 = {
   mu: 1.45,
 };
 const SEAT = new THREE.Vector3(0.38, 0.3, -0.3);
+/**
+ * ルームミラー（車のローカル）。運転席の目（SEAT.x, 1.12, SEAT.z - 0.05）から左へ 22°・上へ 10° ほど。
+ * 屋根の前の端（z 0.075）より前で、フロントガラス（z 0.725）より内側。道の見える所（水平線より下）にはかからない
+ */
+const MIRROR = { x: 0.02, y: 1.29, z: 0.56, w: 0.27, h: 0.078 };
 
 function numberTexture(text, color) {
   const c = document.createElement('canvas');
@@ -165,6 +170,14 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
     spin.add(r);
     wheels.push({ hold, spin, front: z > 0 });
   }
+  // ルームミラーの枠（屋根の前の端、フロントガラスの上の真ん中）。映るのはプレイヤーの車だけ（createGT3）
+  const mirrorFrame = new THREE.Mesh(new RoundedBoxGeometry(MIRROR.w + 0.03, MIRROR.h + 0.03, 0.03, 2, 0.012), carbon);
+  mirrorFrame.position.set(MIRROR.x, MIRROR.y, MIRROR.z + 0.02);
+  mirrorFrame.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
+  body.add(mirrorFrame);
+  const mirrorStay = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.07, 0.02), carbon);
+  mirrorStay.position.set(MIRROR.x, MIRROR.y + 0.06, MIRROR.z + 0.03);
+  body.add(mirrorStay);
   // メーター（ハンドルの奥）。gt3.js の update が描く
   const dashCanvas = document.createElement('canvas');
   dashCanvas.width = 256;
@@ -191,7 +204,7 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   mapPlane.position.set(SEAT.x - 0.36, 0.83, 0.41);
   body.add(mapPlane);
   mapPlane.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
-  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, mapPlane, mapCanvas, mapTex };
+  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, mapPlane, mapCanvas, mapTex, mirrorFrame };
 }
 
 /**
@@ -408,6 +421,55 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
 
   const eyeLocal = new THREE.Vector3(SEAT.x, 1.12, SEAT.z - 0.05);
   const tmp = new THREE.Vector3();
+
+  // --- ルームミラー ---
+  // 後ろ向きのカメラで小さな画面に描いて、ミラーの面に左右を反転して貼る（鏡に映ったように）。
+  // 自分の車は描かない（ウイングが真ん中を横切って、後ろの車が隠れる）。後ろを映すカメラのようなもの
+  const mirrorTarget = new THREE.WebGLRenderTarget(384, 112, { samples: 0 });
+  mirrorTarget.texture.colorSpace = THREE.LinearSRGBColorSpace;
+  mirrorTarget.texture.wrapS = THREE.RepeatWrapping;
+  mirrorTarget.texture.repeat.x = -1;
+  mirrorTarget.texture.offset.x = 1;
+  const mirror = new THREE.Mesh(new THREE.PlaneGeometry(MIRROR.w, MIRROR.h), new THREE.MeshBasicMaterial({ map: mirrorTarget.texture, color: 0xd8dde4 }));
+  mirror.name = 'gt3-mirror';
+  mirror.position.set(MIRROR.x, MIRROR.y, MIRROR.z);
+  model.body.add(mirror);
+  // 向きは枠と同じに（lookAt はワールドの点を取るので、置き場所へ動かした後の車では使えない）
+  mirror.quaternion.copy(model.mirrorFrame.quaternion);
+  mirror.visible = false;   // 乗って運転席から見ているときだけ（renderMirror）
+  // far は天球（半径 2600）より外。手前で切ると空が真っ黒になる
+  const mirrorCam = new THREE.PerspectiveCamera(13, MIRROR.w / MIRROR.h, 0.3, 3000);
+  mirrorCam.position.set(MIRROR.x, MIRROR.y, MIRROR.z);
+  // 真後ろの少し下を見る（車のローカルで向きを決める）
+  mirrorCam.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(mirrorCam.position, new THREE.Vector3(MIRROR.x, 0.95, -15), new THREE.Vector3(0, 1, 0)));
+  model.body.add(mirrorCam);
+  let mirrorFrame = 0;
+
+  /**
+   * ミラーを描く（main.js の描画の前。運転席から見ているときだけ呼ぶ）。重いので 2 フレームに 1 回。
+   * three.js の Reflector と同じく、VR（xr.enabled）と影の更新を一時的に止めて、別の描き先へ描く
+   */
+  function renderMirror(renderer, scene) {
+    mirror.visible = true;
+    if ((mirrorFrame++ & 1) === 1) return;
+    const prevTarget = renderer.getRenderTarget();
+    const prevXr = renderer.xr.enabled;
+    const prevShadow = renderer.shadowMap.autoUpdate;
+    renderer.xr.enabled = false;
+    renderer.shadowMap.autoUpdate = false;
+    group.visible = false;
+    group.updateMatrixWorld(true);
+    renderer.setRenderTarget(mirrorTarget);
+    renderer.state.buffers.depth.setMask(true);
+    if (renderer.autoClear === false) renderer.clear();
+    renderer.render(scene, mirrorCam);
+    group.visible = true;
+    renderer.xr.enabled = prevXr;
+    renderer.shadowMap.autoUpdate = prevShadow;
+    renderer.setRenderTarget(prevTarget);
+  }
+  /** 運転席から見ていないとき（降りた・追いかけ視点）は、ミラーの面を隠す（古い絵が残らないように） */
+  function hideMirror() { mirror.visible = false; }
   return {
     group,
     body,
@@ -442,6 +504,11 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     setMapCars(list) { mapCars = list ?? []; },
     /** コースの地図（PC の画面の表示でも同じものを使う） */
     circuitMap,
+    renderMirror,
+    /** ミラーの描き先（テスト用） */
+    mirrorTarget,
+    hideMirror,
+    mirror,
   };
 }
 

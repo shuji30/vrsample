@@ -427,6 +427,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     enter,
     exit,
     get driving() { return driving; },
+    /** PC の視点（'first' 運転席 / 'chase' 後ろから） */
+    get view() { return view; },
     /** いま乗っている（最後に乗った）乗り物 */
     get vehicle() { return vehicle; },
     get input() { return lastInput; },

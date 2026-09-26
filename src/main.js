@@ -139,6 +139,8 @@ renderer.xr.setReferenceSpaceType('local-floor');
 
 // 超広視野のヘッドセット（Pimax など）はレンダーターゲットが巨大になるので、
 // 重いときは ?scale=0.8 のように解像度を落とせるようにしておく。
+/** GT3 のルームミラー（?mirror=off で描かない） */
+const MIRROR_ON = params.get('mirror') !== 'off';
 const framebufferScale = Number(params.get('scale')) || (safeMode ? 0.7 : 0);
 if (Number.isFinite(framebufferScale) && framebufferScale > 0) {
   renderer.xr.setFramebufferScaleFactor(framebufferScale);
@@ -415,6 +417,12 @@ async function start() {
       updatePerf(elapsed);
       updateDiag(elapsed);
 
+      // GT3 のルームミラー（運転席から見ているときだけ。VR はいつも運転席）
+      const gt3 = world.gt3;
+      if (gt3?.renderMirror && MIRROR_ON) {
+        if (kartDrive.driving && kartDrive.vehicle === gt3 && (renderer.xr.isPresenting || kartDrive.view === 'first')) gt3.renderMirror(renderer, scene);
+        else gt3.hideMirror();
+      }
       renderer.render(scene, camera);
     } catch (error) {
       renderer.setAnimationLoop(null);

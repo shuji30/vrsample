@@ -21,8 +21,14 @@
 /** 名前からゲームパッドらしいか（ハンコン・ペダルと見分ける） */
 const PAD_NAME = /xbox|xinput|gamepad|game ?pad|controller|dualshock|dualsense|wireless|joy-?con|8bitdo|pro controller|playstation|ps[345]/i;
 const WHEEL_NAME = /wheel|pedal|racing|cammus|simjack|fanatec|thrustmaster|logitech g2|g29|g27|g923|moza|simucube|heusinkveld|simagic/i;
+/**
+ * VR のコントローラー。ブラウザによっては Gamepad API にも出てくる（Pimax P2N など）。
+ * ゲームパッドやハンコンと取り違えると、VR のスティックを二重に読んで、少し横へ倒しただけで
+ * 周りごと（机ごと）回ったり動いたりする。名前で外す
+ */
+export const VR_CONTROLLER = /pimax|oculus|meta quest|quest|touch controller|openvr|openxr|vive|valve|index controller|knuckles|windows mixed reality|spatial controller|hp reverb|pico|htc|sword|crystal/i;
 export function looksLikeGamepad(pad) {
-  if (!pad) return false;
+  if (!pad || VR_CONTROLLER.test(pad.id ?? '')) return false;
   if (pad.mapping === 'standard') return true;
   return PAD_NAME.test(pad.id) && !WHEEL_NAME.test(pad.id);
 }
@@ -50,9 +56,11 @@ const dead = (v) => (Math.abs(v) < DEAD ? 0 : Math.sign(v) * (Math.abs(v) - DEAD
 export function createGamepadInput() {
   const pressed = new Map();
 
-  function pad() {
+  function pad(xr) {
     if (typeof navigator === 'undefined' || !navigator.getGamepads) return null;
-    const list = [...navigator.getGamepads()].filter((p) => p && p.connected);
+    // VR の最中は、ボタンが 12 個より少ない機器（VR のコントローラーらしい。ゲームパッドは 16〜17 個）も外す。
+    // 名前に「Pimax」などと出ない VR のコントローラーを、ゲームパッドと取り違えないように
+    const list = [...navigator.getGamepads()].filter((p) => p && p.connected && !VR_CONTROLLER.test(p.id ?? '') && (!xr || (p.buttons?.length ?? 0) >= 12));
     return list.find((p) => p.mapping === 'standard') ?? list.find((p) => looksLikeGamepad(p)) ?? null;
   }
 
@@ -69,8 +77,8 @@ export function createGamepadInput() {
    * @returns {{ move: { x: number, y: number }, look: { x: number, y: number }, connected: boolean }}
    */
   let layout = BUTTON_KEYS;
-  function update() {
-    const p = pad();
+  function update({ xr = false } = {}) {
+    const p = pad(xr);
     const want = p && p.mapping !== 'standard' ? LOOSE_KEYS : BUTTON_KEYS;
     if (!p || want !== layout) {
       // 抜かれたら（並びが変わったら）、押しっぱなしのキーを離す

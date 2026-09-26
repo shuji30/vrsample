@@ -4,8 +4,9 @@ import * as THREE from 'three';
  * 観覧車。家の左の芝生の奥（池とメリーゴーランドのあいだの南）に立つ、高さ 30m の観覧車。
  *
  * 車輪は南北（z）の向きに立ち（x = 一定の面の中で回る）、ゴンドラ 16 台はいつも真下を向いて吊られる。
- * ゴンドラの中はベンチが 1 つで、二人並んで北（海の見える向き）の窓を向いて座る（向かい合わせに座ると、
- * 女の子の短いスカートの中が正面から見えてしまうため）。
+ * ゴンドラの中はベンチが南北に 2 つで、向かい合わせに座る。プレイヤーは南のベンチで北（海の見える向き）を、
+ * 女の子は北のベンチで南（プレイヤー）を向く。女の子のうしろの窓の向こうに海が見える。
+ * （短いスカートの中が正面から見えないよう、女の子は膝をそろえて、スカートを腿に沿わせ、手を膝の上に置く）
  *
  * 乗り物の窓口（kartdrive.js）。乗り場で E / トリガー → いちばん下のゴンドラに乗る（world.js が暗くして、
  * そのゴンドラをちょうど乗り場に合わせる）。女の子が乗ったら（来ないなら 3 秒で）回りはじめ、1 周 100 秒で
@@ -23,8 +24,9 @@ export const FERRIS = {
 };
 const STEP = (Math.PI * 2) / FERRIS.gondolas;
 /** ゴンドラの中（ローカル。原点は床の真ん中、-Z が北の窓） */
-// 戸は東。女の子があとから乗るので、戸に近い東が女の子、奥の西がプレイヤー
-const SEAT = { playerX: -0.36, girlX: 0.36, z: 0.42, top: 0.45 };
+// 戸は東。女の子があとから乗るので、戸に近い東が女の子、奥の西がプレイヤー。
+// 向かい合わせだが、少し斜めにずらす（真正面だと膝と膝がぶつかる。ゴンドラの奥行きは 1.5m）
+const SEAT = { playerX: -0.28, girlX: 0.28, z: 0.42, girlZ: -0.42, top: 0.45 };
 
 /** 歩けない所か（脚と、乗り場の手すり） */
 export function ferrisBlocks(x, z, margin = 0) {
@@ -74,13 +76,15 @@ function gondolaModel(color) {
   roof.scale.z = D / W;
   roof.position.y = 2.05;
   g.add(roof);
-  // ベンチ（南の壁ぎわ、北を向く）
-  const bench = shade(new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.42), white));
-  bench.position.set(0, SEAT.top - 0.04, SEAT.z + 0.08);
-  g.add(bench);
-  const benchBase = new THREE.Mesh(new THREE.BoxGeometry(1.6, SEAT.top - 0.08, 0.36), paint);
-  benchBase.position.set(0, (SEAT.top - 0.08) / 2, SEAT.z + 0.1);
-  g.add(benchBase);
+  // ベンチ（南の壁ぎわで北を向く・北の壁ぎわで南を向く、の 2 つ。向かい合わせ）
+  for (const side of [1, -1]) {
+    const bench = shade(new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.42), white));
+    bench.position.set(0, SEAT.top - 0.04, side * (SEAT.z + 0.08));
+    g.add(bench);
+    const benchBase = new THREE.Mesh(new THREE.BoxGeometry(1.6, SEAT.top - 0.08, 0.36), paint);
+    benchBase.position.set(0, (SEAT.top - 0.08) / 2, side * (SEAT.z + 0.1));
+    g.add(benchBase);
+  }
   // 窓の下の手すり（握れる）
   const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, W - 0.2, 8), new THREE.MeshStandardMaterial({ color: 0xc8ccd2, metalness: 0.8, roughness: 0.3 }));
   rail.rotation.z = Math.PI / 2;
@@ -301,6 +305,8 @@ export function createFerrisWheel() {
       g.updateMatrixWorld(true);
       return g.localToWorld(out.set(SEAT.playerX, SEAT.top + 0.78, SEAT.z - 0.05));
     },
+    /** PC の中の視点は、少し東（向かいに座る女の子の側）へ向ける。VR は体の向きのまま */
+    lookYawOffset: -0.3,
     /** PC の外から見る視点：ゴンドラの東の斜め上から、ゴンドラと海を見る */
     chase(camera) {
       const i = ride ? ride.index : lowest();
@@ -310,13 +316,13 @@ export function createFerrisWheel() {
     },
     /** 降りる所（乗り場の上） */
     side(out = new THREE.Vector3()) { return out.set(F.x + 2.6, 0, F.z + 0.4); },
-    /** 女の子の座る所（ベンチの東）と向き（北） */
+    /** 女の子の座る所（北のベンチの東）と向き（南。プレイヤーと向かい合う） */
     girlSeat(out = new THREE.Vector3()) {
       const g = gondolas[ride ? ride.index : lowest()].g;
       g.updateMatrixWorld(true);
-      return g.localToWorld(out.set(SEAT.girlX, SEAT.top, SEAT.z));
+      return g.localToWorld(out.set(SEAT.girlX, SEAT.top, SEAT.girlZ));
     },
-    girlYaw() { return Math.PI; },
+    girlYaw() { return 0; },
     /** 女の子が乗り込む所（乗り場の、ゴンドラの戸の前） */
     girlBoard(out = new THREE.Vector3()) { return out.set(F.x + 1.7, 0, F.z); },
     /** 女の子の床の高さ（ゴンドラの床） */

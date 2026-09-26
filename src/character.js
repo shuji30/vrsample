@@ -2032,14 +2032,15 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     setThrowPose(pose) { throwPose = pose; },
     /**
      * 外から座らせる（カートの座席など。drive しているときだけ効く）。amount は座りの
-     * 混ざり具合、style は 'kart'（カートの座席）か 'lounge'（背もたれに預けて脚を伸ばす）
+     * 混ざり具合、style は 'kart'（カートの座席）か 'lounge'（背もたれに預けて脚を伸ばす）。
+     * skirt: true で、スカートを腿に沿わせる（向かいに人が座るとき。カートの座席はいつも）
      */
-    setSeat(amount, style = 'kart') {
+    setSeat(amount, style = 'kart', { skirt = false } = {}) {
       if (!driver) return;
       sitAmount = clamp01(amount);
       lounge = style === 'lounge' ? 1 : 0;
       kartSeat = style === 'kart' && sitAmount > 0 ? 1 : 0;
-      skirtOnLegs(kartSeat > 0 && sitAmount > 0.35);
+      skirtOnLegs((kartSeat > 0 || skirt) && sitAmount > 0.35);
       napAmount = 0;
       tuck = 0;
       legCross = 0;

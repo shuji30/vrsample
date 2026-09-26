@@ -349,11 +349,11 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       rig.position.set(eye.x - tmp.x, eye.y - headLocal.y, eye.z - tmp.z);
       return;
     }
-    const fx = Math.sin(yaw);
-    const fz = Math.cos(yaw);
     if (view === 'first') {
+      // lookYawOffset：PC の運転席視点だけ、見る向きをずらす（観覧車は、向かいの女の子と窓の外が両方入るように）
+      const ly = yaw + (vehicle.lookYawOffset ?? 0);
       camera.position.copy(eye);
-      camera.lookAt(eye.x + fx * 6, eye.y - 0.35, eye.z + fz * 6);
+      camera.lookAt(eye.x + Math.sin(ly) * 6, eye.y - 0.35, eye.z + Math.cos(ly) * 6);
     } else if (vehicle.chase) {
       vehicle.chase(camera);      // 観覧車など、その場で動く乗り物は自分で決める
     } else {

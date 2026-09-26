@@ -324,7 +324,7 @@ export function createDesktopControls(renderer, camera, world) {
     update(dt) {
       // VR の最中も、ゲームパッドは読む（ボタンはキーとして届き、スティックは controllers.js が
       // xrPad から歩き・スナップターンに使う）。前は VR に入るとパッドがまったく効かなかった
-      if (renderer.xr.isPresenting) { last = performance.now(); xrPad = gamepad.update(); return; }
+      if (renderer.xr.isPresenting) { last = performance.now(); xrPad = gamepad.update({ xr: true }); return; }
       const now = performance.now();
       const seconds = dt ?? Math.min((now - last) / 1000, 0.05);
       last = now;

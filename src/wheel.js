@@ -29,7 +29,8 @@
  * アクセル、LT でブレーキ。
  */
 
-import { looksLikeGamepad } from './gamepad.js';
+// VR のコントローラー（Pimax P2N などは Gamepad API にも出てくる）は、ハンコンの候補からも外す
+import { looksLikeGamepad, VR_CONTROLLER } from './gamepad.js';
 
 const STORE = 'vrsample.wheel2';
 
@@ -67,11 +68,6 @@ const HID_STORE = 'vrsample.wheelHid';
 /** 名前から、ハンドブレーキ・ハンコンらしい機器を見分ける（設定していないときの推し量りに使う） */
 const HANDBRAKE_NAME = /hand ?brake|handbrake|e-?brake|サイドブレーキ/i;
 const WHEEL_NAME = /wheel|ddwb|cammus|g29|g27|g25|g923|driving force|t300|t-gt|t248|t150|tmx|fanatec|csl|clubsport|podium|moza|simucube|simagic|asetek|thrustmaster|logitech g/i;
-/**
- * VR のコントローラー。ブラウザによっては Gamepad API にも出てくる（Pimax P2N など）。
- * ハンコンの候補に並ぶと紛らわしく、ハンドルに選ばれてしまうこともあるので外す
- */
-const VR_CONTROLLER = /pimax|oculus|meta quest|quest|touch controller|openvr|vive|valve|index controller|knuckles|windows mixed reality|spatial controller|hp reverb|pico|htc/i;
 
 /**
  * WebHID でつないだ機器を、Gamepad のような形（id / axes / buttons）にする。

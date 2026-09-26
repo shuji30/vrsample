@@ -224,6 +224,16 @@ export function createBeachGame({ character, beach, voice = null, playerPosition
     }
     finish();
   }
+  /** パラソルの下で座って話したあと（seatgame.js が体を返したとき）：ビーチバレーへ戻る */
+  function resume() {
+    if (state === 'off') return;
+    body.drive(driver);
+    body.setAttend(true);
+    body.setSeat(0, 'upright');
+    restFor = 0;
+    timer = 0;
+    state = 'play';
+  }
   function finish() {
     body.reach(null);
     body.reachHands(null);
@@ -237,6 +247,7 @@ export function createBeachGame({ character, beach, voice = null, playerPosition
     update,
     start,
     leave,
+    resume,
     onBall,
     onPoint,
     onShell,

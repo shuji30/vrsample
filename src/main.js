@@ -263,7 +263,10 @@ async function start() {
   });
   const desktop = createDesktopControls(renderer, camera, world);
   // カートの運転（乗り降り・操作・ハンコン・FFB）
-  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.gt3].filter(Boolean) });
+  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.gt3, ...(world.seats?.list ?? [])].filter(Boolean) });
+// 会話の「そろそろいこうか」は、E と同じく立つ
+if (world.talk) world.talk.onLeave = () => kartDrive.exit();
+const talkEye = new THREE.Vector3();
 
   // three.js は左右の目が平行に向いている前提で、カリング用にひとつの視錐台を
   // 合成する（WebXRManager の setProjectionFromUnion）。Pimax のようにディスプレイが
@@ -417,6 +420,10 @@ async function start() {
       updatePerf(elapsed);
       updateDiag(elapsed);
 
+      // 会話の札（VR は目の前に。PC は画面の下の札）
+      if (world.talk?.active && kartDrive.driving && kartDrive.vehicle?.kind === 'seat') {
+        world.talk.placeVr(kartDrive.vehicle.eye(talkEye), kartDrive.vehicle.state.yaw, renderer.xr.isPresenting);
+      }
       // GT3 のルームミラー（運転席から見ているときだけ。VR はいつも運転席）
       const gt3 = world.gt3;
       if (gt3?.renderMirror && MIRROR_ON) {

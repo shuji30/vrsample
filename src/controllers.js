@@ -187,7 +187,12 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
   let driving = false;
 
   function onSelectStart(event) {
-    if (driving) return;
+    if (driving) {
+      // 座っているあいだも、会話の札（seatedSelect）だけは指して選べる
+      const hit = pick(event.target);
+      if (hit?.object.userData.seatedSelect) hit.object.userData.onSelectHit?.(hit);
+      return;
+    }
     const controller = event.target;
     const hit = pick(controller);
     if (!hit) return;

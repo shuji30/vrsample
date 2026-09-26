@@ -14,7 +14,8 @@ import { createHorseModel, poseHorse } from './horse.js';
 export const PADDOCK = { cx: -25.0, cz: -24.0, rx: 5.0, rz: 4.2 };
 /** 入口（柵の楕円の角度。手前の右） */
 const GATE_THETA = Math.acos(2.5 / 5.0);
-const GATE_HALF = 0.145;
+// 馬に乗ったまま出入りできるよう、幅はおよそ 2m（以前は 1.3m）
+const GATE_HALF = 0.23;
 export const GATE = {
   x: PADDOCK.cx + PADDOCK.rx * Math.cos(GATE_THETA),
   z: PADDOCK.cz + PADDOCK.rz * Math.sin(GATE_THETA),

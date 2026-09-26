@@ -23,7 +23,7 @@ import { createBuranko } from './buranko.js';
 import { createBurankoGame } from './burankogame.js';
 import { createPond, createFishing, inPond, outOfPond } from './pond.js';
 import { createFishingGame } from './fishinggame.js';
-import { createStable, stableBlocks, HORSE_PARK, PADDOCK } from './stable.js';
+import { createStable, stableBlocks, HORSE_PARK, PADDOCK, GATE } from './stable.js';
 import { createHorse } from './horse.js';
 import { createHorseGame } from './horsegame.js';
 import { createCarousel, carouselBlocks } from './carousel.js';
@@ -447,9 +447,11 @@ export function createWorld(renderer, scene, {
   scene.add(stable.group);
   let horseGame = null;
   let horseRidden = false;
-  const horse = createHorse({ paddock: PADDOCK, park: HORSE_PARK, onGait: (g, prev) => horseGame?.onGait(g, prev) });
+  // 馬は馬場の外（庭・公園・丘の上）へも出られる。家の中（と掃き出し窓の通り道）には入らない
+  const horseBlocked = (x, z) => x > ROOM.minX - 0.4 && x < ROOM.maxX + 0.4 && z > ROOM.minZ - 1.4 && z < ROOM.maxZ + 0.4;
+  const horse = createHorse({ paddock: PADDOCK, park: HORSE_PARK, gate: GATE, ground: (x, z) => groundHeight(x, z), blocked: horseBlocked, clampTo: (x, z, from) => clampToBounds(x, z, 0.25, from), onGait: (g, prev) => horseGame?.onGait(g, prev) });
   scene.add(horse.group, horse.reins, horse.leadRope);
-  horseGame = camera ? createHorseGame({ character, horse, voice }) : null;
+  horseGame = camera ? createHorseGame({ character, horse, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
   if (horseGame) {
     horseGame.onFinish = () => {
       character.watch(furniture.ball);

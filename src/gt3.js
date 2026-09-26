@@ -9,7 +9,7 @@ import { createCircuitMap } from './circuitmap.js';
  * 6 速のシーケンシャル。AT（自動で変速）と MT（手動）を切り替えられる（Q・パッドの十字キー上・
  * VR の右スティックの押し込み・ハンコンに割り当てたボタン。選んだほうは localStorage に覚える）。
  * AT のままシフト（パドル・X / Z・パッドの RB / LB・VR の A / B）を使うと MT になる。
- * R（バック）は、止まって 1 速からシフトダウン（AT は止まってブレーキを 0.8 秒でも）。R ではアクセルで後ろへ。エンジンは回転数からトルクを出し、ギア比で駆動力にする。
+ * R（バック）は、止まって 1 速からシフトダウン。R ではアクセルで後ろへ、シフトアップで 1 速へ。エンジンは回転数からトルクを出し、ギア比で駆動力にする。
  * 空気の抵抗とダウンフォース（速いほど曲がれる・止まれる）、縁石・芝（はみ出すとすべる）、外の防護壁。
  * 路面の高さはコース上の位置から（立体交差の橋）。
  *
@@ -256,7 +256,6 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
   }
 
   let locked = false;
-  let holdBrake = 0;
   function update(dt, input = {}) {
     if (!state.atCircuit) return;
     // スタートの合図のあいだは動かない（ブレーキを踏んだまま）
@@ -272,14 +271,13 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
       try { localStorage.setItem(AUTO_KEY, state.auto ? 'at' : 'mt'); } catch { /* 保存できなくても遊べる */ }
     }
     // R（バック）：止まっているときに 1 速からシフトダウンで入り、シフトアップで 1 速へ戻る。
-    // AT のときは、止まってブレーキを 0.8 秒踏み続けても R と前進を切り替えられる（前と同じ入り方）
+    // （「止まってブレーキを 0.8 秒踏み続けても R」にしていたら、スタートの合図のあいだブレーキを
+    // 踏んでいたハンコンの人が、合図のあと R に入っていて、アクセルを踏んでも前へ出なかった。やめた）
     const stopped = Math.abs(v) < 0.4;
     if (shiftReq < 0 && !locked && stopped && state.gear === 1 && !state.reverse) state.reverse = true;
     else if (shiftReq > 0 && state.reverse) { if (stopped) state.reverse = false; }
     // AT のままパドルを使うと MT になる（AT に戻すのは切り替えのボタン）
     else if (shiftReq) { state.auto = false; shift(Math.sign(shiftReq)); }
-    holdBrake = !locked && stopped && brake > 0.5 && throttle < 0.1 ? holdBrake + dt : 0;
-    if (state.auto && holdBrake > 0.8) { state.reverse = !state.reverse; holdBrake = -10; }
     if (state.auto && !state.reverse) {
       if (state.rpm > 8300 && state.gear < 6) shift(1);
       else if (state.rpm < 3900 && state.gear > 1) shift(-1);

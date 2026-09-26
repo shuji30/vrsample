@@ -5,8 +5,9 @@ import { CIRCUIT, circuitNearest, circuitFrame, CIRCUIT_LENGTH } from './circuit
 /**
  * GT3 のレースカー（乗り物の窓口。kartdrive.js の乗り降り・VR の目線合わせ・視点・ハンコン・FFB を使う）。
  *
- * 6 速のシーケンシャル。はじめは自動で変速し、シフト（パドル・X / Z・パッドの RB / LB・VR の A / B）を
- * 1 回でも使うと手動になる（setAuto で戻せる）。エンジンは回転数からトルクを出し、ギア比で駆動力にする。
+ * 6 速のシーケンシャル。AT（自動で変速）と MT（手動）を切り替えられる（Q・パッドの十字キー上・
+ * VR の右スティックの押し込み・ハンコンに割り当てたボタン。選んだほうは localStorage に覚える）。
+ * AT のままシフト（パドル・X / Z・パッドの RB / LB・VR の A / B）を使うと MT になる。エンジンは回転数からトルクを出し、ギア比で駆動力にする。
  * 空気の抵抗とダウンフォース（速いほど曲がれる・止まれる）、縁石・芝（はみ出すとすべる）、外の防護壁。
  * 路面の高さはコース上の位置から（立体交差の橋）。
  *
@@ -46,6 +47,12 @@ function numberTexture(text, color) {
 }
 
 /** 車の模型（プレイヤーの車・女の子の車で共通） */
+const AUTO_KEY = 'vrsample.gt3.gearbox';
+/** 前に選んだ AT / MT（はじめは AT） */
+function savedAuto() {
+  try { return localStorage.getItem(AUTO_KEY) !== 'mt'; } catch { return true; }
+}
+
 export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '7' } = {}) {
   const root = new THREE.Group();
   const body = new THREE.Group();   // 揺れ（前後・左右の傾き）はここ
@@ -186,7 +193,7 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
 
   const state = {
     speed: 0, yaw: park.yaw, travelYaw: park.yaw, steer: 0, onGrass: false, lateral: 0, u: 0,
-    gear: 1, rpm: GT3.idle, auto: true, s: 0, atCircuit: false, reverse: false,
+    gear: 1, rpm: GT3.idle, auto: savedAuto(), s: 0, atCircuit: false, reverse: false,
   };
   let shiftCut = 0;
   let pitch = 0;
@@ -239,6 +246,12 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     const m = GT3.mass;
     let v = state.speed;
     // シフト
+    // AT / MT の切り替え（選んだほうを覚えておき、次に乗ったときもそのまま）
+    if (input.toggleAuto) {
+      state.auto = !state.auto;
+      try { localStorage.setItem(AUTO_KEY, state.auto ? 'at' : 'mt'); } catch { /* 保存できなくても遊べる */ }
+    }
+    // AT のままパドルを使うと MT になる（AT に戻すのは切り替えのボタン）
     if (shiftReq) { state.auto = false; shift(Math.sign(shiftReq)); }
     if (state.auto && !state.reverse) {
       if (state.rpm > 8300 && state.gear < 6) shift(1);

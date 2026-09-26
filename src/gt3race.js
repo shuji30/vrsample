@@ -300,7 +300,7 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
     hud.style.display = '';
     hud.textContent = `GT3 レース　${lapText}　${state === 'race' ? `${pos}位` : ''}\n`
       + `いまの周 ${state === 'race' ? fmt(clock - lapStart) : '--'}　前の周 ${fmt(lastLap)}　ベスト ${fmt(bestLap)}\n`
-      + `${playerCar.state.reverse ? 'R' : playerCar.state.gear} 速　${Math.round(Math.abs(playerCar.state.speed) * 3.6)} km/h　${playerCar.state.auto ? 'AT（シフトを使うと MT）' : 'MT'}`
+      + `${playerCar.state.reverse ? 'R' : playerCar.state.gear} 速　${Math.round(Math.abs(playerCar.state.speed) * 3.6)} km/h　${playerCar.state.auto ? 'AT（Q で MT）' : 'MT（Q で AT）'}`
       + (state === 'free' ? '\nグリッドに止まって 2 秒待つと、もう一回' : '');
   }
 

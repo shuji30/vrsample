@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { createTextures } from './textures.js';
 import { createRoom, ROOM } from './room.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
-import { KART_TRACK, groundHeight } from './karttrack.js';
+import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
 import { createKart, gridSlot } from './kart.js';
 import { createKartGame } from './kartgame.js';
 import { createFurniture, TABLE } from './furniture.js';
@@ -35,6 +35,11 @@ import { createGT3 } from './gt3.js';
 import { createGT3Race } from './gt3race.js';
 import { createCorgi } from './corgi.js';
 import { createFireworks } from './fireworks.js';
+import { createBeach, inBeach, beachGround, BEACH_AREA, STAIRS_TOP_AREA } from './beach.js';
+import { createBeachGame } from './beachgame.js';
+
+/** 地面の高さ：カートコースの起伏と、崖の下の砂浜（そのほかの丘の上は 0） */
+const groundHeight = (x, z) => (inBeach(x, z) ? beachGround(x, z) : kartGround(x, z));
 
 /**
  * 女の子のカートの性能の倍率（最高速・加速・グリップ）。ふつうのカートの性能では、
@@ -310,7 +315,7 @@ export function createWorld(renderer, scene, {
     groundHeight: (x, z) => groundHeight(x, z),
     playerPosition: () => camera.getWorldPosition(corgiEye),
     // 女の子がサーキットにいるあいだは、ついていかない
-    girlPosition: () => (character.body.loaded && !gt3Race?.active ? character.body.position : null),
+    girlPosition: () => (character.body.loaded && !gt3Race?.active && !beachGame?.active ? character.body.position : null),
     ball: furniture.ball,
     voice,
     areas: [
@@ -346,6 +351,45 @@ export function createWorld(renderer, scene, {
       catchGame?.resume();
     };
   }
+
+  // 崖の下の砂浜。看板で行き来する（暗くしてから移す）。女の子も下りてきてビーチボールで遊ぶ
+  const beach = createBeach();
+  scene.add(beach.group);
+  const beachGame = camera ? createBeachGame({ character, beach, voice, playerPosition: () => camera.getWorldPosition(beachEye) }) : null;
+  const beachEye = new THREE.Vector3();
+  const beachLook = new THREE.Vector3();
+  if (beachGame) {
+    beachGame.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
+    };
+    beach.onBall = (kind, by) => beachGame.onBall(kind, by);
+    beach.onShell = (n, all) => beachGame.onShell(n, all);
+    beach.onPoint = (winner, score, game) => beachGame.onPoint(winner, score, game);
+  }
+  /** 看板：砂浜へ / 丘の上へ。暗くしてから、プレイヤー（main.js の onPlayerTravel）と女の子を移す */
+  const travelPoint = new THREE.Vector3();
+  function travel(dest) {
+    blackout();
+    if (dest === 'beach') {
+      beach.bottomPoint(travelPoint);
+      onPlayerTravel?.(travelPoint.x, travelPoint.y, travelPoint.z - 0.4, { x: 0, z: -1 });
+      if (beachGame) beachGame.playerHere = true;
+    } else {
+      beach.topPoint(travelPoint);
+      onPlayerTravel?.(travelPoint.x, 0, travelPoint.z, { x: 0, z: 1 });
+      if (beachGame) { beachGame.playerHere = false; beachGame.leave(travelPoint); }
+    }
+  }
+  let onPlayerTravel = null;
+  beach.onTravel = travel;
+  beach.onBallSelect = () => {
+    if (!camera || !beachGame?.wanted) return;
+    camera.getWorldPosition(beachEye);
+    camera.getWorldDirection(beachLook);
+    if (beachEye.distanceTo(beach.ball.position) > 8) return;
+    beach.hitFrom(beachEye, beachLook, beachGame.active ? character.body.position : null);
+  };
 
   // 池の奥の厩と馬場。馬に乗ると、はじめは女の子が引き馬で 1 周、そのあとは自分で乗る
   const stable = createStable();
@@ -435,6 +479,10 @@ export function createWorld(renderer, scene, {
     // 家の左の芝生（メリーゴーランド）。庭（x -6 まで）と 0.5m、ポケバイの範囲（z -5.5 まで）と 0.5m 重ねる。
     // 家（x -3 から）には重ならない。回転台の上は clampToBounds で外す
     { minX: -16.5, maxX: -5.5, minZ: -6.0, maxZ: 5.0 },
+    // 丘の北の縁の、崖の階段の上の看板の前（池のまわりの範囲と 0.5m 重ねる）
+    { ...STAIRS_TOP_AREA },
+    // 崖の下の砂浜（丘の上の範囲とはつながっていない。看板で行き来する）
+    { ...BEACH_AREA },
     // 観覧車のまわり（池の南、メリーゴーランドの西）。池のまわり（z -5.5 まで）と 0.5m、
     // メリーゴーランドの芝生（x -16.5 から）と 0.5m 重ねる。脚とゴンドラの通り道は clampToBounds で外す
     { minX: -31.5, maxX: -16.0, minZ: -6.0, maxZ: 12.0 },
@@ -546,6 +594,12 @@ export function createWorld(renderer, scene, {
       return;
     }
     camera.getWorldPosition(eye);
+    // 崖の下の砂浜：いる所のまわりに（地面は -25m）
+    if (eye.y < -12) {
+      lighting.setShadowFocus(eye.x, eye.z - 2, beachGround(eye.x, eye.z));
+      shadowAt = 'beach';
+      return;
+    }
     let next = shadowAt;
     if (eye.x > KART_TRACK.area.minX + 1.5) next = 'kart';
     else if (eye.x < -5.5 && eye.x > -18.5 && eye.z > -6.5) next = 'carousel';
@@ -556,7 +610,7 @@ export function createWorld(renderer, scene, {
     else if (eye.x < KART_TRACK.area.minX - 0.5 || shadowAt !== 'kart') {
       if (shadowAt !== 'court' && eye.z < courtNear - 1.0) next = 'court';
       else if (shadowAt === 'court' && eye.z > courtNear + 1.0) next = 'house';
-      else if (shadowAt === 'kart' || shadowAt === 'bike' || shadowAt === 'pond' || shadowAt === 'stable' || shadowAt === 'carousel' || shadowAt === 'ferris' || shadowAt === 'circuit') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
+      else if (shadowAt === 'kart' || shadowAt === 'bike' || shadowAt === 'pond' || shadowAt === 'stable' || shadowAt === 'carousel' || shadowAt === 'ferris' || shadowAt === 'circuit' || shadowAt === 'beach') next = eye.z < courtNear - 1.0 ? 'court' : 'house';
     }
     if (next === shadowAt) return;
     shadowAt = next;
@@ -715,22 +769,31 @@ export function createWorld(renderer, scene, {
         carouselGame.start();
       }
     }
+    // 砂浜へ下りたら、していた遊びをやめて下りてくる
+    if (beachGame?.wanted && !beachGame.active) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        beachGame.start();
+      }
+    }
     // 観覧車も同じ
-    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && ferrisGame?.wanted && !ferrisGame.active) {
+    if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && ferrisGame?.wanted && !ferrisGame.active) {
       if (tennisGame?.active) tennisGame.stop();
       else {
         catchGame?.suspend();
         ferrisGame.start();
       }
     }
-    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
+    if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
       catchGame?.suspend();
       tennisGame.start();
     }
     // ブランコの女の子の席は、女の子を座らせる（burankoGame）前に進める。あとで進めると、
     // 体と手が 1 フレーム前の席と鎖に合わせたままになり、こいでいるあいだ手が鎖から離れて見えた
     buranko.updateGirl(dt);
-    if (kartGame?.active) kartGame.update(dt);
+    if (beachGame?.active) beachGame.update(dt);
+    else if (kartGame?.active) kartGame.update(dt);
     else if (bikeGame?.active) { /* 下で動かす */ } else if (seesawGame?.active) seesawGame.update(dt);
     else if (burankoGame?.active) burankoGame.update(dt);
     else if (fishingGame?.active) fishingGame.update(dt);
@@ -763,6 +826,8 @@ export function createWorld(renderer, scene, {
     // メリーゴーランド：乗っていないときは止まるまでゆるめる。音楽は聞く人との距離で
     if (!carouselRidden) carousel.idle(dt);
     if (camera) carousel.listen(camera.getWorldPosition(hearing));
+    // 砂浜（ボール・波・貝がら）
+    beach.update(dt, { listener: camera ? camera.getWorldPosition(hearing) : null, playerHere: Boolean(beachGame?.wanted) });
     // 観覧車：乗っていないときは、無人のままゆっくり回り続ける
     if (!ferrisRidden) ferris.idle(dt);
     ferris.setNight(themeKey === 'night');
@@ -922,7 +987,7 @@ export function createWorld(renderer, scene, {
 
   return {
     grabbables,
-    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, gt3.body, ...(corgi ? [corgi.body] : [])],
+    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, gt3.body, ...beach.interactables, ...(corgi ? [corgi.body] : [])],
     floor: room.floor,
     /** 地面の高さ（カートコースの起伏。ほかは 0） */
     groundHeight,
@@ -991,6 +1056,19 @@ export function createWorld(renderer, scene, {
     carouselGame,
     ferris,
     ferrisGame,
+    beach,
+    beachGame,
+    /** 砂浜へ / 丘の上へ（看板と同じ） */
+    travel,
+    /** main.js から：プレイヤーを (x, y, z) に、look の向きで立たせる */
+    set onPlayerTravel(fn) { onPlayerTravel = fn; },
+    /** PC の F：砂浜にいるときは、近くのビーチボールを打つ・貝がらを拾う。使ったら true */
+    beachUse(cam) {
+      if (!beachGame?.wanted) return false;
+      cam.getWorldPosition(beachEye);
+      cam.getWorldDirection(beachLook);
+      return beach.use(beachEye, beachLook, beachGame.active ? character.body.position : null);
+    },
     circuit,
     gt3,
     gt3Race,

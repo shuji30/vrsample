@@ -56,7 +56,13 @@ export function createGamepadInput() {
     return list.find((p) => p.mapping === 'standard') ?? list.find((p) => looksLikeGamepad(p)) ?? null;
   }
 
-  const fire = (type, code, key) => window.dispatchEvent(new KeyboardEvent(type, { code, key, bubbles: true }));
+  // パッドから出したキーには印を付ける（運転中の RB / LB は wheel.js がシフトとして読むので、
+  // kartdrive.js がスペース（ハンドブレーキ）・Shift として重ねて受けないように）
+  const fire = (type, code, key) => {
+    const event = new KeyboardEvent(type, { code, key, bubbles: true });
+    event.fromPad = true;
+    window.dispatchEvent(event);
+  };
 
   /**
    * 毎フレーム呼ぶ。スティックの値を返す（歩き：move、見回し：look。どちらも -1..1）

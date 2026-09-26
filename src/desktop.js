@@ -236,6 +236,8 @@ export function createDesktopControls(renderer, camera, world) {
   }
 
   window.addEventListener('keydown', (event) => {
+    // 砂浜では、F（パッドの A）でビーチボールを打つ・貝がらを拾う（world.js が受けたら、ここでは拾わない）。VR でも
+    if (event.code === 'KeyF' && !event.repeat && !driving && !heldBall && !swing?.holding && onUse?.()) return;
     // 乗り物に乗っているあいだは、拾う・投げる・振るをしない（足もとの球を拾ってしまうので）
     if (renderer.xr.isPresenting || driving) return;
     if (event.code === 'KeyF') {
@@ -294,6 +296,8 @@ export function createDesktopControls(renderer, camera, world) {
   let last = performance.now();
   /** カートを運転しているあいだは、歩く・視点を回す・球を持つを止める（kartdrive.js がカメラを動かす） */
   let driving = false;
+  let onUse = null;
+  let xrPad = null;
 
   return {
     controls,
@@ -302,6 +306,10 @@ export function createDesktopControls(renderer, camera, world) {
       driving = Boolean(value);
       controls.enabled = !driving;
     },
+    /** F を押したとき、先に聞く（砂浜のボール・貝がら。使ったら true） */
+    set onUse(fn) { onUse = fn; },
+    /** VR の最中のゲームパッドのスティック（{ move, look, connected }） */
+    get xrPad() { return xrPad; },
     /** 持っている物をすべて置く（カートに乗る前） */
     dropAll() {
       if (swing?.holding) swing.drop();
@@ -314,7 +322,9 @@ export function createDesktopControls(renderer, camera, world) {
     },
     /** @param {number} [dt] 呼び出し側が持っていれば渡す。無ければ自前で測る */
     update(dt) {
-      if (renderer.xr.isPresenting) { last = performance.now(); return; }
+      // VR の最中も、ゲームパッドは読む（ボタンはキーとして届き、スティックは controllers.js が
+      // xrPad から歩き・スナップターンに使う）。前は VR に入るとパッドがまったく効かなかった
+      if (renderer.xr.isPresenting) { last = performance.now(); xrPad = gamepad.update(); return; }
       const now = performance.now();
       const seconds = dt ?? Math.min((now - last) / 1000, 0.05);
       last = now;

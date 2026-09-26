@@ -20,6 +20,16 @@ const SEAT_TOP = 0.42;
 const AI_LAT = 1.45 * 1.44 / GT3.mass;   // 速さの 2 乗あたりの、ダウンフォースで増える横の力（/m）
 
 /** 1m ごとの、女の子が出せる速さの表 */
+/**
+ * 女の子の車の速さ。コースの曲がり具合から、曲がれる速さ（AI_CORNER 倍）・手前のブレーキ（AI_BRAKE m/s²）・
+ * 加速の限界（aiAccel）で速度表を作り、腕前（AI_SKILL）を掛けて走る。1 周 55 秒ほどに合わせた
+ * （前は 1 周 67 秒で、遅すぎると言われた）
+ */
+const AI_CORNER = 1.0;
+const AI_BRAKE = 17;
+const AI_SKILL = 1.0;
+const aiAccel = (v) => Math.max(2.6, 12.8 - v * 0.13);
+
 function speedTable() {
   const n = Math.round(CIRCUIT_LENGTH);
   const v = new Float32Array(n);
@@ -28,20 +38,20 @@ function speedTable() {
     const R = 1 / Math.max(k, 1e-5);
     const denom = 1 - R * AI_LAT;
     const vmax = denom <= 0.05 ? GT3.maxSpeed : Math.sqrt((R * GT3.mu * 9.8) / denom);
-    v[i] = Math.min(GT3.maxSpeed * 0.96, vmax * 0.92);
+    v[i] = Math.min(GT3.maxSpeed * 0.96, vmax * AI_CORNER);
   }
   // 手前からブレーキ（うしろ向きに 2 周ぶん回して、つなぎ目もなめらかに）
   for (let pass = 0; pass < 2; pass++) {
     for (let i = n - 1; i >= 0; i--) {
       const next = v[(i + 1) % n];
-      v[i] = Math.min(v[i], Math.sqrt(next * next + 2 * 13 * 1));
+      v[i] = Math.min(v[i], Math.sqrt(next * next + 2 * AI_BRAKE * 1));
     }
   }
   // 加速の限界（前向きに）
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < n; i++) {
       const prev = v[(i - 1 + n) % n];
-      const acc = Math.max(1.2, 9.5 - prev * 0.12);
+      const acc = aiAccel(prev);
       v[i] = Math.min(v[i], Math.sqrt(prev * prev + 2 * acc * 1));
     }
   }
@@ -198,7 +208,8 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
     // 腕前：離れすぎたら少し追いつく / 待つ
     const gap = wrapD(herProgress - playerProgress + (herS - ps) * 0);
     const lead = (herProgress - playerProgress);
-    skill = THREE.MathUtils.clamp(0.93 + (lead > 80 ? -0.06 : lead < -60 ? 0.05 : 0), 0.85, 0.99);
+    // ふだんは 1 周 55 秒ほど。大きく離したときだけ少し待ち、離されたら少し追う
+    skill = THREE.MathUtils.clamp(AI_SKILL + (lead > 150 ? -0.05 : lead < -60 ? 0.03 : 0), 0.85, 1.03);
     let want = go ? table[Math.floor(herS) % table.length] * skill : 0;
     // 走る線：先のカーブの内側へ
     const k = circuitCurvature(herS + 25, 12);
@@ -211,7 +222,7 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
       else want = Math.min(want, Math.max(0, playerCar.state.speed - 0.5));
     }
     herLat += THREE.MathUtils.clamp(lineLat - herLat, -2.2 * dt, 2.2 * dt);
-    const acc = Math.max(1.2, 9.5 - herV * 0.12);
+    const acc = aiAccel(herV);
     herV += THREE.MathUtils.clamp(want - herV, -13 * dt, acc * dt);
     herS = (herS + herV * dt) % CIRCUIT_LENGTH;
     poseHer(THREE.MathUtils.clamp(-k * 18, -1, 1));

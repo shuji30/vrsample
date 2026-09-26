@@ -381,6 +381,21 @@ async function start() {
 
   // こむぎを VR の手でなでられるように
   world.corgi?.setHands(() => player.controllers);
+  // 砂浜：VR の手でビーチボールをはたく、PC の F で打つ・貝がらを拾う、看板で行き来する
+  world.beach?.setHands(() => player.controllers);
+  // VR の最中もゲームパッドで歩く・向きを変える
+  player.setPadSource(() => desktop.xrPad);
+  desktop.onUse = () => Boolean(world.beachUse?.(camera));
+  world.onPlayerTravel = (x, y, z, look) => {
+    if (renderer.xr.isPresenting) {
+      player.player.position.y = y;
+      player.alignHeadTo(x, z, Math.atan2(-look.x, -look.z), 1);
+    } else {
+      camera.position.set(x, y + 1.62, z);
+      desktop.controls.target.set(x + look.x * 3, y + 1.3, z + look.z * 3);
+      desktop.controls.update();
+    }
+  };
   Object.assign(window.__vrsample, { world, player, desktop, debugPanel, music, kartDrive });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する

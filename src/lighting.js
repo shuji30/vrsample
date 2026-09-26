@@ -180,10 +180,12 @@ export function createLighting(renderer, scene, { windows, lampSockets, skyUnifo
    * 動かすのは境目をまたいだときだけ（毎フレーム動かすと影がちらつく）
    */
   const shadowFocus = sun.target.position.clone();
-  function setShadowFocus(x, z) {
-    if (Math.hypot(x - shadowFocus.x, z - shadowFocus.z) < 0.01) return;
+  const baseFocusY = shadowFocus.y;
+  /** 影を落とす範囲の真ん中。y は地面の高さ（崖の下の砂浜は -25m。既定は丘の上の 0） */
+  function setShadowFocus(x, z, y = baseFocusY) {
+    if (Math.hypot(x - shadowFocus.x, z - shadowFocus.z) < 0.01 && Math.abs(y - shadowFocus.y) < 0.01) return;
     const offset = sun.position.clone().sub(sun.target.position);
-    shadowFocus.set(x, shadowFocus.y, z);
+    shadowFocus.set(x, y, z);
     sun.target.position.copy(shadowFocus);
     sun.position.copy(shadowFocus).add(offset);
     sun.target.updateMatrixWorld();

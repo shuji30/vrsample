@@ -140,19 +140,27 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
 
   window.addEventListener('keydown', (event) => {
     if (event.target?.tagName === 'INPUT') return;
+    // パッドの RB / LB（スペース・Shift として届く）は、運転中はシフト（wheel.js が読む）。ハンドブレーキにしない
+    if (event.fromPad && (event.code === 'Space' || event.code === 'ShiftLeft')) return;
     keys.add(event.code);
     // シフト：X で上げる、Z で下げる（ハンコンのボタンを割り当てると、このキーとして届く。VR でも効く）
     if (!event.repeat && driving && event.code === 'KeyX') shiftQueue++;
     if (!event.repeat && driving && event.code === 'KeyZ') shiftQueue--;
     // AT / MT の切り替え（GT3。Q・パッドの十字キー上・VR の右スティックの押し込み）
     if (!event.repeat && driving && event.code === 'KeyQ') autoToggle = true;
-    if (renderer.xr.isPresenting) return;
-    // 乗る / 降りるは E（どの乗り物も同じ。F は拾う / 投げる）
-    if (event.code === 'KeyE') {
+    // 乗る / 降りるは E（どの乗り物も同じ。F は拾う / 投げる）。VR でも効く（ハンコンに割り当てた
+    // ボタンはこのキーとして届く。VR でハンコンを握っていると、左グリップで降りられないため）
+    if (event.code === 'KeyE' && !event.repeat) {
       if (driving) exit();
       else if (nearestVehicle()) enter();
     }
-    if (event.code === 'KeyC' && driving) view = view === 'first' ? 'chase' : 'first';
+    // C：PC は視点の切り替え。VR は、いまの頭を運転席の目に合わせ直す（乗ったあと座り直したときなど。
+    // 左スティックの押し込みと同じ。ハンコンを握っていてコントローラーを置いているときのため）
+    if (event.code === 'KeyC' && driving && !event.repeat) {
+      if (renderer.xr.isPresenting) calibrateHead();
+      else view = view === 'first' ? 'chase' : 'first';
+    }
+    if (renderer.xr.isPresenting) return;
     if (event.code === 'KeyH') wheel.openPanel();
   });
   window.addEventListener('keyup', (event) => keys.delete(event.code));

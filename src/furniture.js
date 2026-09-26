@@ -12,6 +12,9 @@ import { createRacket, createTennisBall } from './tennis.js';
  * ハイライトが一本走るだけで、見え方がまるで変わる。
  */
 
+/** プレイヤーのラケットとテニスボールを置く所（テニスコートの入口を入ってすぐ、手前の空き地） */
+export const RACKET_HOME = { x: 2.2, z: -14.6 };
+
 /** 中央のテーブル。world.js の簡易物理が着地面として参照する。 */
 export const TABLE = { center: { x: 0, z: -2.05 }, radius: 0.62, top: 0.745 };
 
@@ -678,11 +681,12 @@ export function createFurniture(scene, tex, onSelectTheme) {
   grabbables.push(ball);
 
   // --- ラケットとテニスボール ---------------------------------------------
-  // 手前（部屋の入口側）に、面を上にして寝かせる。先端は +X（右）へ向ける
+  // テニスコートの入口（防球ネットの右端の開いた所）を入ってすぐ、手前の空き地に、面を上にして寝かせる。
+  // 先端は -X（コートのまん中）へ向ける。以前は家のテーブルの上だった（コートまで持っていくのが手間）
   const racket = createRacket();
-  racket.userData.home.set(TABLE.center.x - 0.40, TABLE.top + racket.userData.halfSize, TABLE.center.z + 0.40);
+  racket.userData.home.set(RACKET_HOME.x, racket.userData.halfSize, RACKET_HOME.z);
   racket.userData.homeQuaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
-    new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0),
+    new THREE.Vector3(0, 0, 1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 1, 0),
   ));
   racket.position.copy(racket.userData.home);
   racket.quaternion.copy(racket.userData.homeQuaternion);
@@ -690,7 +694,7 @@ export function createFurniture(scene, tex, onSelectTheme) {
   grabbables.push(racket);
 
   const tennisBall = createTennisBall();
-  tennisBall.userData.home.set(TABLE.center.x - 0.28, TABLE.top + tennisBall.userData.halfSize, TABLE.center.z + 0.16);
+  tennisBall.userData.home.set(RACKET_HOME.x + 0.1, tennisBall.userData.halfSize, RACKET_HOME.z + 0.35);
   tennisBall.position.copy(tennisBall.userData.home);
   group.add(tennisBall);
   grabbables.push(tennisBall);

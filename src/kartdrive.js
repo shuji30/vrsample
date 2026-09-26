@@ -81,6 +81,25 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     if (!vehicle.silent) engine.start();   // シーソーなど、エンジンの無い乗り物は鳴らさない
     if (renderer.xr.isPresenting) calibrateHead();
     world.onKartEnter?.(vehicle);
+    // 切れたハンコンをつなぎ直す（FFB・HID のペダルはボタンなしで開き直せる。Gamepad API のハンコンは
+    // ボタンを 1 回押すまで見えないので、そう知らせる）
+    ffb.refresh?.();
+    if (!wheel.refresh()) notice('ハンコンが見えません。ハンコンのボタンを 1 回押すと、つながります');
+  }
+  // 画面の上に短く出す知らせ（PC）。VR では見えないので、声の代わりに振動などは付けない
+  let noticeEl = null;
+  let noticeTimer = 0;
+  function notice(text) {
+    if (typeof document === 'undefined') return;
+    if (!noticeEl) {
+      noticeEl = document.createElement('div');
+      noticeEl.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);padding:8px 14px;background:rgba(20,24,36,.85);color:#fff;font:600 14px/1.4 sans-serif;border-radius:8px;z-index:30;pointer-events:none';
+      document.body.appendChild(noticeEl);
+    }
+    noticeEl.textContent = text;
+    noticeEl.style.display = '';
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => { noticeEl.style.display = 'none'; }, 6000);
   }
 
   /**

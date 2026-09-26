@@ -16,6 +16,9 @@ const DASH = 2.0;
  * 歩けるようにしたのは、掃き出し窓から庭へ出られるようになったのに、
  * PC では部屋の中心を周回することしかできず、外へ出る手段が無かったため。
  */
+/** VR の最中もゲームパッドを読むか（?vrpad=on）。既定は読まない */
+const VR_PAD = typeof location !== 'undefined' && new URLSearchParams(location.search).get('vrpad') === 'on';
+
 export function createDesktopControls(renderer, camera, world) {
   // 入った瞬間にテーブルと、その奥の窓ごしの公園が見える位置
   camera.position.set(0.85, 1.62, 1.75);
@@ -329,7 +332,9 @@ export function createDesktopControls(renderer, camera, world) {
     update(dt) {
       // VR の最中も、ゲームパッドは読む（ボタンはキーとして届き、スティックは controllers.js が
       // xrPad から歩き・スナップターンに使う）。前は VR に入るとパッドがまったく効かなかった
-      if (renderer.xr.isPresenting) { last = performance.now(); xrPad = gamepad.update({ xr: true, xrPads: xrGamepads() }); return; }
+      // ただし既定では読まない（?vrpad=on のときだけ）。PAD 対応を入れてから、実機の VR で「移動すると家だけが動き、
+      // 自分と家具は動かない」と報告があり、PAD 対応より前と同じ動きに戻して切り分けるため
+      if (renderer.xr.isPresenting) { last = performance.now(); xrPad = VR_PAD ? gamepad.update({ xr: true, xrPads: xrGamepads() }) : null; return; }
       const now = performance.now();
       const seconds = dt ?? Math.min((now - last) / 1000, 0.05);
       last = now;

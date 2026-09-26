@@ -13,7 +13,9 @@ import * as THREE from 'three';
  *   W / ↑ / RT / 右トリガー：押すたびに 1 段速く（止まる → 常歩 → 速歩 → 駈歩）
  *   S / ↓ / LT / 左トリガー：押すたびに 1 段遅く。押し続けると止まる
  *   A D / スティック / ハンドル：曲がる（VR は両手で手綱を持って、左手を引くと左へ、右手を引くと右へ）
- * 柵に向かうと、馬が自分で柵に沿って曲がる（本物の馬も、馬場では柵に沿って走る）。
+ * 馬場の中で柵に向かうと、馬が自分で柵に沿って曲がる（本物の馬も、馬場では柵に沿って走る）。
+ * 入口からは外へ出られて、プレイヤーが歩ける所（庭・公園・丘の上）ならどこへでも行ける
+ * （建物・遊具・柵はよける。家の中には入らない）。鞍の前半分には女の子が横乗りする（horsegame.js）。
  *
  * 引き馬（lead = true）のあいだは、乗り手の操作を聞かずに、馬場の内側の道を常歩で回る
  * （速さは horsegame.js が、手綱を引く女の子に合わせて決める）。
@@ -263,7 +265,7 @@ export function poseHorse(model, { phase, gait, amount, time = 0, headDown = 0 }
  * 乗れる馬。
  * @param {{ paddock: { cx: number, cz: number, rx: number, rz: number }, park: { x: number, z: number, yaw: number }, onGait?: (gait: number) => void }} options
  */
-export function createHorse({ paddock, park, onGait = null }) {
+export function createHorse({ paddock, park, gate = null, onGait = null, ground = () => 0, blocked = () => false, clampTo = null }) {
   const group = new THREE.Group();
   group.name = 'horse';
   const model = createHorseModel();
@@ -298,6 +300,7 @@ export function createHorse({ paddock, park, onGait = null }) {
   let pushFor = 0;
   let ridden = false;
   let lead = false;
+  let hold = false;          // 女の子が乗るまで待つ（その場で止まる）
   let leadSpeed = 0;
   let skip = false;
   let lastStrikes = [1, 1, 1, 1];
@@ -331,13 +334,19 @@ export function createHorse({ paddock, park, onGait = null }) {
     onGait?.(next, prev);
   }
 
-  function update(dt, input = {}) {
+  function update(dt, input = {}, clamp = null) {
     const { throttle = 0, brake = 0, steer = 0 } = input;
     ridden = true;
     time += dt;
     let turn = 0;
     const p = group.position;
-    if (lead) {
+    const from = { x: p.x, z: p.z };
+    if (hold) {
+      state.speed = Math.max(0, state.speed - HORSE.decel * dt);
+      state.gait = 0;
+      throttleHeld = throttle > 0.5;
+      brakeHeld = brake > 0.5;
+    } else if (lead) {
       // 引き馬：内側の道を回る。乗り手が急かし続けたら（1 秒）、ひとりで乗る合図
       pushFor = throttle > 0.5 ? pushFor + dt : 0;
       if (pushFor > 1) skip = true;
@@ -363,11 +372,12 @@ export function createHorse({ paddock, park, onGait = null }) {
       // 曲がる。速いほど、曲がれる速さは少し落ちる（止まっていても、その場で向きを変えられる）
       const rate = state.speed < 0.2 ? 0.9 : 1.6 - 0.12 * state.speed;
       turn = steer * rate;
-      // 柵に向かっていたら、柵に沿うように曲げる
+      // 馬場の中で柵に向かっていたら、柵に沿うように曲げる（入口から外へ出るときは効かない）
       const nx = (p.x - paddock.cx) / limit.rx;
       const nz = (p.z - paddock.cz) / limit.rz;
       const r = Math.hypot(nx, nz);
-      if (r > 0.82 && state.speed > 0.1) {
+      const nearGate = gate && Math.hypot(p.x - gate.x, p.z - gate.z) < 2.2;
+      if (r > 0.82 && r < 1.05 && state.speed > 0.1 && !nearGate) {
         const gx = nx / limit.rx;
         const gz = nz / limit.rz;
         const gl = Math.hypot(gx, gz) || 1;
@@ -394,17 +404,31 @@ export function createHorse({ paddock, park, onGait = null }) {
     state.travelYaw = state.yaw;
     p.x += Math.sin(state.yaw) * state.speed * dt;
     p.z += Math.cos(state.yaw) * state.speed * dt;
-    // 柵の中に収める
-    const nx = (p.x - paddock.cx) / limit.rx;
-    const nz = (p.z - paddock.cz) / limit.rz;
-    const r = Math.hypot(nx, nz);
-    if (r > 1) {
-      p.x = paddock.cx + (nx / r) * limit.rx;
-      p.z = paddock.cz + (nz / r) * limit.rz;
-      // まっすぐ柵へ向かっていたら、足をゆるめる（沿って走っているぶんには落とさない）
-      const out = (Math.sin(state.yaw) * nx / limit.rx + Math.cos(state.yaw) * nz / limit.rz) / (Math.hypot(nx / limit.rx, nz / limit.rz) || 1);
-      if (out > 0.5) state.speed *= 1 - 2 * dt;
+    // 歩ける所に収める（馬場の柵・建物・遊具はよけ、入口から外へ出られる。家の中には入らない）。
+    // clamp が無いとき（テスト）は、これまでどおり馬場の中だけ
+    // 歩ける範囲の継ぎ目は、人の体（余白 0.25m）で重なるように作ってある。乗り物の余白（0.75m）で縮めると
+    // 池のまわりとポケバイのコースのあいだなどに隙間ができて通れないので、馬は人と同じ余白（0.25m）で見る（0.3m でも、池のまわりとポケバイの範囲のあいだに 0.1m の隙間ができた）
+    const clampFn = clampTo ?? clamp;
+    if (clampFn) {
+      let c = clampFn(p.x, p.z, from);
+      if (blocked(c.x, c.z)) c = from;
+      const pushed = Math.hypot(c.x - p.x, c.z - p.z);
+      p.x = c.x;
+      p.z = c.z;
+      // まっすぐ壁へ向かっていたら、足をゆるめる（沿って走っているぶんには落とさない）
+      if (pushed > state.speed * dt * 0.6 && state.speed > 0.3) state.speed *= 1 - 2 * dt;
+    } else {
+      const nx = (p.x - paddock.cx) / limit.rx;
+      const nz = (p.z - paddock.cz) / limit.rz;
+      const r = Math.hypot(nx, nz);
+      if (r > 1) {
+        p.x = paddock.cx + (nx / r) * limit.rx;
+        p.z = paddock.cz + (nz / r) * limit.rz;
+        const out = (Math.sin(state.yaw) * nx / limit.rx + Math.cos(state.yaw) * nz / limit.rz) / (Math.hypot(nx / limit.rx, nz / limit.rz) || 1);
+        if (out > 0.5) state.speed *= 1 - 2 * dt;
+      }
     }
+    p.y = ground(p.x, p.z);
     group.rotation.y = state.yaw;
     // 周回（引き馬の 1 周を数える）。道を回る向きは θ が減る向き
     const theta = thetaOf(p.x, p.z);
@@ -446,7 +470,12 @@ export function createHorse({ paddock, park, onGait = null }) {
     }
   }
 
-  const eyeOffset = new THREE.Vector3(0, 2.28, -0.12);
+  // 目は鞍の後ろ半分（前半分に女の子が横乗りする）。前が女の子の頭で隠れないよう、女の子は左へ、目は右へ少し寄せる
+  const eyeOffset = new THREE.Vector3(-0.1, 2.3, -0.36);
+  // 女の子の席の台（鞍の前半分。馬の揺れといっしょに動く pivot の子）
+  const girlPivot = new THREE.Object3D();
+  girlPivot.position.set(0.15, 1.575, 0.1);
+  model.pivot.add(girlPivot);
   const tmp = new THREE.Vector3();
   return {
     group,
@@ -489,10 +518,10 @@ export function createHorse({ paddock, park, onGait = null }) {
       tmp.y += (state.bob ?? 0) * 0.5;
       return group.localToWorld(out.copy(tmp));
     },
-    /** 降りる所（馬の左） */
+    /** 降りる所（馬の右。左には女の子が降りる） */
     side(out = new THREE.Vector3()) {
       const y = state.yaw;
-      return out.set(group.position.x + Math.cos(y) * 0.95, 0, group.position.z - Math.sin(y) * 0.95);
+      return out.set(group.position.x - Math.cos(y) * 0.95, 0, group.position.z + Math.sin(y) * 0.95);
     },
     /** 引き馬で女の子が歩く所（馬の頭の左、0.8m） */
     leadPoint(out = new THREE.Vector3()) {
@@ -513,6 +542,22 @@ export function createHorse({ paddock, park, onGait = null }) {
       }
       pos.needsUpdate = true;
     },
+    /** 女の子の席の台（横乗り） */
+    girlPivot,
+    /** 鞍の前の出っ張り（女の子の手を置く所。ワールド） */
+    pommelPoints(left, right) {
+      model.pivot.updateMatrixWorld(true);
+      model.pivot.localToWorld(left.set(0.1, 1.64, 0.22));
+      model.pivot.localToWorld(right.set(-0.06, 1.64, 0.22));
+    },
+    /** 乗り降りする所（馬の左、女の子が乗る側） */
+    mountPoint(out = new THREE.Vector3()) {
+      const y = state.yaw;
+      return out.set(group.position.x + Math.cos(y) * 0.8 + Math.sin(y) * 0.1, 0, group.position.z - Math.sin(y) * 0.8 + Math.cos(y) * 0.1);
+    },
+    /** 女の子が乗るまで待つ（true のあいだ、馬は動かない） */
+    set hold(v) { hold = Boolean(v); },
+    get hold() { return hold; },
     /** 引き馬にする / やめる。やめると止まった状態から、乗り手が操る */
     set lead(v) {
       lead = Boolean(v);

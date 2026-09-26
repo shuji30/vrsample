@@ -451,8 +451,15 @@ export function createWheelFFB() {
   }
 
   reconnect();
+  // 抜き差し：前に選んだ機器が戻ってきたら、つなぎ直す（WebHID は許可した機器の connect を知らせる）
+  if (supported) {
+    navigator.hid.addEventListener?.('connect', () => { if (!device?.opened) reconnect(); });
+    navigator.hid.addEventListener?.('disconnect', (event) => { if (event.device === device) { status = `${model}：切れました（つなぎ直すと、自動で戻ります）`; } });
+  }
 
   return {
+    /** 乗り物に乗ったときなど：切れていれば、前に選んだ機器をボタンなしで開き直す */
+    refresh() { return device?.opened ? Promise.resolve(true) : reconnect(); },
     supported,
     connect,
     update,

@@ -188,9 +188,13 @@ export function createWheelInput() {
       hidStatus = `HID でつなげませんでした（${error?.message ?? error}）`;
     }
   }
-  /** 前に許可した HID の機器を、ページを開いたときにつなぎ直す */
-  (async () => {
+  /**
+   * 前に許可した HID の機器を、ボタンなしでつなぎ直す（ページを開いたとき・乗り物に乗ったとき・抜き差ししたとき）。
+   * 切れた（閉じた）口は一覧から外してから開き直す
+   */
+  async function reopenHid() {
     if (!hidSupported) return;
+    for (let i = hidPads.length - 1; i >= 0; i--) if (!hidPads[i].device?.opened) hidPads.splice(i, 1);
     try {
       const saved = JSON.parse(localStorage.getItem(HID_STORE) ?? '[]');
       if (!saved.length) return;
@@ -198,7 +202,9 @@ export function createWheelInput() {
         if (saved.includes(`${d.vendorId}:${d.productId}`)) await openHid(d).catch(() => {});
       }
     } catch { /* ボタンから */ }
-  })();
+  }
+  reopenHid();
+  if (hidSupported) navigator.hid.addEventListener?.('connect', () => { reopenHid(); });
   /** ゲームパッドでない入力機器（ハンコン・ペダル・シフターなど） */
   // 'standard' でなくても、名前がゲームパッドらしい機器はハンコンとして扱わない
   // （そうしないと、パッドがハンドルに選ばれてしまう）
@@ -705,7 +711,18 @@ export function createWheelInput() {
   }
 
   let onPanel = null;
+  /**
+   * 乗り物に乗ったときに呼ぶ。HID の機器はつなぎ直し、Gamepad API のハンコンが見えなくなっていたら
+   * false を返す（ブラウザの決まりで、切れたハンコンはボタンを 1 回押すまで見えない）
+   */
+  function refresh() {
+    reopenHid();
+    const want = config.steer?.id;
+    if (!want) return true;
+    return Boolean(byId(want));
+  }
   return {
+    refresh,
     read,
     readPad,
     pollButtons,

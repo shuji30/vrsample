@@ -318,6 +318,7 @@ async function start() {
   let stats = null;
 
   renderer.xr.addEventListener('sessionstart', () => {
+    sessionStarts += 1;
     requestingSession = false;
     music.unlock();   // ENTER VR を押した操作の続きなので、ここで鳴らし始められる
     document.body.classList.add('xr-presenting');
@@ -348,6 +349,44 @@ async function start() {
     stats = null;
   });
 
+  // --- VR の診断表示（VR の最中だけ、PC のモニターの左下に出す。?vrdiag=off で出さない）---------
+  // 実機（Pimax など）でしか起きない不具合（移動しても位置が変わらない・目線合わせが効かない等）を
+  // 調べるため、XR の状態・リグと頭の位置・VR のコントローラーとゲームパッドの値を見せる
+  let sessionStarts = 0;
+  const diagEl = document.createElement('pre');
+  diagEl.id = 'vrdiag';
+  diagEl.style.cssText = 'position:fixed;left:8px;bottom:8px;margin:0;padding:8px 10px;background:rgba(0,0,0,.75);color:#9f9;font:12px/1.35 monospace;border-radius:6px;z-index:20;display:none;max-width:60vw;white-space:pre-wrap';
+  document.body.appendChild(diagEl);
+  const showDiag = params.get('vrdiag') !== 'off';
+  let diagIn = 0;
+  const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
+  const vec = (v) => `${f2(v.x)}, ${f2(v.y)}, ${f2(v.z)}`;
+  function updateDiag(dt) {
+    const session = renderer.xr.getSession?.();
+    diagEl.style.display = showDiag && (session || renderer.xr.isPresenting) ? '' : 'none';
+    if (diagEl.style.display === 'none') return;
+    diagIn -= dt;
+    if (diagIn > 0) return;
+    diagIn = 0.2;
+    const head = camera.getWorldPosition(new THREE.Vector3());
+    const lines = [
+      `VR 診断（?vrdiag=off で消す）`,
+      `isPresenting=${renderer.xr.isPresenting} session=${Boolean(session)} sessionstart=${sessionStarts} align=${JSON.stringify(player.alignInfo)}`,
+      `rig=${vec(player.player.position)} rigYaw=${f2(player.player.rotation.y)} head=${vec(head)} headLocal=${vec(camera.position)}`,
+      `driving=${kartDrive.driving} vehicle=${kartDrive.driving ? kartDrive.vehicle?.kind ?? '?' : '-'}`,
+    ];
+    for (const [i, src] of [...(session?.inputSources ?? [])].entries()) {
+      const g = src.gamepad;
+      lines.push(`xr[${i}] ${src.handedness} ${src.targetRayMode} axes=[${g ? [...g.axes].map(f2).join(',') : '-'}] btn=${g ? [...g.buttons].map((b) => (b.pressed ? 1 : 0)).join('') : '-'}`);
+    }
+    for (const g of [...(navigator.getGamepads?.() ?? [])].filter(Boolean)) {
+      lines.push(`pad[${g.index}] ${g.id.slice(0, 40)} map=${g.mapping || '-'} n=${g.buttons.length} axes=[${[...g.axes].map(f2).join(',')}]`);
+    }
+    const xp = desktop.xrPad;
+    lines.push(`xrPad connected=${Boolean(xp?.connected)} move=${xp ? `${f2(xp.move.x)},${f2(xp.move.y)}` : '-'} look=${xp ? `${f2(xp.look.x)},${f2(xp.look.y)}` : '-'}`);
+    diagEl.textContent = lines.join('\n');
+  }
+
   const timer = new THREE.Timer();
   timer.connect(document); // タブが非表示の間は時間を進めない
 
@@ -373,6 +412,7 @@ async function start() {
       music.update(dt, { ducked: Boolean(world.voice?.speaking || world.carousel?.musicPlaying) });
       debugPanel.update(elapsed);
       updatePerf(elapsed);
+      updateDiag(elapsed);
 
       renderer.render(scene, camera);
     } catch (error) {

@@ -544,6 +544,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
    * 頭の姿勢は VR が始まって数フレームたたないと取れないので、frames 後に合わせる
    */
   let pendingAlign = null;
+  let alignCount = 0;
   function alignHeadTo(x, z, yaw, frames = 3) { pendingAlign = { x, z, yaw, frames }; }
   const _alignQ = new THREE.Quaternion();
   const _alignF = new THREE.Vector3();
@@ -552,6 +553,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     if (--pendingAlign.frames > 0) return;
     const { x, z, yaw } = pendingAlign;
     pendingAlign = null;
+    alignCount += 1;
     if (driving) return;   // カートに乗っているときは、カートの側で合わせる
     player.updateMatrixWorld(true);
     headWorldQuaternion(_alignQ);
@@ -671,5 +673,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     headWorldPosition,
     headWorldQuaternion,
     get driving() { return driving; },
+    /** 診断用：頭合わせ（alignHeadTo）を実際に行った回数と、待っているか */
+    get alignInfo() { return { done: alignCount, pending: Boolean(pendingAlign) }; },
   };
 }

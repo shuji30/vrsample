@@ -237,6 +237,20 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
     return a < 0 && b >= 0 && b - a < 50;
   }
 
+  /** グリッド（スタートの線の 4〜40m 手前）に止まっている秒数 */
+  function onGrid(dt) {
+    const d = wrapD(playerCar.state.s - CIRCUIT.startAt);
+    stillFor = d < -4 && d > -40 && Math.abs(playerCar.state.speed) < 1 ? stillFor + dt : 0;
+    return stillFor;
+  }
+  function restart() {
+    stillFor = 0;
+    const slots = gridSlots();
+    placeHer(slots.her.s, slots.her.lat);
+    newRace();
+    voice?.say('gt3Again');
+  }
+
   function update(dt) {
     if (state === 'off') return;
     clock += dt;
@@ -270,6 +284,9 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
         break;
       }
       case 'race': {
+        // 途中でやめてグリッドに戻り、3 秒止まっていても、やり直す（前は 3 周走り切らないと
+        // 「もう一回」にならず、グリッドに並んでもレースが始まらなかった）
+        if (timer > 8 && onGrid(dt) > 3) { restart(); break; }
         if (playerCrossed && timer > 5) {
           playerLap++;
           lastLap = clock - lapStart;
@@ -299,15 +316,7 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
         break;
       case 'free': {
         // グリッドに止まって 2 秒で、もう一回
-        const d = wrapD(ps - CIRCUIT.startAt);
-        stillFor = d < -4 && d > -40 && Math.abs(playerCar.state.speed) < 1 ? stillFor + dt : 0;
-        if (stillFor > 2) {
-          stillFor = 0;
-          const slots = gridSlots();
-          placeHer(slots.her.s, slots.her.lat);
-          newRace();
-          voice?.say('gt3Again');
-        }
+        if (onGrid(dt) > 2) restart();
         break;
       }
       default:
@@ -333,7 +342,8 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
     hudText.textContent = `GT3 レース　${lapText}　${state === 'race' ? `${pos}位` : ''}\n`
       + `いまの周 ${state === 'race' ? fmt(clock - lapStart) : '--'}　前の周 ${fmt(lastLap)}　ベスト ${fmt(bestLap)}\n`
       + `${playerCar.state.reverse ? 'R' : playerCar.state.gear} 速　${Math.round(Math.abs(playerCar.state.speed) * 3.6)} km/h　${playerCar.state.auto ? 'AT（Q で MT）' : 'MT（Q で AT）'}`
-      + (state === 'free' ? '\nグリッドに止まって 2 秒待つと、もう一回' : '');
+      + (state === 'free' ? '\nグリッドに止まって 2 秒待つと、もう一回' : '')
+      + (state === 'race' && stillFor > 0.5 ? '\nグリッドに止まっていると、やり直します…' : '');
   }
 
   return {

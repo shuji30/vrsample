@@ -293,6 +293,11 @@ export function createDesktopControls(renderer, camera, world) {
     camera.position.copy(controls.target).add(orbit);
   }
 
+  /** VR のコントローラーの Gamepad（ゲームパッドの写しを見分けるのに使う） */
+  function xrGamepads() {
+    const session = renderer.xr.getSession?.();
+    return session ? [...session.inputSources].map((src) => src.gamepad).filter(Boolean) : [];
+  }
   let last = performance.now();
   /** カートを運転しているあいだは、歩く・視点を回す・球を持つを止める（kartdrive.js がカメラを動かす） */
   let driving = false;
@@ -324,7 +329,7 @@ export function createDesktopControls(renderer, camera, world) {
     update(dt) {
       // VR の最中も、ゲームパッドは読む（ボタンはキーとして届き、スティックは controllers.js が
       // xrPad から歩き・スナップターンに使う）。前は VR に入るとパッドがまったく効かなかった
-      if (renderer.xr.isPresenting) { last = performance.now(); xrPad = gamepad.update({ xr: true }); return; }
+      if (renderer.xr.isPresenting) { last = performance.now(); xrPad = gamepad.update({ xr: true, xrPads: xrGamepads() }); return; }
       const now = performance.now();
       const seconds = dt ?? Math.min((now - last) / 1000, 0.05);
       last = now;

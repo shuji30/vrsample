@@ -17,6 +17,8 @@ import { CIRCUIT_ZONE } from './circuit.js';
  */
 export const PLATEAU = { minX: -35, maxX: 35, minZ: -41, maxZ: 15 };
 export const SEA_LEVEL = -26;
+/** ジェットコースター（coaster.js）のコースが通る所。遠くの丘の木を植えない */
+export const COASTER_ZONE = { minX: -14, maxX: 40, minZ: 8, maxZ: 118 };
 
 const smooth = (t) => { const c = Math.min(1, Math.max(0, t)); return c * c * (3 - 2 * c); };
 
@@ -193,6 +195,8 @@ export function createHill(tex) {
     const z = -13 + Math.sin(a) * r;
     if (x > P.minX - 4 && x < P.maxX + 4 && z > P.minZ - 4 && z < P.maxZ + 4) continue;
     if (z < P.minZ - 10 && Math.abs(x) < 140) continue;     // 北の海への眺めを空けておく
+    const C = COASTER_ZONE;
+    if (x > C.minX - 6 && x < C.maxX + 6 && z > C.minZ - 6 && z < C.maxZ + 6) continue;   // コースターのコース
     const y = hillHeight(x, z);
     if (y < SEA_LEVEL + 2.5 || circuitFlat(x, z) > 0.05) continue;
     spots.push([x, y, z, 5 + rand() * 6]);

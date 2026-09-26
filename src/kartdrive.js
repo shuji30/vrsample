@@ -51,6 +51,11 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   const tmp = new THREE.Vector3();
   const tmp2 = new THREE.Vector3();
   const eye = new THREE.Vector3();
+  const seatQ = new THREE.Quaternion();
+  const turnQ = new THREE.Quaternion();
+  const pitchQ = new THREE.Quaternion();
+  const UP = new THREE.Vector3(0, 1, 0);
+  const RIGHT = new THREE.Vector3(1, 0, 0);
   const wheelCenter = new THREE.Vector3();
   let lastInput = { steer: 0, throttle: 0, brake: 0, kind: 'none', angle: 0 };
   let wasOnCurb = false;
@@ -137,6 +142,12 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     vehicle.side(tmp);
     if (renderer.xr.isPresenting) {
       const rig = player.player;
+      // 車両ごと傾いていたら（ジェットコースター）、向きだけ残して起こす
+      if (vehicle.seatQuaternion) {
+        const f = new THREE.Vector3(0, 0, -1).applyQuaternion(rig.quaternion);
+        rig.quaternion.setFromAxisAngle(UP, Math.atan2(-f.x, -f.z));
+        rig.updateMatrixWorld(true);
+      }
       player.headWorldPosition(tmp2);
       rig.position.x += tmp.x - tmp2.x;
       rig.position.z += tmp.z - tmp2.z;
@@ -341,6 +352,29 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     vehicle.eye(eye);
     if (calibrateIn > 0 && renderer.xr.isPresenting && --calibrateIn === 0) calibrateHead();
     const yaw = vehicle.state.yaw;
+    // 車両ごと傾く乗り物（ジェットコースター）：リグ・カメラを車両の向きごと回す（宙返りでは逆さまに）
+    if (vehicle.seatQuaternion) {
+      vehicle.seatQuaternion(seatQ);
+      if (renderer.xr.isPresenting) {
+        const rig = player.player;
+        turnQ.setFromAxisAngle(UP, Math.PI + rigYawOffset);
+        rig.quaternion.copy(seatQ).multiply(turnQ);
+        tmp.copy(headLocal).applyQuaternion(rig.quaternion);
+        rig.position.set(eye.x - tmp.x, eye.y - tmp.y, eye.z - tmp.z);
+        return;
+      }
+      if (view === 'first') {
+        // 前を向いて、少し下を見る。A / D（lookYawOffset）で見まわす
+        turnQ.setFromAxisAngle(UP, Math.PI + (vehicle.lookYawOffset ?? 0));
+        pitchQ.setFromAxisAngle(RIGHT, -0.12);
+        camera.position.copy(eye);
+        camera.quaternion.copy(seatQ).multiply(turnQ).multiply(pitchQ);
+      } else if (vehicle.chase) {
+        vehicle.chase(camera);
+      }
+      camera.updateMatrixWorld(true);
+      return;
+    }
     if (renderer.xr.isPresenting) {
       // 覚えた頭の位置が、運転席の目に来るようにリグを置く
       const rig = player.player;

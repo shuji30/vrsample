@@ -263,7 +263,7 @@ async function start() {
   });
   const desktop = createDesktopControls(renderer, camera, world);
   // カートの運転（乗り降り・操作・ハンコン・FFB）
-  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.gt3, ...(world.seats?.list ?? [])].filter(Boolean) });
+  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.coaster, world.gt3, ...(world.seats?.list ?? [])].filter(Boolean) });
 // 会話の「そろそろいこうか」は、E と同じく立つ
 if (world.talk) world.talk.onLeave = () => kartDrive.exit();
 const talkEye = new THREE.Vector3();

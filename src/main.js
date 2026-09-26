@@ -253,8 +253,10 @@ async function start() {
 
   report('操作の準備中…');
   const player = createPlayer(renderer, camera, scene, world, {
-    // 上下動は VR だと酔いにつながるので、弱めたり切ったりできるようにしておく
-    bobScale: params.has('bob') ? Number(params.get('bob')) || 0 : 1,
+    // 歩くときの頭の上下動・左右の振れ（VR の歩きだけにかかる）。既定は切っておく。VR では揺れているのが
+    // 自分の目なので、近くの壁や机（家）ほど動いて見え、「移動すると家が動く」と報告された。
+    // ?bob=1 で入れる、?bob=0.5 で弱めに入れる
+    bobScale: params.has('bob') ? Number(params.get('bob')) || 0 : 0,
     muted: params.has('mute'),
   });
   const desktop = createDesktopControls(renderer, camera, world);

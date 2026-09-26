@@ -20,6 +20,18 @@ export const SEA_LEVEL = -26;
 
 const smooth = (t) => { const c = Math.min(1, Math.max(0, t)); return c * c * (3 - 2 * c); };
 
+/**
+ * 北の崖の下の砂浜（beach.js）。崖のすそから 2m は平ら（海面の 1m 上）、そのあとは 10% の勾配で海へ入る
+ * （z -88 で波打ちぎわ、-94 で水深 0.6m）。x の端と沖では、もとの地形へなめらかに戻す
+ */
+export const BEACH = { minX: -45, maxX: 35, backZ: -76, shoreZ: -88, top: SEA_LEVEL + 1.0 };
+function beachShelf(z) { return BEACH.top - Math.max(0, BEACH.backZ - 2 - z) * 0.1; }
+function beachWeight(x, z) {
+  const wx = 1 - smooth(Math.max(BEACH.minX - x, 0, x - BEACH.maxX) / 40);
+  const wz = smooth((-70 - z) / 6) * (1 - smooth((-112 - z) / 12));
+  return wx * wz;
+}
+
 /** 丘の地面の高さ（平らな所の中は 0） */
 export function hillHeight(x, z) {
   const P = PLATEAU;
@@ -35,6 +47,11 @@ export function hillHeight(x, z) {
   const d = Math.hypot(dN + dS, dW + dE);
   const wobble = Math.sin(x * 0.021) * Math.cos(z * 0.017) * 5 + Math.sin((x + z) * 0.043) * 2 + Math.sin(x * 0.11 + z * 0.07) * 0.6;
   h += wobble * smooth(d / 40) * (dN > 0 ? 0.35 : 1);
+  // 北の崖の下の砂浜
+  if (dN > 20) {
+    const wb = beachWeight(x, z);
+    if (wb > 0) h += (beachShelf(z) - h) * wb;
+  }
   // 東のふもとのサーキットの平らな所（y -10）。まわり 70m でなめらかにつなぐ
   const w = circuitFlat(x, z);
   return w > 0 ? h + (CIRCUIT_ZONE.y - h) * w : h;

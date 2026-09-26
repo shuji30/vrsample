@@ -238,6 +238,8 @@ export function createDesktopControls(renderer, camera, world) {
   window.addEventListener('keydown', (event) => {
     // 乗り物に乗っているあいだは、拾う・投げる・振るをしない（足もとの球を拾ってしまうので）
     if (renderer.xr.isPresenting || driving) return;
+    // 砂浜では、F でビーチボールを打つ・貝がらを拾う（world.js が受けたら、ここでは拾わない）
+    if (event.code === 'KeyF' && !event.repeat && !heldBall && !swing?.holding && onUse?.()) return;
     if (event.code === 'KeyF') {
       if (heldBall) { throwBall(); return; }
       // 足もとの球より、かごを先に見る（かごのそばで F を押したら、かごから出す）
@@ -294,6 +296,7 @@ export function createDesktopControls(renderer, camera, world) {
   let last = performance.now();
   /** カートを運転しているあいだは、歩く・視点を回す・球を持つを止める（kartdrive.js がカメラを動かす） */
   let driving = false;
+  let onUse = null;
 
   return {
     controls,
@@ -302,6 +305,8 @@ export function createDesktopControls(renderer, camera, world) {
       driving = Boolean(value);
       controls.enabled = !driving;
     },
+    /** F を押したとき、先に聞く（砂浜のボール・貝がら。使ったら true） */
+    set onUse(fn) { onUse = fn; },
     /** 持っている物をすべて置く（カートに乗る前） */
     dropAll() {
       if (swing?.holding) swing.drop();

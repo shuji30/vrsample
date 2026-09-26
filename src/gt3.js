@@ -8,7 +8,8 @@ import { createCircuitMap } from './circuitmap.js';
  *
  * 6 速のシーケンシャル。AT（自動で変速）と MT（手動）を切り替えられる（Q・パッドの十字キー上・
  * VR の右スティックの押し込み・ハンコンに割り当てたボタン。選んだほうは localStorage に覚える）。
- * AT のままシフト（パドル・X / Z・パッドの RB / LB・VR の A / B）を使うと MT になる。エンジンは回転数からトルクを出し、ギア比で駆動力にする。
+ * AT のままシフト（パドル・X / Z・パッドの RB / LB・VR の A / B）を使うと MT になる。
+ * R（バック）は、止まって 1 速からシフトダウン（AT は止まってブレーキを 0.8 秒でも）。R ではアクセルで後ろへ。エンジンは回転数からトルクを出し、ギア比で駆動力にする。
  * 空気の抵抗とダウンフォース（速いほど曲がれる・止まれる）、縁石・芝（はみ出すとすべる）、外の防護壁。
  * 路面の高さはコース上の位置から（立体交差の橋）。
  *
@@ -170,13 +171,13 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   dashCanvas.height = 128;
   const dashTex = new THREE.CanvasTexture(dashCanvas);
   dashTex.colorSpace = THREE.SRGBColorSpace;
-  const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.17), new THREE.MeshBasicMaterial({ map: dashTex, toneMapped: false }));
-  // ハンドルの上から見える高さに（ハンドルの陰に隠れていた）
-  dash.position.set(SEAT.x, 1.06, 0.5);
+  const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.12), new THREE.MeshBasicMaterial({ map: dashTex, toneMapped: false }));
+  // 車の真ん中（センターコンソール）の上段。運転席から見た前の道の外で、ボンネットの線より下。
+  // ハンドルの奥に置くと、目の 6cm 下・85cm 先で道の真ん中が隠れ、下げるとハンドルの輪と車体に隠れた
+  dash.position.set(SEAT.x - 0.34, 0.945, 0.45);
   body.add(dash);
-  // 表を運転席の目へ向ける（平面の表は +Z 向きなので、そのままだと前を向いて、運転席からは裏だった）
   dash.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
-  // コースの地図（メーターの内側、真ん中寄り）。VR でも目を少し左へ向ければ見える
+  // コースの地図（メーターの下）。VR でも目を少し左下へ向ければ見える
   const mapCanvas = document.createElement('canvas');
   mapCanvas.width = 256;
   mapCanvas.height = 192;
@@ -186,7 +187,8 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   mapTex.generateMipmaps = false;
   mapTex.minFilter = THREE.LinearFilter;
   const mapPlane = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.15), new THREE.MeshBasicMaterial({ map: mapTex, toneMapped: false }));
-  mapPlane.position.set(SEAT.x - 0.33, 1.02, 0.5);
+  // その下（センターコンソールの下段）
+  mapPlane.position.set(SEAT.x - 0.36, 0.83, 0.41);
   body.add(mapPlane);
   mapPlane.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
   return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, mapPlane, mapCanvas, mapTex };
@@ -254,6 +256,7 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
   }
 
   let locked = false;
+  let holdBrake = 0;
   function update(dt, input = {}) {
     if (!state.atCircuit) return;
     // スタートの合図のあいだは動かない（ブレーキを踏んだまま）
@@ -268,18 +271,22 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
       state.auto = !state.auto;
       try { localStorage.setItem(AUTO_KEY, state.auto ? 'at' : 'mt'); } catch { /* 保存できなくても遊べる */ }
     }
+    // R（バック）：止まっているときに 1 速からシフトダウンで入り、シフトアップで 1 速へ戻る。
+    // AT のときは、止まってブレーキを 0.8 秒踏み続けても R と前進を切り替えられる（前と同じ入り方）
+    const stopped = Math.abs(v) < 0.4;
+    if (shiftReq < 0 && !locked && stopped && state.gear === 1 && !state.reverse) state.reverse = true;
+    else if (shiftReq > 0 && state.reverse) { if (stopped) state.reverse = false; }
     // AT のままパドルを使うと MT になる（AT に戻すのは切り替えのボタン）
-    if (shiftReq) { state.auto = false; shift(Math.sign(shiftReq)); }
+    else if (shiftReq) { state.auto = false; shift(Math.sign(shiftReq)); }
+    holdBrake = !locked && stopped && brake > 0.5 && throttle < 0.1 ? holdBrake + dt : 0;
+    if (state.auto && holdBrake > 0.8) { state.reverse = !state.reverse; holdBrake = -10; }
     if (state.auto && !state.reverse) {
       if (state.rpm > 8300 && state.gear < 6) shift(1);
       else if (state.rpm < 3900 && state.gear > 1) shift(-1);
     }
     shiftCut = Math.max(0, shiftCut - dt);
-    // 止まってブレーキを踏み続けるとバック
-    // （スタートの合図のあいだはブレーキを踏んだことにしているので、バックには入れない）
-    if (!locked && v < 0.3 && brake > 0.5 && throttle < 0.1) state.reverse = true;
+    // スタートの合図のあいだはブレーキを踏んだことにしているので、バックには入れない
     if (locked) state.reverse = false;
-    if (state.reverse && throttle > 0.1 && v > -0.3) state.reverse = false;
 
     // エンジンの回転数（1 速の発進は半クラッチで回しておく）
     const fromWheels = wheelRpm(v, state.gear);
@@ -291,11 +298,12 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     const downforce = 0.5 * 1.2 * 2.4 * v * v;
     const grip = GT3.mu * (m * 9.8 + downforce);
     let drive = 0;
-    if (state.reverse) drive = -throttle * 0 - brake * 3500;
+    // R ではアクセルで後ろへ（前は、アクセルを踏むと R が抜けて前へ出てしまい、バックできなかった）
+    if (state.reverse) drive = -throttle * 5200;
     else if (!limiter && shiftCut <= 0) drive = (throttle * torque(state.rpm) * GT3.ratios[state.gear - 1] * GT3.finalDrive * 0.9) / GT3.wheelRadius;
     drive = THREE.MathUtils.clamp(drive, -grip * 0.3, grip * 0.55);
     const drag = 0.5 * 1.2 * 0.9 * v * Math.abs(v) + 180 * Math.sign(v);
-    const braking = state.reverse ? 0 : brake * grip * 0.95 * Math.sign(v);
+    const braking = brake * grip * 0.95 * Math.sign(v);
     let a = (drive - drag - braking) / m;
 
     // 芝に出るとすべって遅くなる
@@ -307,8 +315,9 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     state.onGrass = Math.abs(near.lateral) > W + CIRCUIT.curb;
     if (state.onGrass) a -= 0.9 * v * 0.25 + Math.sign(v) * 1.5;
     v += a * dt;
-    if (!state.reverse && v < 0 && throttle < 0.1) v = Math.max(v, 0);
-    if (state.reverse) v = Math.max(v, -6);
+    // 前進のギアでは後ろへ、R では前へは転がらない（ブレーキや抵抗で 0 を越えないように）
+    if (!state.reverse && v < 0) v = Math.max(v, 0);
+    if (state.reverse) v = THREE.MathUtils.clamp(v, -8, 0);
 
     // 曲がる：ハンドルの切れ角は速いほど小さく（ハンコンでは切った角度そのまま）
     const maxSteer = input.kind === 'wheel' ? 0.42 : 0.5 / (1 + Math.abs(v) / 18);

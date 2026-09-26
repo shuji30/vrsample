@@ -559,7 +559,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     groundShadow.visible = renderer.xr.isPresenting;
     if (groundShadow.visible) {
       headWorldPosition(worldPos);
-      groundShadow.position.set(worldPos.x, 0.012, worldPos.z);
+      groundShadow.position.set(worldPos.x, (world.groundHeight?.(worldPos.x, worldPos.z) ?? 0) + 0.012, worldPos.z);
       const sink = -bob.position.y / (BOB_HEIGHT || 1);
       groundShadow.material.opacity = 0.8 + sink * 0.35;
     }

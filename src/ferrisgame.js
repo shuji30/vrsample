@@ -6,8 +6,8 @@ import { FERRIS } from './ferriswheel.js';
 
 /**
  * 観覧車（女の子の側）。プレイヤーがゴンドラに乗ると、女の子は遊びをやめて乗り場まで歩いてきて、
- * 同じゴンドラの隣（戸に近い東）に座る。回りはじめると外を見て、上がるにつれて話しかけ、
- * てっぺんでは海を眺める。1 周して乗り場へ戻ったら、プレイヤーが降りるのを待って降り、
+ * 同じゴンドラの向かい（北のベンチの、戸に近い東）に、プレイヤーのほうを向いて座る。
+ * 上がるにつれて話しかけ、上のほうでは横の窓（東）から外を眺める（海はうしろなので、首だけでは見られない）。1 周して乗り場へ戻ったら、プレイヤーが降りるのを待って降り、
  * キャッチボールへ戻る。途中で降りたときは、world.js が暗くしているあいだに乗り場へ降ろす。
  *
  * 歩く道：庭の左の端（x -6）から、メリーゴーランドの南（円の外、z -5.2）を西へ行き、
@@ -133,7 +133,7 @@ export function createFerrisGame({ character, ferris, voice = null }) {
         if (followPath(dt)) { state = 'getIn'; timer = 0; from.copy(body.position); }
         break;
       case 'getIn': {
-        // 戸をくぐって、ベンチの東に座る
+        // 戸をくぐって、北のベンチの東に、プレイヤーのほうを向いて座る
         timer += dt;
         const k = Math.min(1, timer / GET_IN);
         const e = k * k * (3 - 2 * k);
@@ -141,7 +141,7 @@ export function createFerrisGame({ character, ferris, voice = null }) {
         body.position.lerpVectors(from, seat, e);
         body.turnTowards(k < 0.4 ? Math.PI * 1.5 : ferris.girlYaw(), dt);
         if (k > 0.6) body.setYaw(ferris.girlYaw());
-        body.setSeat(e, 'upright');
+        body.setSeat(e, 'upright', { skirt: true });
         body.setFootFloor(ferris.girlFloorY());
         if (k > 0.6) handsOnLap();
         if (k >= 1) { state = 'ride'; ferris.girlSeated = true; voice?.say('ferrisReady'); }
@@ -151,17 +151,18 @@ export function createFerrisGame({ character, ferris, voice = null }) {
         seatPoint(seat);
         body.position.copy(seat);
         body.setYaw(ferris.girlYaw());
-        body.setSeat(1, 'upright');
+        body.setSeat(1, 'upright', { skirt: true });
         body.setFootFloor(ferris.girlFloorY());
         handsOnLap();
         const p = ferris.progress;
-        // 下のほうでは隣のプレイヤーを、上のほうでは窓の外（北の海）を見る
+        // 下のほうでは向かいのプレイヤーを、上のほうでは横の窓の外（東。公園と家のほう）を見る。
+        // てっぺんではまたプレイヤーを見る
         const outside = p > 0.3 && p < 0.7 && !(p > 0.46 && p < 0.52);
         if (outside) {
           ferris.girlSeat(gaze.position);
-          gaze.position.x -= 0.6;
-          gaze.position.y -= 3 + ferris.height * 0.4;
-          gaze.position.z -= 20;
+          gaze.position.x += 20;
+          gaze.position.y -= 2 + ferris.height * 0.5;
+          gaze.position.z -= 4;
         } else {
           ferris.eye(gaze.position);
         }
@@ -185,7 +186,7 @@ export function createFerrisGame({ character, ferris, voice = null }) {
         const k = Math.min(1, timer / GET_IN);
         const e = k * k * (3 - 2 * k);
         body.position.lerpVectors(from, board.setY(0), e);
-        body.setSeat(1 - e, 'upright');
+        body.setSeat(1 - e, 'upright', { skirt: true });
         if (k > 0.3) { body.reachHands(null); body.setGrip(0); }
         if (k >= 1) { body.setSeat(0, 'upright'); body.position.y = 0; finish(); }
         break;

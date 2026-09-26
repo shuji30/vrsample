@@ -246,7 +246,11 @@ function createSky() {
   sky.name = 'sky';
   sky.frustumCulled = false;
   sky.onBeforeRender = (renderer, scene, camera) => {
-    camera.getWorldPosition(sky.position);
+    // 位置は matrixWorld から読むだけにする。getWorldPosition は親から行列を計算し直すので、VR の最中の
+    // 片目のカメラ（親の無い XR のカメラ）に使うと、その目の行列が「リグ抜き」（XR の部屋の中の頭の姿勢だけ）に
+    // 書き換わってしまう。すると空より後に描く物（家具・景色）はリグ抜きで、前に描く物（家の壁）はリグ込みで描かれ、
+    // VR で移動すると家だけが動き、家具と景色と目線は動かず、乗り物の目線・C の合わせ直し・VR の開始位置も効かなかった
+    sky.position.setFromMatrixPosition(camera.matrixWorld);
     sky.updateMatrixWorld();
   };
   return { sky, uniforms };

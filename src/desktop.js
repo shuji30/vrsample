@@ -225,8 +225,10 @@ export function createDesktopControls(renderer, camera, world) {
       const flat = Math.hypot(position.x - eye.x, position.z - eye.z);
       const distance = position.distanceTo(eye);
       if (flat >= PICK_RANGE || distance >= PICK_RANGE + 1.0) continue;
-      // ラケットを持っているときは、テニスボールを先に拾う
+      // ラケットを持っているときは、テニスボールを先に拾う。持っていないときは、届くならラケットを先に
+      // （コートの入口にラケットとテニスボールを並べて置いてあるので、近いほうだとボールを先に拾ってしまう）
       if (swing?.holding && object.userData.tennis) return object;
+      if (!swing?.holding && object.userData.racket) return object;
       if (distance < bestDistance) {
         best = object;
         bestDistance = distance;

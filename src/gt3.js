@@ -90,8 +90,11 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   seat.rotation.x = -0.25;
   body.add(seat);
   const steering = new THREE.Group();
-  steering.position.set(SEAT.x, 0.92, 0.25);
-  steering.rotation.x = -1.0;
+  // ハンドルの面（輪のローカル +Z）を運転席の胸のほうへ向ける（実車のように、上の縁が少し前へ倒れる）。
+  // ローカル +X は車の右、+Y はハンドルの上。回すのはローカル Z のまわり（運転席から見て左回り = 正）
+  // 下の縁は車体（上面 0.81）より上、上の縁は目より 6cm ほど下（前の道にかからない）
+  steering.position.set(SEAT.x, 0.935, 0.18);
+  steering.rotation.set(0.55, Math.PI, 0);
   const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 8, 24), carbon);
   steering.add(wheel);
   const hub = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, 0.04), carbon);
@@ -365,7 +368,8 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     // 傾き：坂の前後・加減速で前後、曲がるときに外へ
     const slope = Math.abs(v) > 0.5 ? Math.atan2(group.position.y - prevY, Math.abs(v) * dt) : 0;
     pitch += ((-slope - a * 0.004) - pitch) * Math.min(1, dt * 6);
-    roll += ((-lastLateralAcc * 0.004) - roll) * Math.min(1, dt * 6);
+    // 曲がるときは外へ少しだけ（左へ曲がると右へ）。バイクのように内へ倒れると逆で、大きいと揺れすぎる
+    roll += (THREE.MathUtils.clamp(lastLateralAcc * 0.0012, -0.03, 0.03) - roll) * Math.min(1, dt * 6);
     group.rotation.set(0, state.yaw, 0);
     model.body.rotation.set(pitch, 0, roll);
     // 車輪
@@ -373,7 +377,7 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
       w.spin.rotation.x += (v / GT3.wheelRadius) * dt;
       if (w.front) w.hold.rotation.y = delta;
     }
-    model.steering.rotation.z = -steer * (input.kind === 'wheel' ? 1.6 : 1.2);
+    model.steering.rotation.z = steer * (input.kind === 'wheel' ? 1.6 : 1.2);
     model.tailMat.emissiveIntensity = brake > 0.1 ? 2.5 : 0.4;
     dashIn -= dt;
     if (dashIn < 0) { drawDash(); dashIn = 0.1; }

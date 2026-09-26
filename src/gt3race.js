@@ -134,7 +134,7 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
       w.spin.rotation.x += 0;
       if (w.front) w.hold.rotation.y = steer * 0.4;
     }
-    her.steering.rotation.z = -steer * 1.2;
+    her.steering.rotation.z = steer * 1.2;
     her.root.updateMatrixWorld(true);
   }
 
@@ -191,8 +191,9 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
     body.setYaw(her.root.rotation.y);
     body.setSeat(1, 'kart');
     her.steering.updateMatrixWorld(true);
-    her.steering.localToWorld(lh.set(0.155, 0, 0));
-    her.steering.localToWorld(rh.set(-0.155, 0, 0));
+    // ハンドルのローカル +X は車の右（gt3.js）。左手は -X の縁
+    her.steering.localToWorld(lh.set(-0.155, 0, 0));
+    her.steering.localToWorld(rh.set(0.155, 0, 0));
     axis.set(0, 1, 0).transformDirection(her.steering.matrixWorld);
     body.reachHands({ left: { target: lh, amount: 1, grip: axis }, right: { target: rh, amount: 1, grip: axis } });
     body.setGrip(1);

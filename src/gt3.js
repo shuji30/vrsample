@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CIRCUIT, circuitNearest, circuitFrame, CIRCUIT_LENGTH } from './circuit.js';
+import { createCircuitMap } from './circuitmap.js';
 
 /**
  * GT3 のレースカー（乗り物の窓口。kartdrive.js の乗り降り・VR の目線合わせ・視点・ハンコン・FFB を使う）。
@@ -175,7 +176,20 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   body.add(dash);
   // 表を運転席の目へ向ける（平面の表は +Z 向きなので、そのままだと前を向いて、運転席からは裏だった）
   dash.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
-  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat };
+  // コースの地図（メーターの内側、真ん中寄り）。VR でも目を少し左へ向ければ見える
+  const mapCanvas = document.createElement('canvas');
+  mapCanvas.width = 256;
+  mapCanvas.height = 192;
+  const mapTex = new THREE.CanvasTexture(mapCanvas);
+  mapTex.colorSpace = THREE.SRGBColorSpace;
+  // ミップマップを使うと、少し離れただけで細い線がにじんで消える
+  mapTex.generateMipmaps = false;
+  mapTex.minFilter = THREE.LinearFilter;
+  const mapPlane = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.15), new THREE.MeshBasicMaterial({ map: mapTex, toneMapped: false }));
+  mapPlane.position.set(SEAT.x - 0.33, 1.02, 0.5);
+  body.add(mapPlane);
+  mapPlane.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
+  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, mapPlane, mapCanvas, mapTex };
 }
 
 /**
@@ -199,6 +213,9 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
   let pitch = 0;
   let roll = 0;
   let dashIn = 0;
+  let mapIn = 0;
+  let mapCars = [];
+  const circuitMap = createCircuitMap();
   let lastLateralAcc = 0;
   const hud = { lap: '', pos: '' };
 
@@ -340,6 +357,17 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     model.tailMat.emissiveIntensity = brake > 0.1 ? 2.5 : 0.4;
     dashIn -= dt;
     if (dashIn < 0) { drawDash(); dashIn = 0.1; }
+    mapIn -= dt;
+    if (mapIn < 0 && state.atCircuit) { drawMap(); mapIn = 0.2; }
+  }
+
+  /** 車内のコースの地図。自分は青、ほかの車（レースの相手）は setMapCars で */
+  function drawMap() {
+    const c = model.mapCanvas.getContext('2d');
+    c.fillStyle = '#0b0d12';
+    c.fillRect(0, 0, 256, 192);
+    circuitMap.draw(c, 0, 0, 256, 192, [...mapCars, { s: state.s, color: '#3a8aff', me: true }]);
+    model.mapTex.needsUpdate = true;
   }
 
   function drawDash() {
@@ -403,6 +431,10 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     get locked() { return locked; },
     /** メーターの周回・順位（gt3race.js から） */
     setHud(lap, pos) { hud.lap = lap; hud.pos = pos; },
+    /** 地図に出すほかの車 [{ s, color }] */
+    setMapCars(list) { mapCars = list ?? []; },
+    /** コースの地図（PC の画面の表示でも同じものを使う） */
+    circuitMap,
   };
 }
 

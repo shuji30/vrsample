@@ -147,7 +147,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     // AT / MT の切り替え（GT3。Q・パッドの十字キー上・VR の右スティックの押し込み）
     if (!event.repeat && driving && event.code === 'KeyQ') autoToggle = true;
     if (renderer.xr.isPresenting) return;
-    // 乗る / 降りるは F（拾う・投げると同じボタン）。E も前と同じく使える
+    // 乗る / 降りるは E（どの乗り物も同じ。F は拾う / 投げる）
     if (event.code === 'KeyE') {
       if (driving) exit();
       else if (nearestVehicle()) enter();
@@ -155,15 +155,6 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     if (event.code === 'KeyC' && driving) view = view === 'first' ? 'chase' : 'first';
     if (event.code === 'KeyH') wheel.openPanel();
   });
-  // F は desktop.js の「拾う / 投げる」と同じキー。desktop.js が F を受けたら、まずここへ聞く
-  // （乗り降りに使ったら true）。球やラケットを持っているあいだは、投げる・打つを優先する。
-  // 別々に keydown を聞くと、どちらが先に呼ばれるかで、投げた直後に乗ってしまったりした
-  desktop.onUse = (holding) => {
-    if (driving) { exit(); return true; }
-    if (holding || !nearestVehicle()) return false;
-    enter();
-    return true;
-  };
   window.addEventListener('keyup', (event) => keys.delete(event.code));
   window.addEventListener('blur', () => keys.clear());
 

@@ -236,10 +236,8 @@ export function createDesktopControls(renderer, camera, world) {
   }
 
   window.addEventListener('keydown', (event) => {
-    if (renderer.xr.isPresenting) return;
-    // F は乗り物の乗り降りも兼ねる（kartdrive.js が onUse で受ける）
-    if (event.code === 'KeyF' && !event.repeat && event.target?.tagName !== 'INPUT' && onUse?.(Boolean(heldBall || swing?.holding))) return;
-    if (driving) return;
+    // 乗り物に乗っているあいだは、拾う・投げる・振るをしない（足もとの球を拾ってしまうので）
+    if (renderer.xr.isPresenting || driving) return;
     if (event.code === 'KeyF') {
       if (heldBall) { throwBall(); return; }
       // 足もとの球より、かごを先に見る（かごのそばで F を押したら、かごから出す）
@@ -296,7 +294,6 @@ export function createDesktopControls(renderer, camera, world) {
   let last = performance.now();
   /** カートを運転しているあいだは、歩く・視点を回す・球を持つを止める（kartdrive.js がカメラを動かす） */
   let driving = false;
-  let onUse = null;
 
   return {
     controls,
@@ -305,8 +302,6 @@ export function createDesktopControls(renderer, camera, world) {
       driving = Boolean(value);
       controls.enabled = !driving;
     },
-    /** F を押したとき、先に聞く（乗り物の乗り降り。使ったら true）。引数は球かラケットを持っているか */
-    set onUse(fn) { onUse = fn; },
     /** 持っている物をすべて置く（カートに乗る前） */
     dropAll() {
       if (swing?.holding) swing.drop();
@@ -323,7 +318,7 @@ export function createDesktopControls(renderer, camera, world) {
       const now = performance.now();
       const seconds = dt ?? Math.min((now - last) / 1000, 0.05);
       last = now;
-      // ボタンは運転中も効く（A / X で降りる、Y で視点）。スティックは歩いているときだけ
+      // ボタンは運転中も効く（X で降りる、Y で視点）。スティックは歩いているときだけ
       const pad = gamepad.update();
       if (driving) return;
       stick.x = pad.move.x;

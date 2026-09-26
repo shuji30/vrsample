@@ -88,9 +88,18 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
   gaze.userData = { held: false, velocity: new THREE.Vector3() };
 
   // 画面の右上の表示（PC）
+  // 文字の下に、コースの地図（自分 青・女の子 ピンク）
   const hud = document.createElement('div');
-  hud.style.cssText = 'position:fixed;top:12px;right:12px;padding:8px 12px;background:rgba(10,14,24,.72);color:#fff;font:600 15px/1.5 sans-serif;border-radius:8px;display:none;z-index:5;white-space:pre';
+  hud.style.cssText = 'position:fixed;top:12px;right:12px;padding:8px 12px;background:rgba(10,14,24,.72);color:#fff;font:600 15px/1.5 sans-serif;border-radius:8px;display:none;z-index:5';
+  const hudText = document.createElement('div');
+  hudText.style.whiteSpace = 'pre';
+  const hudMap = document.createElement('canvas');
+  hudMap.width = 240;
+  hudMap.height = 170;
+  hudMap.style.cssText = 'display:block;margin:6px auto 0;width:240px;height:170px';
+  hud.append(hudText, hudMap);
   document.body.appendChild(hud);
+  let hudMapIn = 0;
 
   const wrapD = (d) => ((d + CIRCUIT_LENGTH / 2) % CIRCUIT_LENGTH + CIRCUIT_LENGTH) % CIRCUIT_LENGTH - CIRCUIT_LENGTH / 2;
   const fmt = (t) => (t === null ? '--' : `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`);
@@ -298,7 +307,19 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
     const lapText = state === 'grid' || state === 'lights' ? 'スタート前' : state === 'race' ? `周 ${Math.min(CIRCUIT.laps, playerLap + 1)}/${CIRCUIT.laps}` : 'ゴール';
     playerCar.setHud(lapText, state === 'race' ? `${pos}位` : '');
     hud.style.display = '';
-    hud.textContent = `GT3 レース　${lapText}　${state === 'race' ? `${pos}位` : ''}\n`
+    // 地図（車内の画面と PC の右上）。女の子の車はコースにいるあいだだけ
+    playerCar.setMapCars(her.root.visible ? [{ s: herS, color: '#ff6ab0' }] : []);
+    hudMapIn -= dt;
+    if (hudMapIn < 0) {
+      hudMapIn = 0.1;
+      const c = hudMap.getContext('2d');
+      c.clearRect(0, 0, hudMap.width, hudMap.height);
+      playerCar.circuitMap.draw(c, 0, 0, hudMap.width, hudMap.height, [
+        ...(her.root.visible ? [{ s: herS, color: '#ff6ab0' }] : []),
+        { s: playerCar.state.s, color: '#3a8aff', me: true },
+      ]);
+    }
+    hudText.textContent = `GT3 レース　${lapText}　${state === 'race' ? `${pos}位` : ''}\n`
       + `いまの周 ${state === 'race' ? fmt(clock - lapStart) : '--'}　前の周 ${fmt(lastLap)}　ベスト ${fmt(bestLap)}\n`
       + `${playerCar.state.reverse ? 'R' : playerCar.state.gear} 速　${Math.round(Math.abs(playerCar.state.speed) * 3.6)} km/h　${playerCar.state.auto ? 'AT（Q で MT）' : 'MT（Q で AT）'}`
       + (state === 'free' ? '\nグリッドに止まって 2 秒待つと、もう一回' : '');

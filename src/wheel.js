@@ -49,10 +49,10 @@ const DEFAULT = {
 function load() {
   let config;
   try { config = { ...DEFAULT, ...JSON.parse(localStorage.getItem(STORE) ?? '{}') }; } catch { return { ...DEFAULT }; }
-  // 乗る / 降りるは E から F に変えた。前に E へ割り当てたボタンは、そのまま F として使う
-  if (config.buttons?.KeyE && !config.buttons.KeyF) {
-    const { KeyE, ...rest } = config.buttons;
-    config.buttons = { ...rest, KeyF: KeyE };
+  // 乗る / 降りるを一時 F にしていた。そのあいだに F へ割り当てたボタンは、E として使う
+  if (config.buttons?.KeyF && !config.buttons.KeyE) {
+    const { KeyF, ...rest } = config.buttons;
+    config.buttons = { ...rest, KeyE: KeyF };
   }
   return config;
 }
@@ -307,11 +307,11 @@ export function createWheelInput() {
   }
 
   // --- ハンコンのボタン ------------------------------------------------------------
-  // ハンコンのボタンを、キー（F 乗る / 降りる、C 視点、H 設定、Q AT / MT）に割り当てる。
+  // ハンコンのボタンを、キー（E 乗る / 降りる、C 視点、H 設定、Q AT / MT）に割り当てる。
   // 設定の画面で「覚える」を押してから、使いたいボタンを押す。
   // シフトアップ / ダウン（GT3 のパドル）も割り当てられる。Logitech（G29 / G920 / G923）は、はじめから
   // 右のパドル（ボタン 4）がアップ、左のパドル（ボタン 5）がダウン
-  const BUTTON_ACTIONS = [['KeyF', 'f', '乗る / 降りる'], ['KeyC', 'c', '視点'], ['KeyH', 'h', '設定の画面'], ['Space', ' ', 'ハンドブレーキ'], ['KeyX', 'x', 'シフトアップ'], ['KeyZ', 'z', 'シフトダウン'], ['KeyQ', 'q', 'AT / MT 切り替え']];
+  const BUTTON_ACTIONS = [['KeyE', 'e', '乗る / 降りる'], ['KeyC', 'c', '視点'], ['KeyH', 'h', '設定の画面'], ['Space', ' ', 'ハンドブレーキ'], ['KeyX', 'x', 'シフトアップ'], ['KeyZ', 'z', 'シフトダウン'], ['KeyQ', 'q', 'AT / MT 切り替え']];
   const PADDLE_GUESS = /G29|G920|G923|Logitech/i;
   let learning = null;           // 覚えているキー（code）
   const lastPressed = new Map(); // `${id}#${index}` → 押されていたか

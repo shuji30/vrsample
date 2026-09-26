@@ -37,6 +37,9 @@ import { createCorgi } from './corgi.js';
 import { createFireworks } from './fireworks.js';
 import { createBeach, inBeach, beachGround, BEACH_AREA, STAIRS_TOP_AREA } from './beach.js';
 import { createBeachGame } from './beachgame.js';
+import { createSeats } from './seats.js';
+import { createSeatGame } from './seatgame.js';
+import { createTalk } from './talk.js';
 
 /** 地面の高さ：カートコースの起伏と、崖の下の砂浜（そのほかの丘の上は 0） */
 const groundHeight = (x, z) => (inBeach(x, z) ? beachGround(x, z) : kartGround(x, z));
@@ -367,6 +370,25 @@ export function createWorld(renderer, scene, {
     beach.onShell = (n, all) => beachGame.onShell(n, all);
     beach.onPoint = (winner, score, game) => beachGame.onPoint(winner, score, game);
   }
+  // 座れる所（ソファー・食卓の椅子・庭のベンチ・パラソルの下）。座ると女の子が来て、隣か向かいで話す
+  const seats = createSeats();
+  scene.add(seats.group);
+  const talk = camera ? createTalk({ voice, body: character.body }) : null;
+  if (talk) scene.add(talk.vrPanel);
+  const seatEye = new THREE.Vector3();
+  const seatGame = talk ? createSeatGame({ character, talk, voice, playerHead: (out) => camera.getWorldPosition(out), isNight: () => themeKey === 'night' }) : null;
+  if (seatGame) {
+    seatGame.onFinish = (spot) => {
+      // 砂浜ならビーチバレーへ、ほかはキャッチボール（部屋なら部屋のうろうろ）へ
+      if (beachGame?.active) beachGame.resume();
+      else {
+        character.watch(furniture.ball);
+        catchGame?.resume();
+      }
+      void spot;
+    };
+  }
+  void seatEye;
   /** 看板：砂浜へ / 丘の上へ。暗くしてから、プレイヤー（main.js の onPlayerTravel）と女の子を移す */
   const travelPoint = new THREE.Vector3();
   function travel(dest) {
@@ -777,6 +799,15 @@ export function createWorld(renderer, scene, {
         beachGame.start();
       }
     }
+    // 座って話す：座ったら、していた遊びをやめて来る。砂浜ならビーチバレーの最中でも（ボールは置いて）
+    if (seatGame?.wanted && !seatGame.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active
+      && (!beachGame?.active || beachGame.state === 'play')) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        seatGame.start();
+      }
+    }
     // 観覧車も同じ
     if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && ferrisGame?.wanted && !ferrisGame.active) {
       if (tennisGame?.active) tennisGame.stop();
@@ -792,7 +823,8 @@ export function createWorld(renderer, scene, {
     // ブランコの女の子の席は、女の子を座らせる（burankoGame）前に進める。あとで進めると、
     // 体と手が 1 フレーム前の席と鎖に合わせたままになり、こいでいるあいだ手が鎖から離れて見えた
     buranko.updateGirl(dt);
-    if (beachGame?.active) beachGame.update(dt);
+    if (seatGame?.active) seatGame.update(dt);
+    else if (beachGame?.active) beachGame.update(dt);
     else if (kartGame?.active) kartGame.update(dt);
     else if (bikeGame?.active) { /* 下で動かす */ } else if (seesawGame?.active) seesawGame.update(dt);
     else if (burankoGame?.active) burankoGame.update(dt);
@@ -985,9 +1017,12 @@ export function createWorld(renderer, scene, {
     basket.update(tennisBalls);
   }
 
+  const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, gt3.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
+  // 会話の札（VR）は、出しているあいだだけこの表に入る
+  if (talk) talk.interactables = interactables;
   return {
     grabbables,
-    interactables: [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, gt3.body, ...beach.interactables, ...(corgi ? [corgi.body] : [])],
+    interactables,
     floor: room.floor,
     /** 地面の高さ（カートコースの起伏。ほかは 0） */
     groundHeight,
@@ -1007,6 +1042,7 @@ export function createWorld(renderer, scene, {
     kartRace,
     /** kartdrive.js から：プレイヤーがカートに乗った / 降りた */
     onKartEnter: (v) => {
+      if (v.kind === 'seat') { if (seatGame) seatGame.playerSeat = v; if (character.seats) seats.useBodySeats(character.seats); v.aimAtGirl?.(); return; }
       if (v === bike) { if (bikeGame) bikeGame.playerRiding = true; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = true; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = true; } else if (v === fishing) { if (fishingGame) fishingGame.playerRiding = true; } else if (v === horse) { horseRidden = true; if (horseGame) horseGame.playerRiding = true; } else if (v === carousel) { carouselRidden = true; if (carouselGame) carouselGame.playerRiding = true; } else if (v === ferris) {
         // 暗くして、いちばん下のゴンドラを乗り場にぴったり止めてから乗る
         blackout();
@@ -1023,6 +1059,7 @@ export function createWorld(renderer, scene, {
       } else if (kartGame) kartGame.playerDriving = true;
     },
     onKartExit: (v) => {
+      if (v.kind === 'seat') { if (seatGame) seatGame.playerSeat = null; return; }
       if (v === bike) { if (bikeGame) bikeGame.playerRiding = false; } else if (v === seesaw) { if (seesawGame) seesawGame.playerRiding = false; } else if (v === buranko) { if (burankoGame) burankoGame.playerRiding = false; } else if (v === fishing) { fishing.leave(); if (fishingGame) fishingGame.playerRiding = false; } else if (v === horse) { horseRidden = false; horse.leave(); if (horseGame) horseGame.playerRiding = false; } else if (v === carousel) { carouselRidden = false; if (carouselGame) carouselGame.playerRiding = false; } else if (v === ferris) {
         // 1 周して乗り場に着いていればそのまま降りる。途中なら暗くして乗り場へ（女の子も）
         const midway = ferris.phase !== 'arrived';
@@ -1058,6 +1095,9 @@ export function createWorld(renderer, scene, {
     ferrisGame,
     beach,
     beachGame,
+    seats,
+    seatGame,
+    talk,
     /** 砂浜へ / 丘の上へ（看板と同じ） */
     travel,
     /** main.js から：プレイヤーを (x, y, z) に、look の向きで立たせる */

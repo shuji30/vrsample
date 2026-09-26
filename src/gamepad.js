@@ -43,6 +43,9 @@ const BUTTON_KEYS = [
   [8, 'KeyM', 'm'],
   [9, 'KeyH', 'h'],
   [12, 'KeyQ', 'q'],     // 十字キーの上：GT3 の AT / MT
+  [14, 'Digit1', '1'],   // 十字キーの左・下・右：座って話すときの 1〜3 番めの話題
+  [13, 'Digit2', '2'],
+  [15, 'Digit3', '3'],
 ];
 /** 'standard' でないパッドのボタンの並び（Back / Start が 6 / 7） */
 const LOOSE_KEYS = [

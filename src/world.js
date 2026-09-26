@@ -43,10 +43,12 @@ import { createCoasterGame } from './coastergame.js';
 import { createGolf } from './golf.js';
 import { createGolfGame } from './golfgame.js';
 import { createSeatGame } from './seatgame.js';
+import { createCruiser, onPier, pierDeckY, PIER } from './cruiser.js';
+import { createCruiserGame } from './cruisergame.js';
 import { createTalk } from './talk.js';
 
 /** 地面の高さ：カートコースの起伏と、崖の下の砂浜（そのほかの丘の上は 0） */
-const groundHeight = (x, z) => (inBeach(x, z) ? beachGround(x, z) : kartGround(x, z));
+const groundHeight = (x, z) => (onPier(x, z) ? pierDeckY(x, z) : inBeach(x, z) ? beachGround(x, z) : kartGround(x, z));
 
 /**
  * 女の子のカートの性能の倍率（最高速・加速・グリップ）。ふつうのカートの性能では、
@@ -374,6 +376,20 @@ export function createWorld(renderer, scene, {
     beach.onShell = (n, all) => beachGame.onShell(n, all);
     beach.onPoint = (winner, score, game) => beachGame.onPoint(winner, score, game);
   }
+  // 砂浜の東の桟橋とクルーザー。プレイヤーが乗ると、女の子も桟橋を渡ってきて隣に座り、島をめぐる
+  const cruiser = createCruiser();
+  scene.add(cruiser.group);
+  let cruiserRidden = false;
+  const cruiserGame = camera ? createCruiserGame({ character, cruiser, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
+  if (cruiserGame) {
+    cruiserGame.onFinish = () => {
+      if (beachGame?.active) beachGame.resume();
+      else {
+        character.watch(furniture.ball);
+        catchGame?.resume();
+      }
+    };
+  }
   // 家の南のジェットコースター。プレイヤーが乗ると、女の子も隣に乗る
   const coaster = createCoaster();
   scene.add(coaster.group);
@@ -536,6 +552,9 @@ export function createWorld(renderer, scene, {
     { ...STAIRS_TOP_AREA },
     // 崖の下の砂浜（丘の上の範囲とはつながっていない。看板で行き来する）
     { ...BEACH_AREA },
+    // 砂浜から北の沖へ延びる桟橋（cruiser.js）と、その先の T 字。砂浜と 1m、T 字と重ねる
+    { minX: PIER.x - PIER.width / 2 + 0.1, maxX: PIER.x + PIER.width / 2 - 0.1, minZ: PIER.toZ + 0.05, maxZ: BEACH_AREA.minZ + 1.0 },
+    { minX: PIER.headMinX + 0.1, maxX: PIER.headMaxX - 0.1, minZ: PIER.toZ + 0.05, maxZ: PIER.headZ - 0.05 },
     // 観覧車のまわり（池の南、メリーゴーランドの西）。池のまわり（z -5.5 まで）と 0.5m、
     // メリーゴーランドの芝生（x -16.5 から）と 0.5m 重ねる。脚とゴンドラの通り道は clampToBounds で外す
     { minX: -31.5, maxX: -16.0, minZ: -6.0, maxZ: 12.0 },
@@ -843,6 +862,15 @@ export function createWorld(renderer, scene, {
         seatGame.start();
       }
     }
+    // クルーザー：砂浜にいる（ビーチバレーの最中でも）ので、座って話すのと同じ条件で来る
+    if (cruiserGame?.wanted && !cruiserGame.active && !seatGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active
+      && (!beachGame?.active || beachGame.state === 'play')) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        cruiserGame.start();
+      }
+    }
     // 観覧車も同じ
     if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && ferrisGame?.wanted && !ferrisGame.active) {
       if (tennisGame?.active) tennisGame.stop();
@@ -879,6 +907,7 @@ export function createWorld(renderer, scene, {
     // 体と手が 1 フレーム前の席と鎖に合わせたままになり、こいでいるあいだ手が鎖から離れて見えた
     buranko.updateGirl(dt);
     if (seatGame?.active) seatGame.update(dt);
+    else if (cruiserGame?.active) cruiserGame.update(dt);
     else if (beachGame?.active) beachGame.update(dt);
     else if (kartGame?.active) kartGame.update(dt);
     else if (bikeGame?.active) { /* 下で動かす */ } else if (seesawGame?.active) seesawGame.update(dt);
@@ -921,6 +950,8 @@ export function createWorld(renderer, scene, {
     if (!ferrisRidden) ferris.idle(dt);
     // ジェットコースター：乗っていないときは駅に止めておく
     if (!coasterRidden) coaster.idle(dt);
+    // クルーザー：乗っていないときは桟橋につないでおく
+    if (!cruiserRidden) cruiser.idle(dt);
     ferris.setNight(themeKey === 'night');
     kartRace?.update(dt, { driving: Boolean(kartGame?.wanted), seated: Boolean(kartGame?.driving) });
     // カートコースの起伏の上を歩くときは、足元を地面の高さに（カートに乗り降りしているあいだは除く）
@@ -1076,7 +1107,7 @@ export function createWorld(renderer, scene, {
     basket.update(tennisBalls);
   }
 
-  const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, gt3.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
+  const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, cruiser.body, gt3.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
   return {
@@ -1108,6 +1139,10 @@ export function createWorld(renderer, scene, {
         ferrisRidden = true;
         ferris.board();
         if (ferrisGame) ferrisGame.playerRiding = true;
+      } else if (v === cruiser) {
+        cruiserRidden = true;
+        cruiser.board();
+        if (cruiserGame) cruiserGame.playerRiding = true;
       } else if (v === coaster) {
         coasterRidden = true;
         coaster.board();
@@ -1131,6 +1166,16 @@ export function createWorld(renderer, scene, {
         if (ferrisGame) {
           ferrisGame.playerRiding = false;
           if (midway) ferrisGame.dropAtStation();
+        }
+      } else if (v === cruiser) {
+        // 桟橋に着いていればそのまま降りる。沖にいれば暗くして桟橋へ（女の子も）
+        const midway = cruiser.phase === 'cruising';
+        if (midway) blackout();
+        cruiserRidden = false;
+        cruiser.leave();
+        if (cruiserGame) {
+          cruiserGame.playerRiding = false;
+          if (midway) cruiserGame.dropAtPier();
         }
       } else if (v === coaster) {
         // 駅に止まっていればそのまま降りる。走っている途中なら暗くして駅へ（女の子も）
@@ -1168,6 +1213,8 @@ export function createWorld(renderer, scene, {
     ferrisGame,
     coaster,
     coasterGame,
+    cruiser,
+    cruiserGame,
     golf,
     golfGame,
     beach,

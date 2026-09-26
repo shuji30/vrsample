@@ -68,7 +68,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     let best = null;
     let bestD = 2.2;
     for (const v of vehicles) {
-      v.eye(tmp2);
+      // 乗り口が目の位置と離れている乗り物（桟橋の横のクルーザー）は、乗り口の近さで見る
+      if (v.enterPoint) v.enterPoint(tmp, tmp2); else v.eye(tmp2);
       const d = Math.hypot(tmp.x - tmp2.x, tmp.z - tmp2.z);
       if (d < bestD) { bestD = d; best = v; }
     }

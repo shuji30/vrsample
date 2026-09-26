@@ -174,7 +174,7 @@ export function createFerrisGame({ character, ferris, voice = null }) {
           sayOnce('ferrisTop', p > 0.47);
           sayOnce('ferrisDown', p > 0.75);
           chatIn -= dt;
-          if (chatIn < 0 && p > 0.12 && p < 0.9) { voice?.say('ferrisFun', { chance: 0.6 }); chatIn = 16 + Math.random() * 8; }
+          if (chatIn < 0 && p > 0.12 && p < 0.9) { voice?.say('ferrisFun', { chance: 0.6 }); chatIn = 22 + Math.random() * 10; }
         }
         if (ferris.phase === 'arrived') sayOnce('ferrisEnd', true);
         // プレイヤーが降りたら（乗り場に着いていれば）降りる

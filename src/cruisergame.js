@@ -263,7 +263,7 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
     detach();
     cruiser.girlBoard(board);
     body.position.set(board.x, floorAt(board.x, board.z), board.z);
-    body.setYaw(Math.PI);
+    body.setYaw(0);             // 浜（+Z）を向けて立たせる（振り向くあいだ「進んでいない」と道を捨てないように）
     body.setSeat(0, 'upright');
     body.reachHands(null);
     body.setGrip(0);
@@ -278,7 +278,7 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
     if (!onPier(body.position.x, body.position.z)) { finish(); return; }
     path = body.position.z < PIER.headZ + 0.3 ? [HEAD.clone(), ROOT.clone()] : [ROOT.clone()];
     pathBest = Infinity;
-    pathStuck = 0;
+    pathStuck = -1.5;           // 振り向くぶんの猶予
     state = 'back';
   }
 

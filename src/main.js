@@ -263,7 +263,7 @@ async function start() {
   });
   const desktop = createDesktopControls(renderer, camera, world);
   // カートの運転（乗り降り・操作・ハンコン・FFB）
-  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.coaster, world.cruiser, world.gt3, ...(world.seats?.list ?? [])].filter(Boolean) });
+  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.coaster, world.cruiser, world.jetski, world.gt3, ...(world.seats?.list ?? [])].filter(Boolean) });
 // パットパットゴルフ：VR は右手のパター、PC は視点を球の後ろへ
 world.golfGame?.bind({ controllers: player.controllers, desktop, isXR: () => renderer.xr.isPresenting });
 // 会話の「そろそろいこうか」は、E と同じく立つ

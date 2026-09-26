@@ -45,6 +45,8 @@ import { createGolfGame } from './golfgame.js';
 import { createSeatGame } from './seatgame.js';
 import { createCruiser, onPier, pierDeckY, PIER } from './cruiser.js';
 import { createCruiserGame } from './cruisergame.js';
+import { createJetski } from './jetski.js';
+import { createJetskiGame } from './jetskigame.js';
 import { createTalk } from './talk.js';
 
 /** 地面の高さ：カートコースの起伏と、崖の下の砂浜（そのほかの丘の上は 0） */
@@ -383,6 +385,29 @@ export function createWorld(renderer, scene, {
   const cruiserGame = camera ? createCruiserGame({ character, cruiser, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
   if (cruiserGame) {
     cruiserGame.onFinish = () => {
+      if (beachGame?.active) beachGame.resume();
+      else {
+        character.watch(furniture.ball);
+        catchGame?.resume();
+      }
+    };
+  }
+  // 桟橋の西の横のジェットスキー。自分で運転し、女の子は後ろに横乗り。クルーザーにはぶつかる
+  const cruiserBlocks = (x, z) => {
+    const b = cruiser.boat.position;
+    const y = cruiser.state.yaw;
+    const dx = x - b.x;
+    const dz = z - b.z;
+    return Math.abs(dx * Math.sin(y) + dz * Math.cos(y)) < 6.4 && Math.abs(dx * Math.cos(y) - dz * Math.sin(y)) < 2.3;
+  };
+  const jetski = createJetski({ blocked: cruiserBlocks });
+  scene.add(jetski.group);
+  let jetskiRidden = false;
+  let jetskiWait = 0;
+  const jetskiGame = camera ? createJetskiGame({ character, jetski, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
+  if (jetskiGame) {
+    jetski.onBump = (v) => jetskiGame.onBump(v);
+    jetskiGame.onFinish = () => {
       if (beachGame?.active) beachGame.resume();
       else {
         character.watch(furniture.ball);
@@ -871,6 +896,14 @@ export function createWorld(renderer, scene, {
         cruiserGame.start();
       }
     }
+    if (jetskiGame?.wanted && !jetskiGame.active && !cruiserGame?.active && !seatGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active
+      && (!beachGame?.active || beachGame.state === 'play')) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        jetskiGame.start();
+      }
+    }
     // 観覧車も同じ
     if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && ferrisGame?.wanted && !ferrisGame.active) {
       if (tennisGame?.active) tennisGame.stop();
@@ -908,6 +941,7 @@ export function createWorld(renderer, scene, {
     buranko.updateGirl(dt);
     if (seatGame?.active) seatGame.update(dt);
     else if (cruiserGame?.active) cruiserGame.update(dt);
+    else if (jetskiGame?.active) jetskiGame.update(dt);
     else if (beachGame?.active) beachGame.update(dt);
     else if (kartGame?.active) kartGame.update(dt);
     else if (bikeGame?.active) { /* 下で動かす */ } else if (seesawGame?.active) seesawGame.update(dt);
@@ -952,6 +986,10 @@ export function createWorld(renderer, scene, {
     if (!coasterRidden) coaster.idle(dt);
     // クルーザー：乗っていないときは桟橋につないでおく
     if (!cruiserRidden) cruiser.idle(dt);
+    if (!jetskiRidden) jetski.idle(dt);
+    // 乗ったのに女の子が来ない（ほかの遊びの途中など）ときは、3 秒で動けるようにする
+    jetskiWait = jetskiRidden && jetski.hold && !jetskiGame?.active ? jetskiWait + dt : 0;
+    if (jetskiWait > 3) jetski.hold = false;
     ferris.setNight(themeKey === 'night');
     kartRace?.update(dt, { driving: Boolean(kartGame?.wanted), seated: Boolean(kartGame?.driving) });
     // カートコースの起伏の上を歩くときは、足元を地面の高さに（カートに乗り降りしているあいだは除く）
@@ -1107,7 +1145,7 @@ export function createWorld(renderer, scene, {
     basket.update(tennisBalls);
   }
 
-  const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, cruiser.body, gt3.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
+  const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, cruiser.body, jetski.body, gt3.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
   return {
@@ -1139,6 +1177,10 @@ export function createWorld(renderer, scene, {
         ferrisRidden = true;
         ferris.board();
         if (ferrisGame) ferrisGame.playerRiding = true;
+      } else if (v === jetski) {
+        jetskiRidden = true;
+        jetski.board();
+        if (jetskiGame) jetskiGame.playerRiding = true;
       } else if (v === cruiser) {
         cruiserRidden = true;
         cruiser.board();
@@ -1166,6 +1208,16 @@ export function createWorld(renderer, scene, {
         if (ferrisGame) {
           ferrisGame.playerRiding = false;
           if (midway) ferrisGame.dropAtStation();
+        }
+      } else if (v === jetski) {
+        // 桟橋のそばならそのまま降りる。沖にいれば暗くして桟橋へ（女の子も）
+        const midway = !jetski.atDock;
+        if (midway) blackout();
+        jetskiRidden = false;
+        jetski.leave();
+        if (jetskiGame) {
+          jetskiGame.playerRiding = false;
+          if (midway) jetskiGame.dropAtPier();
         }
       } else if (v === cruiser) {
         // 桟橋に着いていればそのまま降りる。沖にいれば暗くして桟橋へ（女の子も）
@@ -1215,6 +1267,8 @@ export function createWorld(renderer, scene, {
     coasterGame,
     cruiser,
     cruiserGame,
+    jetski,
+    jetskiGame,
     golf,
     golfGame,
     beach,

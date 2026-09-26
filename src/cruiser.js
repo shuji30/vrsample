@@ -53,6 +53,41 @@ function routeCurve() {
   return new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.5);
 }
 
+/**
+ * 引き波（後ろへ V 字に広がって消えていく泡）。長さ 1・幅 1 の板なので、scale で大きさを入れ、
+ * 船の子にはせず海面の高さに置く（船の上下・前上がりごと傾くと、遠い端が海面の下に沈むため）。
+ * 板の +Y（テクスチャの上）が遠い端。rotation.set(-π/2, yaw, 0, 'YXZ') で yaw の後ろへ延びる
+ */
+export function makeWake() {
+  const wc = document.createElement('canvas');
+  wc.width = 128; wc.height = 256;
+  const wx = wc.getContext('2d');
+  for (let y = 0; y < 256; y++) {
+    const k = y / 255;                 // 0 = 船尾、1 = 遠く
+    const a = (1 - k) ** 1.6;
+    const half = 18 + k * 44;          // V の開き（泡の筋の位置）
+    const g2 = wx.createLinearGradient(0, 0, 128, 0);
+    g2.addColorStop(0, 'rgba(255,255,255,0)');
+    g2.addColorStop(Math.max(0, (64 - half - 6) / 128), 'rgba(255,255,255,0)');
+    g2.addColorStop((64 - half) / 128, `rgba(255,255,255,${0.62 * a})`);
+    g2.addColorStop(Math.min(0.5, (64 - half + 10 + k * 8) / 128), `rgba(255,255,255,${0.14 * a})`);
+    g2.addColorStop(0.5, `rgba(255,255,255,${(0.32 - 0.25 * k) * a})`);
+    g2.addColorStop(Math.max(0.5, (64 + half - 10 - k * 8) / 128), `rgba(255,255,255,${0.14 * a})`);
+    g2.addColorStop((64 + half) / 128, `rgba(255,255,255,${0.62 * a})`);
+    g2.addColorStop(Math.min(1, (64 + half + 6) / 128), 'rgba(255,255,255,0)');
+    g2.addColorStop(1, 'rgba(255,255,255,0)');
+    wx.fillStyle = g2;
+    wx.fillRect(0, 255 - y, 128, 1);
+  }
+  const wakeTex = new THREE.CanvasTexture(wc);
+  wakeTex.colorSpace = THREE.SRGBColorSpace;
+  const wakeMat = new THREE.MeshBasicMaterial({ map: wakeTex, transparent: true, depthWrite: false, fog: true });
+  const wake = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), wakeMat);
+  wake.renderOrder = 2;
+  wake.frustumCulled = false;
+  return wake;
+}
+
 function makePier() {
   const g = new THREE.Group();
   const wood = new THREE.MeshStandardMaterial({ color: 0xa27b52, roughness: 0.85 });
@@ -234,33 +269,7 @@ function makeBoat() {
     name.rotation.y = sx * Math.PI / 2;
     g.add(name);
   }
-  // 引き波（船尾から V 字に広がって消えていく泡。速さで長さが変わる）
-  const wc = document.createElement('canvas');
-  wc.width = 128; wc.height = 256;
-  const wx = wc.getContext('2d');
-  for (let y = 0; y < 256; y++) {
-    const k = y / 255;                 // 0 = 船尾、1 = 遠く
-    const a = (1 - k) ** 1.6;
-    const half = 18 + k * 44;          // V の開き（泡の筋の位置）
-    const g2 = wx.createLinearGradient(0, 0, 128, 0);
-    g2.addColorStop(0, 'rgba(255,255,255,0)');
-    g2.addColorStop(Math.max(0, (64 - half - 6) / 128), 'rgba(255,255,255,0)');
-    g2.addColorStop((64 - half) / 128, `rgba(255,255,255,${0.62 * a})`);
-    g2.addColorStop(Math.min(0.5, (64 - half + 10 + k * 8) / 128), `rgba(255,255,255,${0.14 * a})`);
-    g2.addColorStop(0.5, `rgba(255,255,255,${(0.32 - 0.25 * k) * a})`);
-    g2.addColorStop(Math.max(0.5, (64 + half - 10 - k * 8) / 128), `rgba(255,255,255,${0.14 * a})`);
-    g2.addColorStop((64 + half) / 128, `rgba(255,255,255,${0.62 * a})`);
-    g2.addColorStop(Math.min(1, (64 + half + 6) / 128), 'rgba(255,255,255,0)');
-    g2.addColorStop(1, 'rgba(255,255,255,0)');
-    wx.fillStyle = g2;
-    wx.fillRect(0, 255 - y, 128, 1);
-  }
-  const wakeTex = new THREE.CanvasTexture(wc);
-  wakeTex.colorSpace = THREE.SRGBColorSpace;
-  const wakeMat = new THREE.MeshBasicMaterial({ map: wakeTex, transparent: true, depthWrite: false, fog: true });
-  const wake = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), wakeMat);
-  wake.renderOrder = 2;
-  wake.frustumCulled = false;
+  const wake = makeWake();
   // 船の子にはしない（船の上下・前上がりごと傾くと、遠い端が海面の下に沈むため）。createCruiser が海面に置く
   g.userData.wake = wake;
   return g;

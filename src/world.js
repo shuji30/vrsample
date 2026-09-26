@@ -40,6 +40,8 @@ import { createBeachGame } from './beachgame.js';
 import { createSeats } from './seats.js';
 import { createCoaster, COASTER } from './coaster.js';
 import { createCoasterGame } from './coastergame.js';
+import { createGolf } from './golf.js';
+import { createGolfGame } from './golfgame.js';
 import { createSeatGame } from './seatgame.js';
 import { createTalk } from './talk.js';
 
@@ -385,6 +387,18 @@ export function createWorld(renderer, scene, {
     };
   }
   void coasterEye;
+  // 観覧車の南のパットパットゴルフ。芝地に入ると、女の子も来て交互に打つ
+  const golf = createGolf();
+  scene.add(golf.group);
+  golf.drawBoard([[], []], [0, 0]);
+  const golfEye = new THREE.Vector3();
+  const golfGame = camera ? createGolfGame({ character, golf, voice, camera, playerHead: (out) => camera.getWorldPosition(out) }) : null;
+  if (golfGame) {
+    golfGame.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
+    };
+  }
   // 座れる所（ソファー・食卓の椅子・庭のベンチ・パラソルの下）。座ると女の子が来て、隣か向かいで話す
   const seats = createSeats();
   scene.add(seats.group);
@@ -525,6 +539,8 @@ export function createWorld(renderer, scene, {
     { minX: -31.5, maxX: -16.0, minZ: -6.0, maxZ: 12.0 },
     // 家の右の芝生（GT3 を飾っておく所）。庭（x 6 まで）と 0.5m、カートコースの範囲（z -5 まで）と 0.6m 重ねる
     { minX: 5.5, maxX: 22.0, minZ: -5.6, maxZ: 4.5 },
+    // 観覧車の南のパットパットゴルフの芝地（観覧車のまわりの範囲と 0.5m 重ねる）
+    { minX: -37.5, maxX: -15.5, minZ: 11.5, maxZ: 34.5 },
     // 家の南の芝生と、ジェットコースターの駅のホーム（線路の手前まで）。家の右の芝生と 0.5m 重ねる
     { minX: -3.5, maxX: 18.0, minZ: 4.0, maxZ: COASTER.station.z - 0.75 },
   ];
@@ -833,6 +849,18 @@ export function createWorld(renderer, scene, {
         ferrisGame.start();
       }
     }
+    // パットパットゴルフ：芝地に入ったら（ほかの遊びをしていなければ）
+    if (golfGame) {
+      if (camera) camera.getWorldPosition(golfEye);
+      golfGame.playerHere = golf.inZone(golfEye.x, golfEye.z);
+    }
+    if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && golfGame?.wanted && !golfGame.active) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        golfGame.start();
+      }
+    }
     // ジェットコースターも同じ
     if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && coasterGame?.wanted && !coasterGame.active) {
       if (tennisGame?.active) tennisGame.stop();
@@ -841,7 +869,7 @@ export function createWorld(renderer, scene, {
         coasterGame.start();
       }
     }
-    if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
+    if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
       catchGame?.suspend();
       tennisGame.start();
     }
@@ -858,6 +886,7 @@ export function createWorld(renderer, scene, {
     else if (carouselGame?.active) carouselGame.update(dt);
     else if (ferrisGame?.active) ferrisGame.update(dt);
     else if (coasterGame?.active) coasterGame.update(dt);
+    else if (golfGame?.active) golfGame.update(dt);
     else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
     }
@@ -1137,6 +1166,8 @@ export function createWorld(renderer, scene, {
     ferrisGame,
     coaster,
     coasterGame,
+    golf,
+    golfGame,
     beach,
     beachGame,
     seats,

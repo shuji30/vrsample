@@ -17,6 +17,15 @@ import { CIRCUIT_ZONE } from './circuit.js';
  */
 export const PLATEAU = { minX: -35, maxX: 35, minZ: -41, maxZ: 15 };
 export const SEA_LEVEL = -26;
+/** パットパットゴルフ（golf.js）の芝地。観覧車の南、平らな所のすぐ外を平ら（高さ 0）にする */
+export const GOLF_ZONE = { minX: -38, maxX: -15, minZ: 13, maxZ: 35 };
+/** ゴルフの芝地にどれだけ入っているか（1 = 中、0 = 12m より外） */
+export function golfFlat(x, z) {
+  const Z = GOLF_ZONE;
+  const dx = Math.max(Z.minX - x, 0, x - Z.maxX);
+  const dz = Math.max(Z.minZ - z, 0, z - Z.maxZ);
+  return 1 - smooth(Math.hypot(dx, dz) / 12);
+}
 /** ジェットコースター（coaster.js）のコースが通る所。遠くの丘の木を植えない */
 export const COASTER_ZONE = { minX: -14, maxX: 40, minZ: 8, maxZ: 118 };
 
@@ -54,6 +63,9 @@ export function hillHeight(x, z) {
     const wb = beachWeight(x, z);
     if (wb > 0) h += (beachShelf(z) - h) * wb;
   }
+  // 観覧車の南のゴルフの芝地（高さ 0）。まわり 12m でなめらかにつなぐ
+  const wg = golfFlat(x, z);
+  if (wg > 0) h += (0 - h) * wg;
   // 東のふもとのサーキットの平らな所（y -10）。まわり 70m でなめらかにつなぐ
   const w = circuitFlat(x, z);
   return w > 0 ? h + (CIRCUIT_ZONE.y - h) * w : h;
@@ -197,6 +209,7 @@ export function createHill(tex) {
     if (z < P.minZ - 10 && Math.abs(x) < 140) continue;     // 北の海への眺めを空けておく
     const C = COASTER_ZONE;
     if (x > C.minX - 6 && x < C.maxX + 6 && z > C.minZ - 6 && z < C.maxZ + 6) continue;   // コースターのコース
+    if (golfFlat(x, z) > 0.02) continue;   // ゴルフの芝地
     const y = hillHeight(x, z);
     if (y < SEA_LEVEL + 2.5 || circuitFlat(x, z) > 0.05) continue;
     spots.push([x, y, z, 5 + rand() * 6]);

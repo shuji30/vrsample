@@ -140,6 +140,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
 
   window.addEventListener('keydown', (event) => {
     if (event.target?.tagName === 'INPUT') return;
+    // パッドの RB / LB（スペース・Shift として届く）は、運転中はシフト（wheel.js が読む）。ハンドブレーキにしない
+    if (event.fromPad && (event.code === 'Space' || event.code === 'ShiftLeft')) return;
     keys.add(event.code);
     // シフト：X で上げる、Z で下げる（ハンコンのボタンを割り当てると、このキーとして届く。VR でも効く）
     if (!event.repeat && driving && event.code === 'KeyX') shiftQueue++;

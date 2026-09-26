@@ -374,6 +374,8 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     return { x: applyDeadzone(bestX), y: applyDeadzone(bestY) };
   }
 
+  let padSource = null;
+  let padSnap = false;
   function updateLocomotion(dt) {
     desired.set(0, 0, 0);
     if (driving) { velocity.set(0, 0, 0); return; }
@@ -424,6 +426,20 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
         desired.addScaledVector(right, x * MOVE_SPEED);
       }
     });
+
+    // ゲームパッド（VR の最中も使える）：左スティックで歩く、右スティックでスナップターン
+    const pad = padSource?.();
+    if (pad?.connected) {
+      desired.addScaledVector(forward, -pad.move.y * MOVE_SPEED);
+      desired.addScaledVector(right, pad.move.x * MOVE_SPEED);
+      const lx = pad.look.x;
+      if (Math.abs(lx) < 0.3) padSnap = false;
+      else if (!padSnap) {
+        rotateAroundHead(-Math.sign(lx) * SNAP_ANGLE);
+        clampToBounds();
+        padSnap = true;
+      }
+    }
 
     // 斜め入力で速くならないように頭打ちにする
     if (desired.lengthSq() > MOVE_SPEED * MOVE_SPEED) desired.setLength(MOVE_SPEED);
@@ -648,6 +664,8 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
   return {
     player, bob, controllers, footsteps, update, reset, releaseHeld,
     setDriving(value) { driving = Boolean(value); hasLastHead = false; },
+    /** VR の最中のゲームパッドのスティック（desktop.js の xrPad）を返す関数 */
+    setPadSource(fn) { padSource = fn; },
     alignHeadTo,
     /** 頭のワールドの位置・向き（VR の最中。XR のカメラから直接取るとリグが入らない） */
     headWorldPosition,

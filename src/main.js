@@ -383,6 +383,8 @@ async function start() {
   world.corgi?.setHands(() => player.controllers);
   // 砂浜：VR の手でビーチボールをはたく、PC の F で打つ・貝がらを拾う、看板で行き来する
   world.beach?.setHands(() => player.controllers);
+  // VR の最中もゲームパッドで歩く・向きを変える
+  player.setPadSource(() => desktop.xrPad);
   desktop.onUse = () => Boolean(world.beachUse?.(camera));
   world.onPlayerTravel = (x, y, z, look) => {
     if (renderer.xr.isPresenting) {

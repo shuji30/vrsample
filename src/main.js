@@ -383,6 +383,7 @@ async function start() {
       lines.push(`pad[${g.index}] ${g.id.slice(0, 40)} map=${g.mapping || '-'} n=${g.buttons.length} axes=[${[...g.axes].map(f2).join(',')}]`);
     }
     const xp = desktop.xrPad;
+    lines.push(`vrpad=${new URLSearchParams(location.search).get('vrpad') === 'on' ? 'on' : 'off（?vrpad=on で入れる）'}`);
     lines.push(`xrPad connected=${Boolean(xp?.connected)} move=${xp ? `${f2(xp.move.x)},${f2(xp.move.y)}` : '-'} look=${xp ? `${f2(xp.look.x)},${f2(xp.look.y)}` : '-'}`);
     diagEl.textContent = lines.join('\n');
   }

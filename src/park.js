@@ -804,7 +804,7 @@ export const PARK = {
      */
     backstop: { height: 3.0, gap: 1.4 },
   },
-  bench: { x: -2.4, z: -6.8, yaw: Math.PI + 0.35 },
+  bench: { x: -2.4, z: -6.8, yaw: 0.35 },
   tree: { x: -1.6, z: -9.2 },
   smallTree: { x: -6.4, z: -12.6 },
   slide: { x: 2.35, z: -9.4, yaw: -0.52 },

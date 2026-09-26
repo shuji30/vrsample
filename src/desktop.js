@@ -16,8 +16,20 @@ const DASH = 2.0;
  * 歩けるようにしたのは、掃き出し窓から庭へ出られるようになったのに、
  * PC では部屋の中心を周回することしかできず、外へ出る手段が無かったため。
  */
-/** VR の最中もゲームパッドを読むか（?vrpad=on）。既定は読まない */
-const VR_PAD = typeof location !== 'undefined' && new URLSearchParams(location.search).get('vrpad') === 'on';
+/**
+ * VR の最中にゲームパッドを読むか。
+ *   既定（auto）… VR のコントローラーがつながっていないときだけ読む（コントローラーの電源を切る・置いて外れると使える）
+ *   ?vrpad=on  … いつも読む
+ *   ?vrpad=off … 読まない
+ * VR のコントローラーがつながっているときにパッドを読むと、実機（Pimax）で「移動すると家だけが動き、自分と家具は
+ * 動かない」ことが起きた（?vrpad=on で再現、読まなければ直る）。SteamVR が見せる VR のコントローラーの写しや、
+ * 止まっていても値を出し続ける機器を、パッドとして読んでしまうためと見ている。見分けて外すのは確実にできないので、
+ * コントローラーがあるあいだはパッドを使わない
+ */
+const VR_PAD_MODE = (() => {
+  const v = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('vrpad') : null;
+  return v === 'on' || v === 'off' ? v : 'auto';
+})();
 
 export function createDesktopControls(renderer, camera, world) {
   // 入った瞬間にテーブルと、その奥の窓ごしの公園が見える位置
@@ -318,6 +330,8 @@ export function createDesktopControls(renderer, camera, world) {
     set onUse(fn) { onUse = fn; },
     /** VR の最中のゲームパッドのスティック（{ move, look, connected }） */
     get xrPad() { return xrPad; },
+    /** 診断用：VR の最中にパッドを読む決まり（auto / on / off） */
+    get vrPadMode() { return VR_PAD_MODE; },
     /** 持っている物をすべて置く（カートに乗る前） */
     dropAll() {
       if (swing?.holding) swing.drop();
@@ -334,7 +348,15 @@ export function createDesktopControls(renderer, camera, world) {
       // xrPad から歩き・スナップターンに使う）。前は VR に入るとパッドがまったく効かなかった
       // ただし既定では読まない（?vrpad=on のときだけ）。PAD 対応を入れてから、実機の VR で「移動すると家だけが動き、
       // 自分と家具は動かない」と報告があり、PAD 対応より前と同じ動きに戻して切り分けるため
-      if (renderer.xr.isPresenting) { last = performance.now(); xrPad = VR_PAD ? gamepad.update({ xr: true, xrPads: xrGamepads() }) : null; return; }
+      if (renderer.xr.isPresenting) {
+        last = performance.now();
+        const xrPads = xrGamepads();
+        const usePad = VR_PAD_MODE === 'on' || (VR_PAD_MODE === 'auto' && xrPads.length === 0);
+        // 使わないときも update を呼んで（off）、押したままのキーを離させる
+        xrPad = gamepad.update({ xr: true, xrPads, off: !usePad });
+        if (!usePad) xrPad = null;
+        return;
+      }
       const now = performance.now();
       const seconds = dt ?? Math.min((now - last) / 1000, 0.05);
       last = now;

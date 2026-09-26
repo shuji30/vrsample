@@ -91,13 +91,13 @@ export function createGamepadInput() {
   const trusted = new Set();
   const keyOf = (p) => `${p.index}:${p.id}`;
   const busy = (g, t) => (g.axes ?? []).some((v) => Math.abs(v) > t) || (g.buttons ?? []).some((b) => b?.pressed || (b?.value ?? 0) > 0.2);
-  function update({ xr = false, xrPads = [] } = {}) {
+  function update({ xr = false, xrPads = [], off = false } = {}) {
     if (!xr) trusted.clear();
     else if (typeof navigator !== 'undefined' && navigator.getGamepads) {
       const xrBusy = xrPads.some((g) => busy(g, 0.15));
       if (!xrBusy) for (const c of candidates(true)) if (busy(c, 0.3)) trusted.add(keyOf(c));
     }
-    const p = pad(xr);
+    const p = off ? null : pad(xr);
     const want = p && p.mapping !== 'standard' ? LOOSE_KEYS : BUTTON_KEYS;
     if (!p || want !== layout) {
       // 抜かれたら（並びが変わったら）、押しっぱなしのキーを離す

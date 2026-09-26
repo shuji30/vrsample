@@ -34,6 +34,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   const specOf = (v) => (v.kind === 'bike' ? { spec: BIKE, track: BIKE_TRACK } : v.kind === 'gt3' ? GT3_SPEC : v.silent ? SEESAW_SPEC : { spec: KART, track: KART_TRACK });
   // シフト（GT3）：押した回数をためて、次のフレームで車に渡す（+1 上げる / -1 下げる）
   let shiftQueue = 0;
+  let autoToggle = false;        // AT / MT の切り替えを押した（次のフレームで GT3 へ）
+  let xrStickRight = false;
   const padShift = { up: false, down: false };
   const xrShift = { up: false, down: false };
   const wheel = createWheelInput();
@@ -142,7 +144,10 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     // シフト：X で上げる、Z で下げる（ハンコンのボタンを割り当てると、このキーとして届く。VR でも効く）
     if (!event.repeat && driving && event.code === 'KeyX') shiftQueue++;
     if (!event.repeat && driving && event.code === 'KeyZ') shiftQueue--;
+    // AT / MT の切り替え（GT3。Q・パッドの十字キー上・VR の右スティックの押し込み）
+    if (!event.repeat && driving && event.code === 'KeyQ') autoToggle = true;
     if (renderer.xr.isPresenting) return;
+    // 乗る / 降りるは E（どの乗り物も同じ。F は拾う / 投げる）
     if (event.code === 'KeyE') {
       if (driving) exit();
       else if (nearestVehicle()) enter();
@@ -224,6 +229,10 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
         if (down && !xrShift.down) shiftQueue--;
         xrShift.up = up;
         xrShift.down = down;
+        // 右スティックの押し込みで AT / MT
+        const click = Boolean(gp.buttons[3]?.pressed);
+        if (click && !xrStickRight) autoToggle = true;
+        xrStickRight = click;
       }
       if (hand === 'left') {
         const x = Math.abs(gp.axes[2] ?? 0) > Math.abs(gp.axes[0] ?? 0) ? gp.axes[2] ?? 0 : gp.axes[0] ?? 0;
@@ -355,6 +364,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     }
     input.shift = shiftQueue;
     shiftQueue = 0;
+    input.toggleAuto = autoToggle;
+    autoToggle = false;
     // レースのスタートの合図のあいだは動かない（ブレーキも離す。踏み続けるとバックするので）
     if (vehicle === kart && world.kartRace?.locked) { input.throttle = 0; input.brake = Math.abs(kart.speed) > 0.2 ? 1 : 0; }
     lastInput = input;

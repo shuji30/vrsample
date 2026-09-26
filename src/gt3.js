@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CIRCUIT, circuitNearest, circuitFrame, CIRCUIT_LENGTH } from './circuit.js';
+import { createCircuitMap } from './circuitmap.js';
 
 /**
  * GT3 のレースカー（乗り物の窓口。kartdrive.js の乗り降り・VR の目線合わせ・視点・ハンコン・FFB を使う）。
  *
- * 6 速のシーケンシャル。はじめは自動で変速し、シフト（パドル・X / Z・パッドの RB / LB・VR の A / B）を
- * 1 回でも使うと手動になる（setAuto で戻せる）。エンジンは回転数からトルクを出し、ギア比で駆動力にする。
+ * 6 速のシーケンシャル。AT（自動で変速）と MT（手動）を切り替えられる（Q・パッドの十字キー上・
+ * VR の右スティックの押し込み・ハンコンに割り当てたボタン。選んだほうは localStorage に覚える）。
+ * AT のままシフト（パドル・X / Z・パッドの RB / LB・VR の A / B）を使うと MT になる。エンジンは回転数からトルクを出し、ギア比で駆動力にする。
  * 空気の抵抗とダウンフォース（速いほど曲がれる・止まれる）、縁石・芝（はみ出すとすべる）、外の防護壁。
  * 路面の高さはコース上の位置から（立体交差の橋）。
  *
@@ -46,6 +48,12 @@ function numberTexture(text, color) {
 }
 
 /** 車の模型（プレイヤーの車・女の子の車で共通） */
+const AUTO_KEY = 'vrsample.gt3.gearbox';
+/** 前に選んだ AT / MT（はじめは AT） */
+function savedAuto() {
+  try { return localStorage.getItem(AUTO_KEY) !== 'mt'; } catch { return true; }
+}
+
 export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '7' } = {}) {
   const root = new THREE.Group();
   const body = new THREE.Group();   // 揺れ（前後・左右の傾き）はここ
@@ -168,7 +176,20 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   body.add(dash);
   // 表を運転席の目へ向ける（平面の表は +Z 向きなので、そのままだと前を向いて、運転席からは裏だった）
   dash.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
-  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat };
+  // コースの地図（メーターの内側、真ん中寄り）。VR でも目を少し左へ向ければ見える
+  const mapCanvas = document.createElement('canvas');
+  mapCanvas.width = 256;
+  mapCanvas.height = 192;
+  const mapTex = new THREE.CanvasTexture(mapCanvas);
+  mapTex.colorSpace = THREE.SRGBColorSpace;
+  // ミップマップを使うと、少し離れただけで細い線がにじんで消える
+  mapTex.generateMipmaps = false;
+  mapTex.minFilter = THREE.LinearFilter;
+  const mapPlane = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.15), new THREE.MeshBasicMaterial({ map: mapTex, toneMapped: false }));
+  mapPlane.position.set(SEAT.x - 0.33, 1.02, 0.5);
+  body.add(mapPlane);
+  mapPlane.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
+  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, mapPlane, mapCanvas, mapTex };
 }
 
 /**
@@ -186,12 +207,15 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
 
   const state = {
     speed: 0, yaw: park.yaw, travelYaw: park.yaw, steer: 0, onGrass: false, lateral: 0, u: 0,
-    gear: 1, rpm: GT3.idle, auto: true, s: 0, atCircuit: false, reverse: false,
+    gear: 1, rpm: GT3.idle, auto: savedAuto(), s: 0, atCircuit: false, reverse: false,
   };
   let shiftCut = 0;
   let pitch = 0;
   let roll = 0;
   let dashIn = 0;
+  let mapIn = 0;
+  let mapCars = [];
+  const circuitMap = createCircuitMap();
   let lastLateralAcc = 0;
   const hud = { lap: '', pos: '' };
 
@@ -239,6 +263,12 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     const m = GT3.mass;
     let v = state.speed;
     // シフト
+    // AT / MT の切り替え（選んだほうを覚えておき、次に乗ったときもそのまま）
+    if (input.toggleAuto) {
+      state.auto = !state.auto;
+      try { localStorage.setItem(AUTO_KEY, state.auto ? 'at' : 'mt'); } catch { /* 保存できなくても遊べる */ }
+    }
+    // AT のままパドルを使うと MT になる（AT に戻すのは切り替えのボタン）
     if (shiftReq) { state.auto = false; shift(Math.sign(shiftReq)); }
     if (state.auto && !state.reverse) {
       if (state.rpm > 8300 && state.gear < 6) shift(1);
@@ -327,6 +357,17 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     model.tailMat.emissiveIntensity = brake > 0.1 ? 2.5 : 0.4;
     dashIn -= dt;
     if (dashIn < 0) { drawDash(); dashIn = 0.1; }
+    mapIn -= dt;
+    if (mapIn < 0 && state.atCircuit) { drawMap(); mapIn = 0.2; }
+  }
+
+  /** 車内のコースの地図。自分は青、ほかの車（レースの相手）は setMapCars で */
+  function drawMap() {
+    const c = model.mapCanvas.getContext('2d');
+    c.fillStyle = '#0b0d12';
+    c.fillRect(0, 0, 256, 192);
+    circuitMap.draw(c, 0, 0, 256, 192, [...mapCars, { s: state.s, color: '#3a8aff', me: true }]);
+    model.mapTex.needsUpdate = true;
   }
 
   function drawDash() {
@@ -390,6 +431,10 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     get locked() { return locked; },
     /** メーターの周回・順位（gt3race.js から） */
     setHud(lap, pos) { hud.lap = lap; hud.pos = pos; },
+    /** 地図に出すほかの車 [{ s, color }] */
+    setMapCars(list) { mapCars = list ?? []; },
+    /** コースの地図（PC の画面の表示でも同じものを使う） */
+    circuitMap,
   };
 }
 

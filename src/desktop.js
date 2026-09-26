@@ -236,7 +236,8 @@ export function createDesktopControls(renderer, camera, world) {
   }
 
   window.addEventListener('keydown', (event) => {
-    if (renderer.xr.isPresenting) return;
+    // 乗り物に乗っているあいだは、拾う・投げる・振るをしない（足もとの球を拾ってしまうので）
+    if (renderer.xr.isPresenting || driving) return;
     if (event.code === 'KeyF') {
       if (heldBall) { throwBall(); return; }
       // 足もとの球より、かごを先に見る（かごのそばで F を押したら、かごから出す）

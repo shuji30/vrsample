@@ -335,7 +335,7 @@ export function createWorld(renderer, scene, {
     };
   }
 
-  // 家の左の芝生の奥（池の北）の観覧車。プレイヤーがゴンドラに乗ると、女の子も隣に乗る
+  // 家の左の芝生の奥（池の南）の観覧車。プレイヤーがゴンドラに乗ると、女の子も隣に乗る
   const ferris = createFerrisWheel();
   scene.add(ferris.group);
   let ferrisRidden = false;
@@ -435,7 +435,7 @@ export function createWorld(renderer, scene, {
     // 家の左の芝生（メリーゴーランド）。庭（x -6 まで）と 0.5m、ポケバイの範囲（z -5.5 まで）と 0.5m 重ねる。
     // 家（x -3 から）には重ならない。回転台の上は clampToBounds で外す
     { minX: -16.5, maxX: -5.5, minZ: -6.0, maxZ: 5.0 },
-    // 観覧車のまわり（池の北、メリーゴーランドの西）。池のまわり（z -5.5 まで）と 0.5m、
+    // 観覧車のまわり（池の南、メリーゴーランドの西）。池のまわり（z -5.5 まで）と 0.5m、
     // メリーゴーランドの芝生（x -16.5 から）と 0.5m 重ねる。脚とゴンドラの通り道は clampToBounds で外す
     { minX: -31.5, maxX: -16.0, minZ: -6.0, maxZ: 12.0 },
     // 家の右の芝生（GT3 を飾っておく所）。庭（x 6 まで）と 0.5m、カートコースの範囲（z -5 まで）と 0.6m 重ねる

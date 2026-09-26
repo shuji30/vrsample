@@ -56,11 +56,14 @@ const dead = (v) => (Math.abs(v) < DEAD ? 0 : Math.sign(v) * (Math.abs(v) - DEAD
 export function createGamepadInput() {
   const pressed = new Map();
 
+  function candidates(xr) {
+    return [...navigator.getGamepads()].filter((p) => p && p.connected && !VR_CONTROLLER.test(p.id ?? '') && (!xr || (p.buttons?.length ?? 0) >= 12));
+  }
   function pad(xr) {
     if (typeof navigator === 'undefined' || !navigator.getGamepads) return null;
     // VR の最中は、ボタンが 12 個より少ない機器（VR のコントローラーらしい。ゲームパッドは 16〜17 個）も外す。
     // 名前に「Pimax」などと出ない VR のコントローラーを、ゲームパッドと取り違えないように
-    const list = [...navigator.getGamepads()].filter((p) => p && p.connected && !VR_CONTROLLER.test(p.id ?? '') && (!xr || (p.buttons?.length ?? 0) >= 12));
+    const list = candidates(xr).filter((p) => !(xr && mirrors.has(keyOf(p))));
     return list.find((p) => p.mapping === 'standard') ?? list.find((p) => looksLikeGamepad(p)) ?? null;
   }
 
@@ -77,7 +80,28 @@ export function createGamepadInput() {
    * @returns {{ move: { x: number, y: number }, look: { x: number, y: number }, connected: boolean }}
    */
   let layout = BUTTON_KEYS;
-  function update({ xr = false } = {}) {
+  /**
+   * VR のコントローラーの写し（SteamVR などは、VR のコントローラーを Xbox 互換のゲームパッドとしても見せる。
+   * 名前もボタンの数も本物のパッドと同じで見分けられない）。VR のコントローラーのスティック・ボタンと
+   * 同じ値を同時に返したパッドは、写しとみなして、その VR のあいだは読まない（二重に読むと、
+   * 歩こうとしただけで周りごと回ったり動いたりした）
+   */
+  const mirrors = new Set();
+  const keyOf = (p) => `${p.index}:${p.id}`;
+  function mirrorsXr(p, xrPads) {
+    for (const g of xrPads) {
+      const moving = (g.axes ?? []).filter((v) => Math.abs(v) > 0.25);
+      if (moving.length && moving.every((v) => (p.axes ?? []).some((w) => Math.abs(w - v) < 0.03))) return true;
+      const down = (g.buttons ?? []).map((b, i) => (b?.pressed ? i : -1)).filter((i) => i >= 0);
+      if (down.length && down.every((i) => p.buttons?.[i]?.pressed)) return true;
+    }
+    return false;
+  }
+  function update({ xr = false, xrPads = [] } = {}) {
+    if (!xr) mirrors.clear();
+    else if (typeof navigator !== 'undefined' && navigator.getGamepads) {
+      for (const c of candidates(true)) if (!mirrors.has(keyOf(c)) && mirrorsXr(c, xrPads)) mirrors.add(keyOf(c));
+    }
     const p = pad(xr);
     const want = p && p.mapping !== 'standard' ? LOOSE_KEYS : BUTTON_KEYS;
     if (!p || want !== layout) {

@@ -169,7 +169,7 @@ export function createDesktopControls(renderer, camera, world) {
   // トスして、落ちてくるところを自動で打つ。G でラケットを置く。
   const ball = world.ball;
   const racket = world.racket;
-  const balls = [world.ball, ...(world.tennisBalls ?? [])].filter(Boolean);
+  const balls = [world.ball, ...(world.tennisBalls ?? []), world.boomerang?.mesh].filter(Boolean);
   const basket = world.basket ?? null;
   const HOLD = new THREE.Vector3(0.20, -0.30, -0.45);        // カメラから見た持つ位置
   const HOLD_LEFT = new THREE.Vector3(-0.22, -0.30, -0.45);  // ラケットを持っているときは左手

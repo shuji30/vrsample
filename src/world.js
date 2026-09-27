@@ -36,6 +36,7 @@ import { createCircuit } from './circuit.js';
 import { createGT3 } from './gt3.js';
 import { createGT3Race } from './gt3race.js';
 import { createCorgi } from './corgi.js';
+import { createBoomerang } from './boomerang.js';
 import { createFireworks } from './fireworks.js';
 import { createBeach, inBeach, beachGround, BEACH_AREA, STAIRS_TOP_AREA } from './beach.js';
 import { createBeachGame } from './beachgame.js';
@@ -209,6 +210,16 @@ export function createWorld(renderer, scene, {
   }
   const tennisBalls = grabbables.filter((prop) => prop.userData.tennis);
 
+  // 食卓の手前（ソファー側）にブーメラン。投げると左へ曲がって飛び、落ちたらこむぎが拾って持ってくる
+  const boomerang = createBoomerang({
+    home: new THREE.Vector3(TABLE.center.x - 0.24, TABLE.top + 0.009, TABLE.center.z + 0.25),
+    homeYaw: 0.6,
+    clamp: (x, z, inset, from) => clampToBounds(x, z, inset, from),
+    groundHeight: (x, z) => groundHeight(x, z),
+  });
+  scene.add(boomerang.mesh);
+  grabbables.push(boomerang.mesh);
+
   // カート 2 台。女の子のカートは速め（HER_KART_PERF）。スタートの枠の前（プレイヤー、青）と後ろ（女の子、ピンク）に置く
   const karts = {
     player: createKart({ color: 0x2b6fd6, number: '1', name: 'playerKart' }),
@@ -367,6 +378,7 @@ export function createWorld(renderer, scene, {
     // 女の子がサーキットにいるあいだは、ついていかない
     girlPosition: () => (character.body.loaded && !gt3Race?.active && !beachGame?.active ? character.body.position : null),
     ball: furniture.ball,
+    boomerang,
     voice,
     areas: [
       { minX: -5.5, maxX: 5.5, minZ: -13, maxZ: -4.5 },     // 庭
@@ -793,6 +805,7 @@ export function createWorld(renderer, scene, {
     else prop.rotation.set(0, 0, 0);
     data.velocity.set(0, 0, 0);
     data.spin.set(0, 0, 0);
+    data.onReset?.();
   }
 
   // 影を落とす範囲。プレイヤーがテニスコートへ出たらコートへ寄せ、庭へ
@@ -1115,6 +1128,7 @@ export function createWorld(renderer, scene, {
     fireworks.update(dt, camera);
     park.hill.update(dt);
     // こむぎ。走りまわりはじめたら、近くの女の子が声をあげる
+    boomerang.update(dt);
     if (corgi) {
       corgi.update(dt);
       if (corgi.mode !== corgiMode && corgi.mode === 'zoomies' && !gt3Race?.active
@@ -1178,7 +1192,8 @@ export function createWorld(renderer, scene, {
     // --- 小物の簡易物理 ----------------------------------------------------
     for (const prop of grabbables) {
       const data = prop.userData;
-      if (data.held || data.inBasket) continue;
+      // 飛んでいるブーメランと、こむぎがくわえているブーメランは boomerang.js / corgi.js が動かす
+      if (data.held || data.inBasket || data.flying || data.carried) continue;
 
       const prevY = prop.position.y;
       const prevX = prop.position.x;
@@ -1318,6 +1333,7 @@ export function createWorld(renderer, scene, {
     billiards,
     dolphins,
     grabbables,
+    boomerang,
     interactables,
     floor: room.floor,
     /** 地面の高さ（カートコースの起伏。ほかは 0） */

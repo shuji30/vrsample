@@ -255,7 +255,7 @@ export function createGolf() {
   // 入口の掲示板（北向き、観覧車の側から見える）
   const board = makeBoard();
   // コースの側（南、+Z）を向ける。前は北を向いていて、コースから見ると裏（片面の板なので何も見えない）だった。
-  // 木の裏板と 2 本の柱で立てる
+  // 木の裏板と 2 本の柱（板の裏）で立てる。北向きだったころの脚は板の手前に残って表示にかかっていたので、なくした
   board.mesh.position.set(-26.5, 1.4, 15.2);
   board.mesh.rotation.y = 0;
   group.add(board.mesh);
@@ -270,11 +270,6 @@ export function createGolf() {
       post.castShadow = true;
       group.add(post);
     }
-  }
-  for (const sx of [-0.9, 0.9]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.4, 0.07), mats.wood);
-    leg.position.set(-26.5 + sx, 0.7, 15.25);
-    group.add(leg);
   }
 
   // 球（プレイヤー白・女の子ピンク）

@@ -255,7 +255,8 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   steering.rotation.set(0.55, Math.PI, 0);
   const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 8, 24), carbon);
   steering.add(wheel);
-  const hub = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, 0.04), carbon);
+  // 真ん中の四角い部分（ハブ）。メーター（下の dash）をこの運転席側の面にはめ込む
+  const hub = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.108, 0.04), carbon);
   steering.add(hub);
   body.add(steering);
   // 車輪（前の 2 つはハンドルで切れる）
@@ -290,12 +291,12 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   dashCanvas.height = 128;
   const dashTex = new THREE.CanvasTexture(dashCanvas);
   dashTex.colorSpace = THREE.SRGBColorSpace;
-  const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.12), new THREE.MeshBasicMaterial({ map: dashTex, toneMapped: false }));
-  // 車の真ん中（センターコンソール）の上段。運転席から見た前の道の外で、ボンネットの線より下。
-  // ハンドルの奥に置くと、目の 6cm 下・85cm 先で道の真ん中が隠れ、下げるとハンドルの輪と車体に隠れた
-  dash.position.set(SEAT.x - 0.34, 0.945, 0.45);
-  body.add(dash);
-  dash.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
+  // ハンドルの真ん中の四角い部分（ハブ）の、運転席側の面にはめ込む（実車の GT3 のハンドルのように、ハンドルと一緒に回る）。
+  // 前は車の真ん中（センターコンソール）の上段にあった。ハブはもとから目と前の道のあいだにあるので、新たに道を隠さない。
+  // ハブの面（ローカル +Z）から 1mm 浮かせる（重なってちらつかないように）。F40 も同じ
+  const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.184, 0.092), new THREE.MeshBasicMaterial({ map: dashTex, toneMapped: false }));
+  dash.position.set(0, 0, 0.021);
+  steering.add(dash);
   // コースの地図（メーターの下）。VR でも目を少し左下へ向ければ見える
   const mapCanvas = document.createElement('canvas');
   mapCanvas.width = 256;

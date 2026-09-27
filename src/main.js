@@ -263,7 +263,7 @@ async function start() {
   });
   const desktop = createDesktopControls(renderer, camera, world);
   // カートの運転（乗り降り・操作・ハンコン・FFB）
-  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.coaster, world.cruiser, world.jetski, world.cessna, world.gt3, ...(world.seats?.list ?? [])].filter(Boolean) });
+  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.coaster, world.cruiser, world.jetski, world.cessna, world.gt3, world.f40, ...(world.seats?.list ?? [])].filter(Boolean) });
 // パットパットゴルフ：VR は右手のパター、PC は視点を球の後ろへ
 // セスナ：機内から見ているあいだ（VR・PC の運転席視点）は、機体を水平のまま見せる（酔いにくいように）
 if (world.cessna) world.cessna.firstPerson = () => kartDrive.driving && kartDrive.vehicle === world.cessna && (renderer.xr.isPresenting || kartDrive.view === 'first');
@@ -429,10 +429,11 @@ const talkEye = new THREE.Vector3();
         world.talk.placeVr(kartDrive.vehicle.eye(talkEye), kartDrive.vehicle.state.yaw, renderer.xr.isPresenting);
       }
       // GT3 のルームミラー（運転席から見ているときだけ。VR はいつも運転席）
-      const gt3 = world.gt3;
-      if (gt3?.renderMirror && MIRROR_ON) {
-        if (kartDrive.driving && kartDrive.vehicle === gt3 && (renderer.xr.isPresenting || kartDrive.view === 'first')) gt3.renderMirror(renderer, scene);
-        else gt3.hideMirror();
+      // （F40 も同じ作りのミラー）
+      for (const car of [world.gt3, world.f40]) {
+        if (!car?.renderMirror || !MIRROR_ON) continue;
+        if (kartDrive.driving && kartDrive.vehicle === car && (renderer.xr.isPresenting || kartDrive.view === 'first')) car.renderMirror(renderer, scene);
+        else car.hideMirror();
       }
       renderer.render(scene, camera);
     } catch (error) {

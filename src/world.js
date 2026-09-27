@@ -50,6 +50,9 @@ import { createJetskiGame } from './jetskigame.js';
 import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
 import { createCessnaGame } from './cessnagame.js';
 import { AIRFIELD_ZONE } from './hill.js';
+import { createRoad } from './road.js';
+import { F40_PARK, GARAGE } from './roaddata.js';
+import { createF40Game } from './f40game.js';
 import { createTalk } from './talk.js';
 
 /** 地面の高さ：カートコースの起伏と、崖の下の砂浜（そのほかの丘の上は 0） */
@@ -285,6 +288,14 @@ export function createWorld(renderer, scene, {
   const GT3_PARK = { x: 14.5, z: -0.6, yaw: -Math.PI / 2, y: 0.08 };   // y は飾り台の上面
   const gt3 = createGT3({ park: GT3_PARK });
   scene.add(gt3.group);
+  // 高速道路と、家の東の芝生の東の端のガレージ。F40 ふうの車（運転は GT3 と同じ。道の上だけを走る）
+  const road = createRoad();
+  scene.add(road.group);
+  const f40 = createGT3({ park: F40_PARK, color: 0xc8161d, style: 'f40', track: road.track, name: 'f40' });
+  scene.add(f40.group);
+  let f40Ridden = false;
+  let f40Wait = 0;
+  const f40AtHome = () => Math.hypot(f40.group.position.x - F40_PARK.x, f40.group.position.z - F40_PARK.z) < 3 && Math.abs(f40.speed) < 1;
   {
     const stage = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.3, 0.12, 40), new THREE.MeshStandardMaterial({ color: 0x3a3e46, roughness: 0.6, metalness: 0.3 }));
     stage.position.set(GT3_PARK.x, 0.02, GT3_PARK.z);
@@ -403,7 +414,7 @@ export function createWorld(renderer, scene, {
     const dz = z - b.z;
     return Math.abs(dx * Math.sin(y) + dz * Math.cos(y)) < 6.4 && Math.abs(dx * Math.cos(y) - dz * Math.sin(y)) < 2.3;
   };
-  const jetski = createJetski({ blocked: cruiserBlocks });
+  const jetski = createJetski({ blocked: (x, z) => cruiserBlocks(x, z) || road.pierBlocked(x, z) });
   scene.add(jetski.group);
   let jetskiRidden = false;
   let jetskiWait = 0;
@@ -416,6 +427,14 @@ export function createWorld(renderer, scene, {
         character.watch(furniture.ball);
         catchGame?.resume();
       }
+    };
+  }
+  // F40：プレイヤーが運転席に座ると、女の子が助手席に来る
+  const f40Game = camera ? createF40Game({ character, car: f40, voice, playerHead: (out) => camera.getWorldPosition(out) }) : null;
+  if (f40Game) {
+    f40Game.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
     };
   }
   // 丘の南西のふもとの飛行場とセスナ。看板で行くと女の子も来て、セスナの右の席に乗る
@@ -614,6 +633,8 @@ export function createWorld(renderer, scene, {
     // 丘の南西のふもとの飛行場（cessna.js。丘の上とはつながっていない。看板で行き来する）：駐機場（滑走路の西の端まで）と滑走路
     { minX: APRON.minX, maxX: APRON.maxX, minZ: RUNWAY.z - RUNWAY.width / 2, maxZ: APRON.maxZ },
     { minX: RUNWAY.x0, maxX: RUNWAY.x1, minZ: RUNWAY.z - RUNWAY.width / 2, maxZ: RUNWAY.z + RUNWAY.width / 2 },
+    // 家の東の芝生の東の端のガレージの中（東の芝生・南の芝生と重ねる。壁と止めてある車は clampToBounds で外す）
+    { minX: 17.6, maxX: GARAGE.maxX - 0.4, minZ: GARAGE.minZ + 0.2, maxZ: GARAGE.maxZ - 0.2 },
     // 観覧車のまわり（池の南、メリーゴーランドの西）。池のまわり（z -5.5 まで）と 0.5m、
     // メリーゴーランドの芝生（x -16.5 から）と 0.5m 重ねる。脚とゴンドラの通り道は clampToBounds で外す
     { minX: -31.5, maxX: -16.0, minZ: -6.0, maxZ: 12.0 },
@@ -650,7 +671,9 @@ export function createWorld(renderer, scene, {
     // 厩の建物と馬場の柵、メリーゴーランドの回転台も同じように（馬場の入口は通れる）
     // 飾ってある GT3（丘の上にあるとき）も、歩いて通り抜けない
     const gt3Blocks = (x, z) => !gt3.state.atCircuit && Math.abs(x - GT3_PARK.x) < 2.5 + inset && Math.abs(z - GT3_PARK.z) < 1.2 + inset;
-    const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || ferrisBlocks(x, z, inset) || gt3Blocks(x, z);
+    // ガレージの壁と、ガレージに止めてある F40（走りに出ているあいだは、その場所を歩ける）
+    const f40Blocks = (x, z) => f40AtHome() && Math.abs(x - F40_PARK.x) < 2.35 + inset && Math.abs(z - F40_PARK.z) < 1.05 + inset;
+    const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || ferrisBlocks(x, z, inset) || gt3Blocks(x, z) || road.garageBlocks(x, z, inset) || f40Blocks(x, z);
     if (solid(p.x, p.z)) {
       if (!from || solid(from.x, from.z)) return p;
       if (!solid(p.x, from.z)) return { x: p.x, z: from.z };
@@ -723,6 +746,12 @@ export function createWorld(renderer, scene, {
   function updateShadowFocus() {
     if (!camera) return;
     // サーキットにいるあいだは、プレイヤーの車のまわりに影を落とす
+    // 高速道路を走っているあいだは、F40 のまわりに
+    if (f40Ridden && !f40AtHome()) {
+      lighting.setShadowFocus(f40.group.position.x, f40.group.position.z, f40.group.position.y);
+      shadowAt = 'road';
+      return;
+    }
     if (gt3.state.atCircuit) {
       lighting.setShadowFocus(gt3.group.position.x, gt3.group.position.z);
       shadowAt = 'circuit';
@@ -904,6 +933,14 @@ export function createWorld(renderer, scene, {
         carouselGame.start();
       }
     }
+    // F40 に乗ったら、していた遊びをやめて助手席へ
+    if (f40Game?.wanted && !f40Game.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active && !seatGame?.active && !beachGame?.active) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        f40Game.start();
+      }
+    }
     // 飛行場へ行ったら、していた遊びをやめて一緒に来る
     if (cessnaGame?.wanted && !cessnaGame.active) {
       if (tennisGame?.active) tennisGame.stop();
@@ -982,6 +1019,7 @@ export function createWorld(renderer, scene, {
     // 体と手が 1 フレーム前の席と鎖に合わせたままになり、こいでいるあいだ手が鎖から離れて見えた
     buranko.updateGirl(dt);
     if (seatGame?.active) seatGame.update(dt);
+    else if (f40Game?.active) f40Game.update(dt);
     else if (cessnaGame?.active) cessnaGame.update(dt);
     else if (cruiserGame?.active) cruiserGame.update(dt);
     else if (jetskiGame?.active) jetskiGame.update(dt);
@@ -1033,6 +1071,9 @@ export function createWorld(renderer, scene, {
     // セスナ：乗ったのに女の子がいない（飛行場に来ていない）ときは、3 秒で動けるようにする
     cessnaWait = cessnaRidden && cessna.hold && !cessnaGame?.active ? cessnaWait + dt : 0;
     if (cessnaWait > 3) cessna.hold = false;
+    // F40：女の子が助手席に座るまでは動かない（向かっているなら 30 秒まで、来られないなら 3 秒で動ける）
+    f40Wait = f40Ridden && !f40Game?.seated ? f40Wait + dt : 0;
+    f40.locked = f40Ridden && !f40Game?.seated && f40Wait < (f40Game?.active ? 30 : 3);
     // 乗ったのに女の子が来ない（ほかの遊びの途中など）ときは、3 秒で動けるようにする
     jetskiWait = jetskiRidden && jetski.hold && !jetskiGame?.active ? jetskiWait + dt : 0;
     if (jetskiWait > 3) jetski.hold = false;
@@ -1191,7 +1232,7 @@ export function createWorld(renderer, scene, {
     basket.update(tennisBalls);
   }
 
-  const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, cruiser.body, jetski.body, cessna.body, ...cessna.interactables, gt3.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
+  const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, cruiser.body, jetski.body, cessna.body, ...cessna.interactables, gt3.body, f40.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
   return {
@@ -1223,6 +1264,9 @@ export function createWorld(renderer, scene, {
         ferrisRidden = true;
         ferris.board();
         if (ferrisGame) ferrisGame.playerRiding = true;
+      } else if (v === f40) {
+        f40Ridden = true;
+        if (f40Game) f40Game.playerRiding = true;
       } else if (v === cessna) {
         cessnaRidden = true;
         cessna.board();
@@ -1258,6 +1302,17 @@ export function createWorld(renderer, scene, {
         if (ferrisGame) {
           ferrisGame.playerRiding = false;
           if (midway) ferrisGame.dropAtStation();
+        }
+      } else if (v === f40) {
+        // ガレージで止まっていればそのまま降りる。道の途中なら、暗くしてガレージへ戻す（女の子も）
+        const midway = !f40AtHome();
+        if (midway) blackout();
+        f40Ridden = false;
+        f40.locked = false;
+        f40.parkAtHome();
+        if (f40Game) {
+          f40Game.playerRiding = false;
+          if (midway) f40Game.dropAtGarage();
         }
       } else if (v === cessna) {
         // 地上で止まっていればそのまま降りる。空や走っている途中なら、暗くして止めておく所へ（女の子も）
@@ -1331,6 +1386,9 @@ export function createWorld(renderer, scene, {
     jetskiGame,
     cessna,
     cessnaGame,
+    road,
+    f40,
+    f40Game,
     golf,
     golfGame,
     beach,

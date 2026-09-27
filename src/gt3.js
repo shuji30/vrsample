@@ -53,6 +53,24 @@ function numberTexture(text, color) {
   return t;
 }
 
+/**
+ * コースの窓口（update が使う）。サーキットのほか、高速道路（road.js）も同じ形で渡せる。
+ * nearest(x, z, sHint) → { s, lateral（左が +）, y }、frame(s) → { p, t, n }、
+ * onGrass(near)：芝に出ているか、limit(after)：壁までの横の距離、targetY(after)：路面の高さ
+ */
+const CW = CIRCUIT.width / 2;
+const onCircuitBridge = (after) => after.y - CIRCUIT.origin.y > 0.3;
+export const CIRCUIT_TRACK = {
+  length: CIRCUIT_LENGTH,
+  nearest: (x, z, sHint) => circuitNearest(x, z, sHint),
+  frame: (s) => circuitFrame(s),
+  onGrass: (near) => Math.abs(near.lateral) > CW + CIRCUIT.curb,
+  // 橋の上は、路面の縁の壁。ほかは外の防護壁
+  limit: (after) => (onCircuitBridge(after) ? CW + 0.6 : CIRCUIT.wall - 1.2),
+  // コースの上は路面、外は平らな地面（橋の上からは外へ出られない）
+  targetY: (after) => (Math.abs(after.lateral) < CW + CIRCUIT.curb + 0.5 || onCircuitBridge(after) ? after.y : CIRCUIT.origin.y),
+};
+
 /** 車の模型（プレイヤーの車・女の子の車で共通） */
 const AUTO_KEY = 'vrsample.gt3.gearbox';
 /** 前に選んだ AT / MT（はじめは AT） */
@@ -60,7 +78,7 @@ function savedAuto() {
   try { return localStorage.getItem(AUTO_KEY) !== 'mt'; } catch { return true; }
 }
 
-export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '7' } = {}) {
+export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '7', style = 'gt3' } = {}) {
   const root = new THREE.Group();
   const body = new THREE.Group();   // 揺れ（前後・左右の傾き）はここ
   root.add(body);
@@ -70,17 +88,157 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   const glass = new THREE.MeshStandardMaterial({ color: 0x223040, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.35, depthWrite: false });
   const shade = (m) => { m.castShadow = true; m.receiveShadow = true; return m; };
 
-  const lower = shade(new THREE.Mesh(new RoundedBoxGeometry(2.0, 0.62, 4.6, 3, 0.22), paint));
-  lower.position.set(0, 0.5, 0);
-  body.add(lower);
-  // ボンネットの段（前へ下がる）とトランク
-  const hood = shade(new THREE.Mesh(new RoundedBoxGeometry(1.8, 0.25, 1.5, 3, 0.1), paint));
-  hood.position.set(0, 0.78, 1.35);
-  hood.rotation.x = 0.08;
-  body.add(hood);
-  const deck = shade(new THREE.Mesh(new RoundedBoxGeometry(1.85, 0.25, 1.1, 3, 0.1), paint));
-  deck.position.set(0, 0.82, -1.65);
-  body.add(deck);
+  // 灯火
+  const lightMat = new THREE.MeshStandardMaterial({ color: 0xfff6d8, emissive: 0xfff0c0, emissiveIntensity: 0.8 });
+  const tailMat = new THREE.MeshStandardMaterial({ color: 0xff3020, emissive: 0xff2010, emissiveIntensity: 0.4 });
+  if (style === 'f40') {
+    // F40 ふう（赤い、低いくさび形。前は低く、ボンネットの上にリトラクタブルのふた、後ろは全幅の大きなウイング、
+    // エンジンの上はすだれ、ドアに空気の取り入れ口、丸いテール。社名・エンブレムは付けない）
+    const lower = shade(new THREE.Mesh(new RoundedBoxGeometry(2.0, 0.5, 4.45, 3, 0.2), paint));
+    lower.position.set(0, 0.46, -0.05);
+    body.add(lower);
+    const nose = shade(new THREE.Mesh(new RoundedBoxGeometry(1.94, 0.22, 1.35, 3, 0.1), paint));
+    nose.position.set(0, 0.68, 1.45);
+    nose.rotation.x = 0.13;
+    body.add(nose);
+    for (const side of [-1, 1]) {
+      // 前のフェンダーのふくらみと、ヘッドライトのふた（閉じた四角）・前の小さな灯
+      const fender = shade(new THREE.Mesh(new RoundedBoxGeometry(0.46, 0.2, 1.1, 2, 0.08), paint));
+      fender.position.set(side * 0.75, 0.74, 1.35);
+      fender.rotation.x = 0.1;
+      body.add(fender);
+      const lid = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.015, 0.3), carbon);
+      lid.position.set(side * 0.6, 0.79, 1.55);
+      lid.rotation.x = 0.13;
+      body.add(lid);
+      const duct = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.1, 0.4), carbon);
+      duct.position.set(side * 1.005, 0.62, -0.35);
+      body.add(duct);
+      const rearFender = shade(new THREE.Mesh(new RoundedBoxGeometry(0.42, 0.34, 1.5, 2, 0.1), paint));
+      rearFender.position.set(side * 0.78, 0.8, -1.35);
+      body.add(rearFender);
+      // ウイングは後ろのフェンダーから立ち上がる板で支える（F40 の一体のウイング）
+      const plate = shade(new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.26, 0.5), paint));
+      plate.position.set(side * 0.93, 1.08, -2.02);
+      body.add(plate);
+    }
+    // エンジンの上のすだれ（黒い板の上に細い板）
+    const engine = shade(new THREE.Mesh(new RoundedBoxGeometry(1.2, 0.2, 1.35, 2, 0.06), paint));
+    engine.position.set(0, 0.86, -1.35);
+    body.add(engine);
+    for (let i = 0; i < 7; i++) {
+      const slat = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.02, 0.05), carbon);
+      slat.position.set(0, 0.97, -0.8 - i * 0.16);
+      body.add(slat);
+    }
+    const wing = shade(new THREE.Mesh(new THREE.BoxGeometry(1.92, 0.05, 0.42), paint));
+    wing.position.set(0, 1.2, -2.05);
+    wing.rotation.x = -0.14;
+    body.add(wing);
+    const splitter = shade(new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.04, 0.3), carbon));
+    splitter.position.set(0, 0.2, 2.1);
+    body.add(splitter);
+    const grille = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 0.03), carbon);
+    grille.position.set(0, 0.46, 2.19);
+    body.add(grille);
+    // 屋根は低く、ガラスの箱を小さく（目の高さ 1.12 の上に 0.18）
+    const cabin = new THREE.Mesh(new RoundedBoxGeometry(1.5, 0.5, 1.9, 3, 0.16), glass);
+    cabin.position.set(0, 1.03, -0.3);
+    body.add(cabin);
+    const roof = shade(new THREE.Mesh(new RoundedBoxGeometry(1.3, 0.05, 0.95, 2, 0.03), paint));
+    roof.position.set(0, 1.3, -0.45);
+    body.add(roof);
+    for (const side of [-1, 1]) {
+      const aPillar = shade(new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.66), paint));
+      aPillar.position.set(side * 0.73, 1.06, 0.45);
+      aPillar.rotation.x = 0.78;
+      body.add(aPillar);
+      const cPillar = shade(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.46, 0.55), paint));
+      cPillar.position.set(side * 0.7, 1.02, -1.08);
+      cPillar.rotation.x = -0.55;
+      body.add(cPillar);
+      // 丸いテール（左右 2 つずつ）とヘッドライト
+      for (const dx of [0.5, 0.78]) {
+        const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.04, 16), tailMat);
+        tail.rotation.x = Math.PI / 2;
+        tail.position.set(side * dx, 0.66, -2.28);
+        body.add(tail);
+      }
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.06, 0.04), lightMat);
+      head.position.set(side * 0.66, 0.6, 2.2);
+      body.add(head);
+    }
+    // 助手席（女の子が座る）
+    const passenger = new THREE.Mesh(new RoundedBoxGeometry(0.5, 0.7, 0.55, 2, 0.08), carbon);
+    passenger.position.set(-SEAT.x, 0.62, SEAT.z - 0.25);
+    passenger.rotation.x = -0.25;
+    body.add(passenger);
+  } else {
+    const lower = shade(new THREE.Mesh(new RoundedBoxGeometry(2.0, 0.62, 4.6, 3, 0.22), paint));
+    lower.position.set(0, 0.5, 0);
+    body.add(lower);
+    // ボンネットの段（前へ下がる）とトランク
+    const hood = shade(new THREE.Mesh(new RoundedBoxGeometry(1.8, 0.25, 1.5, 3, 0.1), paint));
+    hood.position.set(0, 0.78, 1.35);
+    hood.rotation.x = 0.08;
+    body.add(hood);
+    const deck = shade(new THREE.Mesh(new RoundedBoxGeometry(1.85, 0.25, 1.1, 3, 0.1), paint));
+    deck.position.set(0, 0.82, -1.65);
+    body.add(deck);
+    // 屋根の枠（A ピラー・屋根・B ピラー）と、ガラスの箱
+    const cabin = new THREE.Mesh(new RoundedBoxGeometry(1.55, 0.6, 2.05, 3, 0.18), glass);
+    cabin.position.set(0, 1.08, -0.3);
+    body.add(cabin);
+    const roof = shade(new THREE.Mesh(new RoundedBoxGeometry(1.35, 0.06, 1.05, 2, 0.03), paint));
+    roof.position.set(0, 1.38, -0.45);
+    body.add(roof);
+    for (const side of [-1, 1]) {
+      // A ピラーは細く、ガラスの箱の角に（太いと運転席から視界の真ん中へ入ってきた）
+      const aPillar = shade(new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.72), paint));
+      aPillar.position.set(side * 0.76, 1.1, 0.5);
+      aPillar.rotation.x = 0.78;
+      body.add(aPillar);
+      const cPillar = shade(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.55, 0.5), paint));
+      cPillar.position.set(side * 0.72, 1.08, -1.12);
+      cPillar.rotation.x = -0.5;
+      body.add(cPillar);
+      // 屋根の上の白いライン・ドアのゼッケン
+      const num = new THREE.Mesh(new THREE.CircleGeometry(0.28, 20), new THREE.MeshStandardMaterial({ map: numberTexture(number, '#1a1a22'), roughness: 0.5 }));
+      num.position.set(side * 1.005, 0.55, -0.1);
+      num.rotation.y = side * Math.PI / 2;
+      body.add(num);
+    }
+    const hoodStripe = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.01, 1.45), stripe);
+    hoodStripe.position.set(0, 0.915, 1.36);
+    hoodStripe.rotation.x = 0.08;
+    body.add(hoodStripe);
+    // 前のスプリッターと、後ろのウイング
+    const splitter = shade(new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.05, 0.4), carbon));
+    splitter.position.set(0, 0.2, 2.25);
+    body.add(splitter);
+    const wing = shade(new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.05, 0.38), carbon));
+    wing.position.set(0, 1.3, -2.15);
+    wing.rotation.x = -0.12;
+    body.add(wing);
+    for (const side of [-1, 1]) {
+      const stay = shade(new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.4, 0.2), carbon));
+      stay.position.set(side * 0.55, 1.1, -2.1);
+      body.add(stay);
+      const plate = shade(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.3, 0.45), carbon));
+      plate.position.set(side * 0.95, 1.28, -2.15);
+      body.add(plate);
+    }
+    // 灯火
+    for (const side of [-1, 1]) {
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.1, 0.05), lightMat);
+      head.position.set(side * 0.62, 0.72, 2.3);
+      head.rotation.x = 0.3;
+      body.add(head);
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.04), tailMat);
+      tail.position.set(side * 0.62, 0.78, -2.31);
+      body.add(tail);
+    }
+  }
   // 室内：床・シート・ハンドル
   const floor = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.05, 2.0), carbon);
   floor.position.set(0, 0.32, -0.2);
@@ -100,61 +258,6 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   const hub = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, 0.04), carbon);
   steering.add(hub);
   body.add(steering);
-  // 屋根の枠（A ピラー・屋根・B ピラー）と、ガラスの箱
-  const cabin = new THREE.Mesh(new RoundedBoxGeometry(1.55, 0.6, 2.05, 3, 0.18), glass);
-  cabin.position.set(0, 1.08, -0.3);
-  body.add(cabin);
-  const roof = shade(new THREE.Mesh(new RoundedBoxGeometry(1.35, 0.06, 1.05, 2, 0.03), paint));
-  roof.position.set(0, 1.38, -0.45);
-  body.add(roof);
-  for (const side of [-1, 1]) {
-    // A ピラーは細く、ガラスの箱の角に（太いと運転席から視界の真ん中へ入ってきた）
-    const aPillar = shade(new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.72), paint));
-    aPillar.position.set(side * 0.76, 1.1, 0.5);
-    aPillar.rotation.x = 0.78;
-    body.add(aPillar);
-    const cPillar = shade(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.55, 0.5), paint));
-    cPillar.position.set(side * 0.72, 1.08, -1.12);
-    cPillar.rotation.x = -0.5;
-    body.add(cPillar);
-    // 屋根の上の白いライン・ドアのゼッケン
-    const num = new THREE.Mesh(new THREE.CircleGeometry(0.28, 20), new THREE.MeshStandardMaterial({ map: numberTexture(number, '#1a1a22'), roughness: 0.5 }));
-    num.position.set(side * 1.005, 0.55, -0.1);
-    num.rotation.y = side * Math.PI / 2;
-    body.add(num);
-  }
-  const hoodStripe = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.01, 1.45), stripe);
-  hoodStripe.position.set(0, 0.915, 1.36);
-  hoodStripe.rotation.x = 0.08;
-  body.add(hoodStripe);
-  // 前のスプリッターと、後ろのウイング
-  const splitter = shade(new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.05, 0.4), carbon));
-  splitter.position.set(0, 0.2, 2.25);
-  body.add(splitter);
-  const wing = shade(new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.05, 0.38), carbon));
-  wing.position.set(0, 1.3, -2.15);
-  wing.rotation.x = -0.12;
-  body.add(wing);
-  for (const side of [-1, 1]) {
-    const stay = shade(new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.4, 0.2), carbon));
-    stay.position.set(side * 0.55, 1.1, -2.1);
-    body.add(stay);
-    const plate = shade(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.3, 0.45), carbon));
-    plate.position.set(side * 0.95, 1.28, -2.15);
-    body.add(plate);
-  }
-  // 灯火
-  const lightMat = new THREE.MeshStandardMaterial({ color: 0xfff6d8, emissive: 0xfff0c0, emissiveIntensity: 0.8 });
-  const tailMat = new THREE.MeshStandardMaterial({ color: 0xff3020, emissive: 0xff2010, emissiveIntensity: 0.4 });
-  for (const side of [-1, 1]) {
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.1, 0.05), lightMat);
-    head.position.set(side * 0.62, 0.72, 2.3);
-    head.rotation.x = 0.3;
-    body.add(head);
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.04), tailMat);
-    tail.position.set(side * 0.62, 0.78, -2.31);
-    body.add(tail);
-  }
   // 車輪（前の 2 つはハンドルで切れる）
   const tire = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.85 });
   const rim = new THREE.MeshStandardMaterial({ color: 0xb8bcc4, roughness: 0.3, metalness: 0.9 });
@@ -214,10 +317,13 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
  * プレイヤーの GT3。
  * @param {{ park: { x: number, z: number, yaw: number } }} options park は丘の上に飾っておく所
  */
-export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
+export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, style = 'gt3', name = 'gt3' } = {}) {
+  // track を渡すと、そのコース（高速道路など）の上をいつでも走る（サーキットへ移す placeOnCircuit は使わない）
+  const road = track;
+  const T = road ?? CIRCUIT_TRACK;
   const group = new THREE.Group();
-  group.name = 'gt3';
-  const model = createGT3Model({ color, number });
+  group.name = name;
+  const model = createGT3Model({ color, number, style });
   group.add(model.root);
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.4, 4.7), new THREE.MeshBasicMaterial({ visible: false }));
   body.position.y = 0.7;
@@ -273,7 +379,7 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
 
   let locked = false;
   function update(dt, input = {}) {
-    if (!state.atCircuit) return;
+    if (!road && !state.atCircuit) return;
     // スタートの合図のあいだは動かない（ブレーキを踏んだまま）
     const { steer = 0, shift: shiftReq = 0 } = input;
     const throttle = locked ? 0 : input.throttle ?? 0;
@@ -321,12 +427,11 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     let a = (drive - drag - braking) / m;
 
     // 芝に出るとすべって遅くなる
-    const near = circuitNearest(group.position.x, group.position.z, state.s);
+    const near = T.nearest(group.position.x, group.position.z, state.s);
     state.s = near.s;
-    state.u = near.s / CIRCUIT_LENGTH;
+    state.u = near.s / T.length;
     state.lateral = near.lateral;
-    const W = CIRCUIT.width / 2;
-    state.onGrass = Math.abs(near.lateral) > W + CIRCUIT.curb;
+    state.onGrass = T.onGrass(near);
     if (state.onGrass) a -= 0.9 * v * 0.25 + Math.sign(v) * 1.5;
     v += a * dt;
     // 前進のギアでは後ろへ、R では前へは転がらない（ブレーキや抵抗で 0 を越えないように）
@@ -347,11 +452,10 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     group.position.z += Math.cos(state.yaw) * v * dt;
 
     // 防護壁（橋の上は、路面の縁の壁）
-    const after = circuitNearest(group.position.x, group.position.z, state.s);
-    const onBridge = after.y - CIRCUIT.origin.y > 0.3;
-    const limit = onBridge ? W + 0.6 : CIRCUIT.wall - 1.2;
+    const after = T.nearest(group.position.x, group.position.z, state.s);
+    const limit = T.limit(after);
     if (Math.abs(after.lateral) > limit) {
-      const f = circuitFrame(after.s);
+      const f = T.frame(after.s);
       const back = Math.abs(after.lateral) - limit;
       group.position.x -= f.n.x * Math.sign(after.lateral) * back;
       group.position.z -= f.n.z * Math.sign(after.lateral) * back;
@@ -361,8 +465,11 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
       v *= 0.55;
     }
     state.speed = v;
+    // 前後の端（行き止まり。高速道路のガレージの奥の壁など）
+    if (T.constrain?.(group.position, after)) v *= 0.3;
+    state.speed = v;
     // 高さ：コースの上は路面、外は平らな地面（橋の上からは外へ出られない）
-    const targetY = Math.abs(after.lateral) < W + CIRCUIT.curb + 0.5 || onBridge ? after.y : CIRCUIT.origin.y;
+    const targetY = T.targetY(after);
     const prevY = group.position.y;
     group.position.y += (targetY - group.position.y) * Math.min(1, dt * 12);
     // 傾き：坂の前後・加減速で前後、曲がるときに外へ
@@ -382,7 +489,7 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7' } = {}) {
     dashIn -= dt;
     if (dashIn < 0) { drawDash(); dashIn = 0.1; }
     mapIn -= dt;
-    if (mapIn < 0 && state.atCircuit) { drawMap(); mapIn = 0.2; }
+    if (mapIn < 0 && state.atCircuit && !road) { drawMap(); mapIn = 0.2; }
   }
 
   /** 車内のコースの地図。自分は青、ほかの車（レースの相手）は setMapCars で */

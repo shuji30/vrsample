@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { roadCorridor, nearRoad } from './roaddata.js';
 import { CIRCUIT_ZONE } from './circuit.js';
 
 /**
@@ -83,7 +84,10 @@ export function hillHeight(x, z) {
   if (w > 0) h += (CIRCUIT_ZONE.y - h) * w;
   // 南西のふもとの飛行場の平らな所（y -20）
   const wa = airfieldFlat(x, z);
-  return wa > 0 ? h + (AIRFIELD_ZONE.y - h) * wa : h;
+  if (wa > 0) h += (AIRFIELD_ZONE.y - h) * wa;
+  // 丘の東のふもとへ下る取り付け道路（roaddata.js）の下は、路面の高さにならす（切り通し・盛り土）
+  const rc = roadCorridor(x, z);
+  return rc ? h + (rc.y - h) * rc.w : h;
 }
 
 /** サーキットの平らな所にどれだけ入っているか（1 = 中、0 = 70m より外） */
@@ -228,6 +232,7 @@ export function createHill(tex) {
     if (x > C.minX - 6 && x < C.maxX + 6 && z > C.minZ - 6 && z < C.maxZ + 6) continue;   // コースターのコース
     if (golfFlat(x, z) > 0.02) continue;   // ゴルフの芝地
     if (airfieldFlat(x, z) > 0.02) continue;   // 飛行場
+    if (nearRoad(x, z, 12)) continue;   // 高速道路と取り付け道路
     const y = hillHeight(x, z);
     if (y < SEA_LEVEL + 2.5 || circuitFlat(x, z) > 0.05) continue;
     spots.push([x, y, z, 5 + rand() * 6]);

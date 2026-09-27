@@ -51,6 +51,7 @@ import { createCruiserGame } from './cruisergame.js';
 import { createJetski, seaBlocked } from './jetski.js';
 import { createDolphins } from './dolphins.js';
 import { createSeagulls } from './seagulls.js';
+import { createFlyingFish } from './flyingfish.js';
 import { createJetskiGame } from './jetskigame.js';
 import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
 import { createCessnaGame } from './cessnagame.js';
@@ -488,6 +489,10 @@ export function createWorld(renderer, scene, {
   const seagulls = createSeagulls({ sound: Boolean(camera) });
   scene.add(seagulls.group);
   const gullEar = new THREE.Vector3();
+  // トビウオ：船で沖を走っていると、前や横から群れで飛び出して滑空する。女の子が乗っていたら声をあげる
+  const flyingFish = createFlyingFish({ blocked: (x, z) => seaBlocked(x, z) || road.pierBlocked(x, z), pier: { x: PIER.x, z: PIER.headZ } });
+  scene.add(flyingFish.group);
+  flyingFish.onLaunch = () => { if (cruiserGame?.active || jetskiGame?.active) voice?.say('flyingFish', { chance: 0.6 }); };
   let jetskiRidden = false;
   let jetskiWait = 0;
   const jetskiGame = camera ? createJetskiGame({ character, jetski, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
@@ -1184,6 +1189,7 @@ export function createWorld(renderer, scene, {
       : jetskiRidden ? { x: jetski.position.x, z: jetski.position.z, yaw: jetski.state.yaw, speed: jetski.speed } : null;
     dolphins.update(dt, boatNow);
     seagulls.update(dt, camera ? camera.getWorldPosition(gullEar) : null, boatNow);
+    flyingFish.update(dt, boatNow);
     // セスナ：乗ったのに女の子がいない（飛行場に来ていない）ときは、3 秒で動けるようにする
     cessnaWait = cessnaRidden && cessna.hold && !cessnaGame?.active ? cessnaWait + dt : 0;
     if (cessnaWait > 3) cessna.hold = false;
@@ -1358,6 +1364,7 @@ export function createWorld(renderer, scene, {
     billiards,
     dolphins,
     seagulls,
+    flyingFish,
     grabbables,
     boomerang,
     interactables,

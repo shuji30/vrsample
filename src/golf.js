@@ -21,6 +21,16 @@ const REST = 0.72;       // 縁で跳ね返る速さの割合
 const LANE_Y = 0.03;     // レーンの面（地面からの高さ）
 
 const R = (x0, x1, z0, z1) => ({ x0, x1, z0, z1 });
+/**
+ * ティーから打ち出す向き（ティーのある区画の長いほう、カップのある側）。{ x, z } の単位ベクトル。
+ * 6 番（上り坂）は西へ延びるので x。ほかは北（+z）
+ */
+function teeDir(hole) {
+  const [tx, tz] = hole.tee;
+  const r = hole.rects.find((q) => tx >= q.x0 && tx <= q.x1 && tz >= q.z0 && tz <= q.z1) ?? hole.rects[0];
+  if (r.x1 - r.x0 > r.z1 - r.z0) return { x: Math.sign(hole.cup[0] - tx) || 1, z: 0 };
+  return { x: 0, z: Math.sign(hole.cup[1] - tz) || 1 };
+}
 const bump = (z, width, height) => (x, zz) => height * Math.exp(-(((zz - z) / width) ** 2));
 
 /** ホールの表。rects はレーン、walls は縁（線分）、aim は女の子が狙う点（曲がり角） */
@@ -125,6 +135,8 @@ function makeHoleMesh(hole, mats, index) {
   // ティーのマットとカップ・旗
   const tee = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.35), mats.tee);
   tee.rotation.x = -Math.PI / 2;
+  // マットは打ち出す向きに直角に長く（x へ打ち出すホールは 90° 回す）
+  if (teeDir(hole).x !== 0) tee.rotation.z = Math.PI / 2;
   tee.position.set(hole.tee[0], LANE_Y + hole.h(...hole.tee) + 0.003, hole.tee[1]);
   g.add(tee);
   const cupY = LANE_Y + hole.h(...hole.cup);
@@ -242,9 +254,23 @@ export function createGolf() {
   });
   // 入口の掲示板（北向き、観覧車の側から見える）
   const board = makeBoard();
+  // コースの側（南、+Z）を向ける。前は北を向いていて、コースから見ると裏（片面の板なので何も見えない）だった。
+  // 木の裏板と 2 本の柱で立てる
   board.mesh.position.set(-26.5, 1.4, 15.2);
-  board.mesh.rotation.y = Math.PI;
+  board.mesh.rotation.y = 0;
   group.add(board.mesh);
+  {
+    const back = new THREE.Mesh(new THREE.BoxGeometry(2.12, 1.12, 0.05), mats.wood);
+    back.position.set(-26.5, 1.4, 15.2 - 0.03);
+    back.castShadow = true;
+    group.add(back);
+    for (const dx of [-0.85, 0.85]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.95, 0.08), mats.wood);
+      post.position.set(-26.5 + dx, 0.975, 15.2 - 0.09);
+      post.castShadow = true;
+      group.add(post);
+    }
+  }
   for (const sx of [-0.9, 0.9]) {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.4, 0.07), mats.wood);
     leg.position.set(-26.5 + sx, 0.7, 15.25);
@@ -459,9 +485,15 @@ export function createGolf() {
     /** 球をティーに置く */
     resetBalls() {
       const [tx, tz] = hole().tee;
+      // 2 つの球は、打ち出す向きに直角に横並び（前は x へずらしていて、西へ打ち出す 6 番だけ縦に並んでいた）。
+      // 北へ打ち出すホールでは、これまでどおりプレイヤーが西（-x）
+      const d = teeDir(hole());
+      const sx = d.z;
+      const sz = -d.x;
       balls.forEach((b, i) => {
-        b.x = tx + (i === 0 ? -0.12 : 0.12);
-        b.z = tz;
+        const k = i === 0 ? -0.12 : 0.12;
+        b.x = tx + sx * k;
+        b.z = tz + sz * k;
         b.vx = b.vz = 0;
         b.moving = false;
         b.inCup = false;

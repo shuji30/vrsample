@@ -49,6 +49,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
   let girlAim = new THREE.Vector2();
   let girlSpeed = 0;
   let scores = [[], []];
+  let clearScores = false;     // 前のゲームのスコアを、次の 1 打目で消す
   let charge = 0;
   let charging = false;
   let pcTurnSet = false;
@@ -79,11 +80,21 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     state = 'waitStand';
     golf.current = 0;
     golf.resetBalls();
-    scores = [[], []];
-    golf.drawBoard(scores, totals());
+    // 前のゲームのスコアは、次のゲームの 1 打目まで板に残す（strikeBall で消す）
+    if (scores[0].length || scores[1].length) clearScores = true;
+    else golf.drawBoard(scores, totals());
     turn = 'player';
     phase = 'aim';
     pcTurnSet = false;
+  }
+  /** 打つ（その前に、残してあった前のゲームのスコアを消す） */
+  function strikeBall(i, vx, vz) {
+    if (clearScores) {
+      clearScores = false;
+      scores = [[], []];
+      golf.drawBoard(scores, totals());
+    }
+    golf.strike(i, vx, vz);
   }
 
   function beginWalk() {
@@ -221,7 +232,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
         const k = Math.min(1, timer / 0.18);
         placeGirlPutter((1 - k) * THREE.MathUtils.clamp(girlSpeed / 12, 0.05, 0.3) - k * 0.05);
         if (k >= 1) {
-          golf.strike(1, girlAim.x * girlSpeed, girlAim.y * girlSpeed);
+          strikeBall(1, girlAim.x * girlSpeed, girlAim.y * girlSpeed);
           phase = 'rolling';
           girlStep = 'watch';
           timer = 0;
@@ -294,7 +305,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
       const vx = seg.x / dt;
       const vz = seg.z / dt;
       if (flat < 0.08 && Math.abs(cy - by) < 0.06 && Math.hypot(vx, vz) > 0.15) {
-        golf.strike(0, vx * 1.1, vz * 1.1);
+        strikeBall(0, vx * 1.1, vz * 1.1);
         phase = 'rolling';
         hitCool = 1;
       }
@@ -351,7 +362,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     charging = false;
     const aim = pcAimDir(new THREE.Vector3());
     const v = 0.25 + charge ** 1.4 * 4.3;
-    golf.strike(0, aim.x * v, aim.z * v);
+    strikeBall(0, aim.x * v, aim.z * v);
     phase = 'rolling';
     throughFor = 0.2;
     charge = 0;
@@ -442,8 +453,8 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
         voice?.say('golfAgain');
         golf.current = 0;
         golf.resetBalls();
-        scores = [[], []];
-        golf.drawBoard(scores, totals());
+        // スコアは次のゲームの 1 打目まで残す
+        clearScores = true;
         turn = 'player';
         phase = 'aim';
         pcTurnSet = false;

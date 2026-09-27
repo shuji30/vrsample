@@ -73,6 +73,34 @@ canvas { display: block; }
 
 #overlay .note { font-size: 12px; color: #8fa3cc; }
 
+#girl-name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+#girl-name input {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+}
+
+#girl-name button {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(142, 240, 255, 0.5);
+  background: rgba(142, 240, 255, 0.15);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
 #status,
 #credit {
   font-size: 12px;

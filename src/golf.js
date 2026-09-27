@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GOLF_ZONE } from './hill.js';
+import { girlName } from './girlname.js';
 
 /**
  * パットゴルフ（コースと球）。観覧車の南の芝地に 6 ホール。女の子と交互に打つ（golfgame.js）。
@@ -439,7 +440,7 @@ export function createGolf() {
     c.textAlign = 'left';
     c.fillText('パー', 14, 112);
     c.fillText('あなた', 14, 158);
-    c.fillText('女の子', 14, 204);
+    c.fillText(girlName(), 14, 204, x0 - w / 2 - 20);   // 長い名前は幅に収める（fillText の maxWidth）
     c.textAlign = 'center';
     holes.forEach((h, i) => c.fillText(String(h.par), x0 + w * i, 112));
     c.fillText(String(holes.reduce((a, h) => a + h.par, 0)), x0 + w * 6 + 12, 112);

@@ -23,6 +23,14 @@
     <p style="font-size:12px;color:#8fa3cc">× で閉じられます（I キーで開け閉め）</p>
     <p>ヘッドセットのブラウザで開いて「ENTER VR」を押すと VR に入れます。PC でもそのまま遊べます。</p>
 
+    <h2>女の子の名前</h2>
+    <form id="girl-name" autocomplete="off">
+      <input id="girl-name-input" type="text" maxlength="10" placeholder="名前（例：さくら）" aria-label="女の子の名前" />
+      <input id="girl-name-yomi" type="text" maxlength="10" placeholder="よみ（ひらがな・なくてもよい）" aria-label="名前のよみ" />
+      <button id="girl-name-save" type="submit">決める</button>
+    </form>
+    <p id="girl-name-note" class="note">名前を付けると、スコア表や会話で名前で呼びます（このブラウザに覚えます。VR に入る前に付けてください）</p>
+
     <h2>基本の操作</h2>
     <table>
       <tr><th></th><th>VR</th><th>PC</th></tr>

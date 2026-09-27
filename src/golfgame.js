@@ -3,6 +3,7 @@ import { ROOM } from './room.js';
 import { gardenPath } from './catchball.js';
 import { CAROUSEL } from './carousel.js';
 import { FERRIS } from './ferriswheel.js';
+import { girlName, onGirlNameChange } from './girlname.js';
 
 /**
  * パットゴルフ（女の子・順番・打ち方）。プレイヤーが観覧車の南の芝地（golf.js）へ入ると、
@@ -87,6 +88,8 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     phase = 'aim';
     pcTurnSet = false;
   }
+  // 名前を付け直したら、板の名前も書き直す
+  onGirlNameChange(() => golf.drawBoard(scores, totals()));
   /** 打つ（その前に、残してあった前のゲームのスコアを消す） */
   function strikeBall(i, vx, vz) {
     if (clearScores) {
@@ -435,7 +438,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
           timer = 0;
           const [a, b] = totals();
           voice?.say(a < b ? 'golfLose' : a > b ? 'golfWin' : 'golfDraw');
-          golf.showText(`おわり！　あなた ${a}　女の子 ${b}`);
+          golf.showText(`おわり！　あなた ${a}　${girlName()} ${b}`);
         } else {
           golf.current += 1;
           golf.resetBalls();

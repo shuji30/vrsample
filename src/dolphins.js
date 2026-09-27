@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from './hill.js';
-import { routeCurve } from './cruiser.js';
+import { routeCurve, PIER } from './cruiser.js';
 
 /**
  * 海のイルカの群れ（4 頭）。クルーザーで周遊していると会える。
@@ -9,81 +9,157 @@ import { routeCurve } from './cruiser.js';
  *   ゆっくり（4m/s）群れで泳ぐ。ときどき水面に背を出して息をする（背びれが見える）
  * - ときどき水から跳び上がる（5〜14 秒ごと。高さ 2〜3.5m。となりの 1 頭がつられて跳ぶこともある）。
  *   跳び出す所と落ちる所に、しぶきの輪と水しぶき
+ * - 群れがいるのは、桟橋から 160m より遠い沖（島巡りの道の遠い所）だけ。道が桟橋へ近づく所は、次の沖まで飛ばす
+ *   （そのときは 1 頭ずつも持ち場へ移す。桟橋の近くでは見えない）
  * - 船（クルーザー・ジェットスキー）が 90m 以内で走っていると、寄ってきて船の横に並んで泳ぐ（跳ぶのも 3〜8 秒ごとに）。
+ *   並ぶのは、船が桟橋から 140m より遠いときだけ。船が桟橋の 120m 以内へ戻ってきたら、沖へ帰る
  *   船が 10 秒止まっている・離れすぎると、周遊の道へ戻る
  * - 浅瀬・岩場・島・桟橋・橋脚（blocked）へは入らない（手前で向きを変える）
  *
- * 体は胴・腹・口先・背びれ・胸びれ・尾びれを組み合わせる（長さ 2.5m）。前は +Z
+ * 体は鼻先から尾まで断面を変えて作る（口先・おでこ・太い胴・細い尾の付け根。背は濃く腹は白い）。
+ * 背びれ・胸びれ・尾びれを付ける（長さ 2.5m）。前は +Z
  */
 const G = 9.8;
 const LENGTH = 2.5;
 const SLOTS = [[0, 0], [-4.5, -3], [-4, 3.2], [-9, 0.5], [-12, -3.5]];
 
+// 体の形（鼻先 t=0 → 尾の付け根 t=1）。上・下の半径、横の半幅、中心の高さ（m）。
+// 口先（くちばし）は細く低く、そのすぐ後ろでおでこ（メロン）が段になって盛り上がり、胴の前 1/3 がいちばん太く、
+// 尾の付け根は細く縦長（横につぶれる）になる
+const PROFILE = {
+  t:     [0,     0.03,  0.07,  0.10,  0.14,  0.22, 0.34, 0.48, 0.62, 0.76, 0.88,  0.96,  1.0],
+  top:   [0.028, 0.048, 0.058, 0.125, 0.205, 0.27, 0.30, 0.28, 0.22, 0.14, 0.085, 0.06,  0.045],
+  bot:   [0.028, 0.044, 0.052, 0.085, 0.15,  0.22, 0.27, 0.26, 0.19, 0.10, 0.06,  0.045, 0.035],
+  halfW: [0.028, 0.048, 0.056, 0.11,  0.17,  0.23, 0.26, 0.24, 0.17, 0.085, 0.045, 0.03, 0.025],
+  cy:    [-0.085, -0.085, -0.075, -0.045, -0.015, 0, 0, 0, 0.01, 0.02, 0.025, 0.025, 0.025],
+};
+const TAIL_T = 0.64;        // ここで尾を曲げる（前と後ろの 2 つに分ける）
+const BACK_COLOR = new THREE.Color(0x55697c);
+const CAPE_COLOR = new THREE.Color(0x44576a);
+const BELLY_COLOR = new THREE.Color(0xe2e6ea);
+
+function profileAt(key, t) {
+  const T = PROFILE.t;
+  const v = PROFILE[key];
+  let k = 1;
+  while (k < T.length - 1 && T[k] < t) k++;
+  const u = THREE.MathUtils.clamp((t - T[k - 1]) / (T[k] - T[k - 1]), 0, 1);
+  const e = u * u * (3 - 2 * u);
+  return v[k - 1] + (v[k] - v[k - 1]) * e;
+}
+
+/** t0〜t1 の区間の体（z は zOrigin から見た位置）。背は濃く、腹は白く（頂点の色） */
+function bodyPart(t0, t1, zOrigin, rings = 26, seg = 22, { capStart = true, capEnd = true, scale = 1 } = {}) {
+  const pos = [];
+  const col = [];
+  const idx = [];
+  const c = new THREE.Color();
+  for (let r = 0; r <= rings; r++) {
+    const t = t0 + (t1 - t0) * (r / rings);
+    const top = profileAt('top', t) * scale;
+    const bot = profileAt('bot', t) * scale;
+    const hw = profileAt('halfW', t) * scale;
+    const cy = profileAt('cy', t);
+    const z = LENGTH / 2 - t * LENGTH - zOrigin;
+    for (let k = 0; k <= seg; k++) {
+      const a = (k / seg) * Math.PI * 2;
+      const sa = Math.sin(a);
+      pos.push(Math.cos(a) * hw, cy + sa * (sa > 0 ? top : bot), z);
+      // 背と腹の境目は、わき腹の少し下。背のまん中はもう一段濃く（ケープ）
+      const m = THREE.MathUtils.smoothstep(sa, -0.45, 0.05);
+      c.copy(BELLY_COLOR).lerp(BACK_COLOR, m);
+      if (sa > 0.75) c.lerp(CAPE_COLOR, (sa - 0.75) * 3);
+      col.push(c.r, c.g, c.b);
+    }
+  }
+  const row = seg + 1;
+  for (let r = 0; r < rings; r++) {
+    for (let k = 0; k < seg; k++) {
+      const a = r * row + k;
+      const b = a + row;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  // 両端をふさぐ（鼻先と、後ろの区間の尾の先）
+  const cap = (r, flip) => {
+    const t = t0 + (t1 - t0) * (r / rings);
+    const center = pos.length / 3;
+    pos.push(0, profileAt('cy', t), LENGTH / 2 - t * LENGTH - zOrigin);
+    const base = r * row;
+    col.push(col[base * 3], col[base * 3 + 1], col[base * 3 + 2]);
+    for (let k = 0; k < seg; k++) {
+      if (flip) idx.push(center, base + k + 1, base + k);
+      else idx.push(center, base + k, base + k + 1);
+    }
+  };
+  if (capStart) cap(0, true);
+  if (capEnd) cap(rings, false);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+function finGeometry(points, depth) {
+  const shape = new THREE.Shape();
+  shape.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i += 2) shape.quadraticCurveTo(points[i][0], points[i][1], points[i + 1][0], points[i + 1][1]);
+  const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelThickness: depth * 0.4, bevelSize: depth * 0.5, bevelSegments: 2, curveSegments: 10 });
+  g.translate(0, 0, -depth / 2);
+  return g;
+}
+
 function makeDolphin() {
   const g = new THREE.Group();
-  const back = new THREE.MeshStandardMaterial({ color: 0x66788a, roughness: 0.35, metalness: 0.05 });
-  const belly = new THREE.MeshStandardMaterial({ color: 0xd9dee3, roughness: 0.45 });
+  const skin = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.32, metalness: 0.05 });
+  const fins = new THREE.MeshStandardMaterial({ color: BACK_COLOR, roughness: 0.35, metalness: 0.05 });
   const shade = (m) => { m.castShadow = true; return m; };
-  const body = shade(new THREE.Mesh(new THREE.SphereGeometry(0.5, 18, 12), back));
-  body.scale.set(0.74, 0.7, LENGTH);
-  g.add(body);
-  const under = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 10), belly);
-  under.scale.set(0.64, 0.5, LENGTH * 0.88);
-  under.position.set(0, -0.08, 0.05);
-  g.add(under);
-  // 口先（くちばし）とおでこ
-  const beak = shade(new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.38, 10), back));
-  beak.rotation.x = Math.PI / 2;
-  beak.position.set(0, -0.05, LENGTH / 2 + 0.1);
-  g.add(beak);
-  const melon = shade(new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), back));
-  melon.scale.set(1, 0.9, 1.3);
-  melon.position.set(0, 0.04, LENGTH / 2 - 0.2);
-  g.add(melon);
-  // 目
+  const zAt = (t) => LENGTH / 2 - t * LENGTH;
+  // 前（鼻先〜尾の付け根の手前）
+  g.add(shade(new THREE.Mesh(bodyPart(0, TAIL_T + 0.015, 0, 30, 22, { capEnd: false }), skin)));
+  // 目（おでこの下、口の端の少し後ろ）
   for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), new THREE.MeshStandardMaterial({ color: 0x111418, roughness: 0.2 }));
-    eye.position.set(side * 0.2, 0.02, LENGTH / 2 - 0.3);
+    const t = 0.125;
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 6), new THREE.MeshStandardMaterial({ color: 0x0c0f12, roughness: 0.15 }));
+    eye.position.set(side * profileAt('halfW', t) * 0.93, profileAt('cy', t) - 0.01, zAt(t));
     g.add(eye);
   }
-  // 背びれ（後ろへ反った三角）
-  const fin = new THREE.Shape();
-  fin.moveTo(0.18, 0);
-  fin.quadraticCurveTo(-0.02, 0.2, -0.2, 0.42);
-  fin.quadraticCurveTo(-0.16, 0.18, -0.3, 0);
-  fin.lineTo(0.18, 0);
-  const finGeo = new THREE.ExtrudeGeometry(fin, { depth: 0.04, bevelEnabled: false });
-  finGeo.translate(0, 0, -0.02);
-  const dorsal = shade(new THREE.Mesh(finGeo, back));
-  dorsal.rotation.y = -Math.PI / 2;     // 形の +X を体の +Z（前）へ
-  dorsal.position.set(0, 0.28, -0.1);
+  // 背びれ：後ろへ反った鎌の形（胴のまん中より少し後ろ）
+  const dorsal = shade(new THREE.Mesh(finGeometry([[0.2, 0], [0.02, 0.12], [-0.12, 0.34], [-0.1, 0.16], [-0.2, 0.0], [0, -0.03], [0.2, 0]], 0.035), fins));
+  dorsal.rotation.y = -Math.PI / 2;      // 形の +X を体の +Z（前）へ
+  dorsal.position.set(0, profileAt('cy', 0.46) + profileAt('top', 0.46) - 0.03, zAt(0.46));
   g.add(dorsal);
-  // 胸びれ
+  // 胸びれ：葉の形。体のわきの低い所から、後ろ・下・少し外へ（先の向きを setFromUnitVectors で決める）
+  const pecGeo = finGeometry([[0, 0.05], [0.18, 0.06], [0.3, -0.04], [0.14, -0.04], [0, -0.04], [-0.02, 0], [0, 0.05]], 0.02);
   for (const side of [-1, 1]) {
-    const pec = shade(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.025, 0.14), back));
-    pec.position.set(side * 0.28, -0.14, 0.45);
-    pec.rotation.set(0, side * 0.5, side * -0.5);
+    const pec = shade(new THREE.Mesh(pecGeo, fins));
+    pec.position.set(side * profileAt('halfW', 0.25) * 0.8, profileAt('cy', 0.25) - profileAt('bot', 0.25) * 0.6, zAt(0.25));
+    const dir = new THREE.Vector3(side * 0.55, -0.55, -0.62).normalize();
+    pec.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
+    // 平らな面を、体の外へ向ける（先の向きのまわりに回す）
+    pec.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), side * 1.1));
     g.add(pec);
   }
-  // 尾（付け根で上下に振る）と尾びれ
+  // 尾（付け根で上下に振る）：後ろの体と尾びれ
   const tail = new THREE.Group();
-  tail.position.set(0, 0, -LENGTH / 2 + 0.25);
+  const pivot = zAt(TAIL_T);
+  tail.position.set(0, profileAt('cy', TAIL_T), pivot);
   g.add(tail);
-  const stock = shade(new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 8), back));
-  stock.scale.set(0.24, 0.26, 0.7);
-  stock.position.z = -0.25;
-  tail.add(stock);
-  const fluke = new THREE.Shape();
-  fluke.moveTo(0, 0.02);
-  fluke.quadraticCurveTo(0.3, 0.02, 0.46, -0.24);
-  fluke.quadraticCurveTo(0.22, -0.16, 0, -0.1);
-  fluke.quadraticCurveTo(-0.22, -0.16, -0.46, -0.24);
-  fluke.quadraticCurveTo(-0.3, 0.02, 0, 0.02);
-  const flukeGeo = new THREE.ExtrudeGeometry(fluke, { depth: 0.03, bevelEnabled: false });
-  const flukes = shade(new THREE.Mesh(flukeGeo, back));
-  flukes.rotation.x = Math.PI / 2;      // 形の -Y を体の後ろ（-Z）へ、平らな面を水平に
-  flukes.position.set(0, 0.015, -0.52);
-  tail.add(flukes);
+  // 後ろは前の中から始める（1.5% 細く、前の後ろ端と後ろの入口はふさがない）。同じ太さで重ねたら、継ぎ目が白い輪になってちらついた
+  const rear = shade(new THREE.Mesh(bodyPart(TAIL_T - 0.02, 1, pivot, 14, 22, { capStart: false, scale: 0.985 }), skin));
+  rear.position.y = -profileAt('cy', TAIL_T);
+  tail.add(rear);
+  // 尾びれ：切れ込みのある三日月（幅 0.64m）。平らな面を水平に
+  const fluke = shade(new THREE.Mesh(finGeometry([[0, 0.03], [0.14, 0.02], [0.32, -0.2], [0.18, -0.14], [0.05, -0.12], [0, -0.08], [0, -0.08]], 0.03), fins));
+  const flukeL = fluke.clone();
+  flukeL.scale.x = -1;
+  for (const f of [fluke, flukeL]) {
+    f.rotation.x = Math.PI / 2;          // 形の -Y を体の後ろ（-Z）へ
+    f.position.set(0, profileAt('cy', 1) - profileAt('cy', TAIL_T), zAt(1) - pivot + 0.04);
+    tail.add(f);
+  }
   return { group: g, tail };
 }
 
@@ -191,6 +267,17 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
     out.yaw = Math.atan2(b.x - a.x, b.z - a.z);
     return out;
   };
+  // 桟橋からの距離。沖（160m より遠い）の所だけ、群れが泳ぐ
+  const pierDist = (x, z) => Math.hypot(x - PIER.x, z - PIER.headZ);
+  const offshore = routePts.map((p) => pierDist(p.x, p.z) > 160);
+  const idxOf = (uu) => Math.floor((((uu % 1) + 1) % 1) * ROUTE_N) % ROUTE_N;
+  /** uu から先へ、次の沖の所（uu が沖ならそのまま） */
+  const nextOffshore = (uu) => {
+    let i = idxOf(uu);
+    for (let k = 0; k < ROUTE_N && !offshore[i]; k++) i = (i + 1) % ROUTE_N;
+    return offshore[idxOf(uu)] ? uu : i / ROUTE_N;
+  };
+  u = nextOffshore(u);
   routeAt(u);
   let mode = 'route';       // route（周遊の道） / boat（船の横）
   let boatSide = 1;
@@ -212,6 +299,17 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
       wobble: rand(0, 6),
     };
     list.push(d);
+  }
+
+  /** 1 頭ずつを、いまの群れの持ち場へ（水の中に） */
+  function placeAll() {
+    for (const d of list) {
+      d.x = pod.x + Math.sin(pod.yaw) * d.along + Math.cos(pod.yaw) * d.side;
+      d.z = pod.z + Math.cos(pod.yaw) * d.along - Math.sin(pod.yaw) * d.side;
+      d.yaw = pod.yaw;
+      d.jump = null;
+      d.y = SEA_LEVEL - 0.55;
+    }
   }
 
   let onJump = null;
@@ -242,9 +340,11 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
     // --- 群れの中心 -------------------------------------------------------------
     if (mode === 'route') {
       u = (u + (4 / routeLen) * dt) % 1;
+      // 桟橋に近い所へ入ったら、次の沖まで飛ばす（1 頭ずつも持ち場へ移す）
+      if (!offshore[idxOf(u)]) { u = nextOffshore(u); routeAt(u); placeAll(); }
       routeAt(u);
       pod.speed = 4;
-      if (boat && joinCool < 0 && Math.abs(boat.speed) > 2 && Math.hypot(boat.x - pod.x, boat.z - pod.z) < 90) {
+      if (boat && joinCool < 0 && Math.abs(boat.speed) > 2 && pierDist(boat.x, boat.z) > 140 && Math.hypot(boat.x - pod.x, boat.z - pod.z) < 90) {
         mode = 'boat';
         boatStill = 0;
         // 船のどちら側に並ぶか：いまいる側
@@ -253,11 +353,12 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
         boatSide = (pod.x - boat.x) * rx + (pod.z - boat.z) * rz > 0 ? 1 : -1;
       }
     } else {
-      if (!boat) { mode = 'route'; u = nearestRouteU(pod.x, pod.z); joinCool = 20; }
+      if (!boat) { mode = 'route'; u = nextOffshore(nearestRouteU(pod.x, pod.z)); joinCool = 20; }
       else {
         boatStill = Math.abs(boat.speed) < 1 ? boatStill + dt : 0;
         const far = Math.hypot(boat.x - pod.x, boat.z - pod.z) > 160;
-        if (boatStill > 10 || far) { mode = 'route'; u = nearestRouteU(pod.x, pod.z); joinCool = 30; }
+        const home = pierDist(boat.x, boat.z) < 120;     // 桟橋へ帰ってきた：沖へ帰る
+        if (boatStill > 10 || far || home) { mode = 'route'; u = nextOffshore(nearestRouteU(pod.x, pod.z)); joinCool = home ? 60 : 30; }
         else {
           // 船の少し前・横（右 +X 側は boatSide = 1）に並ぶ。そこが浅瀬なら反対側へ
           const fx = Math.sin(boat.yaw);

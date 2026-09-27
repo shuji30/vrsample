@@ -6,14 +6,14 @@ import { PIER, onPier, pierDeckY } from './cruiser.js';
 /**
  * クルーザーの島めぐり（女の子の側）。プレイヤーが桟橋の先の船に乗ると、女の子はビーチバレー
  * （やパラソルの下）をやめて、砂浜を東へ歩き、桟橋を渡って船に乗り、操縦席のベンチの左に座る。
- * 座ったら（cruiser.girlSeated）船が出る。
+ * 座ったら（cruiser.girlSeated）プレイヤーが操縦できる。
  *
  * 体（character.group）は、座っているあいだ船の席の台（cruiser.girlPivot）の子にして、船の揺れごと動かす
  * （horsegame.js と同じ。台のローカルで体の位置・向き・見る所を入れ、手の目標はワールドのまま）。
  * スカートは腿に沿わせて、手を膝の上に置く（向かいに誰もいないが、VR でのぞきこめないように）。
  *
- * 乗っているあいだは海や島を見て、ときどきプレイヤーの顔を見る。灯台の近く・島の近くで声をあげ、
- * 桟橋へ戻ってきたら「ついたー」。プレイヤーが降りると、女の子も桟橋へ上がり、桟橋を砂浜まで歩いて戻ってから
+ * 乗っているあいだは海や島を見て、ときどきプレイヤーの顔を見る。灯台の近く・島の近く・大きく曲がる・ぶつかるで声をあげ、
+ * 沖へ出てから桟橋へ戻ってきたら「ついたー」。プレイヤーが降りると、女の子も桟橋へ上がり、桟橋を砂浜まで歩いて戻ってから
  * ビーチバレーへ戻す（ビーチバレーの側は桟橋を知らず、桟橋の上から浜へまっすぐ歩くと海に落ちるため）。
  * 途中で降りたとき（world.js が暗くしているあいだ）は、桟橋の上に立たせてから同じように戻る（dropAtPier）。
  */
@@ -45,7 +45,8 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
   let saidLighthouse = false;
   let saidIsland = false;
   let saidBack = false;
-  let lastLaps = 0;
+  let wentFar = false;
+  let turnCool = 0;
   const driver = { get state() { return `cruiser:${state}`; } };
   const from = new THREE.Vector3();
   const seat = new THREE.Vector3();
@@ -158,20 +159,31 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
   }
 
   function talk(dt) {
-    if (cruiser.phase === 'cruising') {
-      if (!saidLighthouse && cruiser.nearLighthouse) { saidLighthouse = true; voice?.say('cruiseLighthouse'); talkIn = Math.max(talkIn, 12); return; }
-      if (!saidIsland && cruiser.nearIsland) { saidIsland = true; voice?.say('cruiseIsland'); body.smile(2, 1); talkIn = Math.max(talkIn, 12); return; }
-      talkIn -= dt;
-      if (talkIn < 0) { voice?.say('cruiseFun', { chance: 0.8 }); talkIn = 20 + Math.random() * 14; }
-      if (cruiser.progress > 0.9 && !saidBack) { saidBack = true; voice?.say('cruiseBack', { chance: 0.8 }); }
-    }
-    if (cruiser.laps !== lastLaps) {
-      lastLaps = cruiser.laps;
+    if (cruiser.phase !== 'cruising') return;
+    const far = cruiser.dockDistance;
+    if (!saidLighthouse && cruiser.nearLighthouse) { saidLighthouse = true; voice?.say('cruiseLighthouse'); talkIn = Math.max(talkIn, 12); return; }
+    if (!saidIsland && cruiser.nearIsland) { saidIsland = true; voice?.say('cruiseIsland'); body.smile(2, 1); talkIn = Math.max(talkIn, 12); return; }
+    // 沖へ出て（150m より遠く）から戻ってきた：桟橋が近い・着いた
+    if (far > 150) wentFar = true;
+    if (wentFar && !saidBack && far < 60) { saidBack = true; voice?.say('cruiseBack', { chance: 0.8 }); return; }
+    if (wentFar && saidBack && cruiser.atDock) {
       voice?.say('cruiseEnd');
       body.smile(2.5, 1);
-      saidLighthouse = saidIsland = saidBack = false;
+      saidLighthouse = saidIsland = saidBack = wentFar = false;
       talkIn = 20;
+      return;
     }
+    if (Math.abs(cruiser.turnRate) > 0.18 && Math.abs(cruiser.speed) > 6 && turnCool < 0) { turnCool = 25; voice?.say('cruiseTurn', { chance: 0.7 }); return; }
+    turnCool -= dt;
+    talkIn -= dt;
+    if (talkIn < 0) { voice?.say(Math.abs(cruiser.speed) < 0.5 ? 'cruiseWait' : 'cruiseFun', { chance: 0.8 }); talkIn = 20 + Math.random() * 14; }
+  }
+
+  /** ぶつかった（cruiser.onBump から） */
+  function onBump(speed) {
+    if (state !== 'ride') return;
+    voice?.say(speed > 4 ? 'cruiseBump' : 'jetBumpSoft');
+    talkIn = Math.max(talkIn, 6);
   }
 
   function update(dt) {
@@ -218,7 +230,7 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
           state = 'ride';
           cruiser.girlSeated = true;
           cruiser.girlComing = false;
-          lastLaps = cruiser.laps;
+          wentFar = false;
           talkIn = 16;
           body.smile(2, 1);
         }
@@ -301,6 +313,7 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
     update,
     start,
     dropAtPier,
+    onBump,
     set onFinish(fn) { onFinish = fn; },
     set playerRiding(v) { playerRiding = Boolean(v); },
     get wanted() { return playerRiding; },

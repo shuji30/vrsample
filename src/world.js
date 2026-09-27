@@ -45,7 +45,7 @@ import { createGolfGame } from './golfgame.js';
 import { createSeatGame } from './seatgame.js';
 import { createCruiser, onPier, pierDeckY, PIER } from './cruiser.js';
 import { createCruiserGame } from './cruisergame.js';
-import { createJetski } from './jetski.js';
+import { createJetski, seaBlocked } from './jetski.js';
 import { createJetskiGame } from './jetskigame.js';
 import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
 import { createCessnaGame } from './cessnagame.js';
@@ -413,11 +413,15 @@ export function createWorld(renderer, scene, {
     beach.onPoint = (winner, score, game) => beachGame.onPoint(winner, score, game);
   }
   // 砂浜の東の桟橋とクルーザー。プレイヤーが乗ると、女の子も桟橋を渡ってきて隣に座り、島をめぐる
-  const cruiser = createCruiser();
+  // 自分で操縦する。ぶつかる物：海の浅瀬・岩場・桟橋・島・灯台（seaBlocked）、高架の橋脚、ジェットスキー
+  const cruiser = createCruiser({
+    blocked: (x, z) => seaBlocked(x, z) || road.pierBlocked(x, z) || jetskiBlocks(x, z),
+  });
   scene.add(cruiser.group);
   let cruiserRidden = false;
   const cruiserGame = camera ? createCruiserGame({ character, cruiser, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
   if (cruiserGame) {
+    cruiser.onBump = (v) => cruiserGame.onBump(v);
     cruiserGame.onFinish = () => {
       if (beachGame?.active) beachGame.resume();
       else {
@@ -432,7 +436,17 @@ export function createWorld(renderer, scene, {
     const y = cruiser.state.yaw;
     const dx = x - b.x;
     const dz = z - b.z;
-    return Math.abs(dx * Math.sin(y) + dz * Math.cos(y)) < 6.4 && Math.abs(dx * Math.cos(y) - dz * Math.sin(y)) < 2.3;
+    // 前へ 7.4m（とがった船首）、後ろへ 5.5m、横へ 1.85m（と少しの余白）
+    const f = dx * Math.sin(y) + dz * Math.cos(y);
+    return f > -5.9 && f < 7.8 && Math.abs(dx * Math.cos(y) - dz * Math.sin(y)) < 2.3;
+  };
+  // クルーザーから見たジェットスキー（長さ 3.3m・幅 1.2m ＋余白）
+  const jetskiBlocks = (x, z) => {
+    const p = jetski.position;
+    const y = jetski.state.yaw;
+    const dx = x - p.x;
+    const dz = z - p.z;
+    return Math.abs(dx * Math.sin(y) + dz * Math.cos(y)) < 2.1 && Math.abs(dx * Math.cos(y) - dz * Math.sin(y)) < 1.0;
   };
   const jetski = createJetski({ blocked: (x, z) => cruiserBlocks(x, z) || road.pierBlocked(x, z) });
   scene.add(jetski.group);
@@ -1357,8 +1371,8 @@ export function createWorld(renderer, scene, {
           if (midway) jetskiGame.dropAtPier();
         }
       } else if (v === cruiser) {
-        // 桟橋に着いていればそのまま降りる。沖にいれば暗くして桟橋へ（女の子も）
-        const midway = cruiser.phase === 'cruising';
+        // 桟橋のそばで止まっていればそのまま降りる。沖にいれば暗くして桟橋へ（女の子も）
+        const midway = !cruiser.atDock;
         if (midway) blackout();
         cruiserRidden = false;
         cruiser.leave();

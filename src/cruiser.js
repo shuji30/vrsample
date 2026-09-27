@@ -5,12 +5,15 @@ import { SEA_LEVEL, hillHeight } from './hill.js';
  * 船着き場とクルーザー。砂浜の東寄り（パラソルから 20m ほど東）から、北の沖へ桟橋が延びる。
  * 桟橋の先の T 字の所に、白いクルーザー「しおかぜ号」がつないである。
  *
- * 乗り物の窓口（kartdrive.js）。桟橋の先で E / 船へトリガーで、操縦席の右に座る。女の子が左に座ったら
- * （来ないなら 3 秒、向かっているなら 60 秒まで待って）自動で出航し、灯台の岩の近くを通って、西の島を一回りして戻ってくる（約 1.7km・2 分半）。
- * 着いたら E で降りる。降りずにいると 15 秒でもう一周。途中で降りると、暗くしてから桟橋へ戻す。
+ * 乗り物の窓口（kartdrive.js）。桟橋の先で E / 船へトリガーで、操縦席の右に座り、自分で操縦する：
+ * PC は W / S / A / D（ゲームパッド・ハンコンも）、VR は右トリガーで前へ・左トリガーで減速と後退、舵輪を両手で握って回す
+ * （握っていないときは左スティック）。最高 11m/s。大きな船なので、ゆっくり速くなり、ゆっくり曲がり、水の上で少し横へ流れる。
+ * 女の子が左に座るまでは動かない（来ないなら 3 秒、向かっているなら 60 秒まで待つ）。
+ * 浅瀬・岩場・桟橋・島・灯台の岩・高架の橋脚・ジェットスキーにはぶつかる（world.js が blocked で渡す）。
+ * 桟橋のそばで止まって E で降りる。沖で降りると、暗くしてから桟橋へ戻す（女の子も）。
  *
- * VR 酔いにくいように、リグは向きだけ回す（船の揺れは目の上下にわずかに出すだけ）。
- * PC は A / D で見まわし、C で後ろの斜め上からの視点。
+ * VR 酔いにくいように、リグは向きだけ回す（船の傾き・揺れは目に入れず、上下の揺れを半分だけ）。
+ * PC は C で後ろの斜め上からの視点。
  */
 export const PIER = {
   x: 28.1,
@@ -36,7 +39,9 @@ export function onPier(x, z) {
 }
 /** 船をつないでおく所（T 字の北の縁ぞい、東向き） */
 const DOCK = { x: 28.0, z: PIER.toZ - 2.1, yaw: Math.PI / 2 };
-const CRUISE = 14;       // 周遊の速さ（m/s）
+const CRUISE = 11;       // 最高速（m/s。40km/h）
+const ACCEL = 2.2;
+const REVERSE = 2;
 const DECK = 1.0;        // 甲板の高さ（喫水線から）
 
 /**
@@ -161,11 +166,12 @@ function makeBoat() {
   const shade = (m) => { m.castShadow = true; m.receiveShadow = true; return m; };
   // 船体（上から見た形を押し出す。とがった船首は +Z）
   const outline = new THREE.Shape();
+  // 船首はとがらせる（両わきの線が先で鋭く出会う。以前は丸い船首だった）
   outline.moveTo(-1.8, -5.5);
   outline.lineTo(1.8, -5.5);
-  outline.lineTo(1.85, 1.5);
-  outline.quadraticCurveTo(1.6, 4.6, 0, 6.0);
-  outline.quadraticCurveTo(-1.6, 4.6, -1.85, 1.5);
+  outline.lineTo(1.85, 1.0);
+  outline.quadraticCurveTo(1.75, 4.2, 0, 7.4);
+  outline.quadraticCurveTo(-1.75, 4.2, -1.85, 1.0);
   outline.lineTo(-1.8, -5.5);
   const hullGeo = (from, to) => {
     const geo = new THREE.ExtrudeGeometry(outline, { depth: to - from, bevelEnabled: false, curveSegments: 10 });
@@ -245,11 +251,12 @@ function makeBoat() {
   g.userData.wheel = wheel;
   // 手すり（両舷）
   for (const sx of [-1, 1]) {
-    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 8.5, 6), chrome);
+    // 船首は細くなるので、手すりは船室の横まで（先まで伸ばすと船体からはみ出す）
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 7.4, 6), chrome);
     bar.rotation.x = Math.PI / 2;
-    bar.position.set(sx * 1.72, DECK + 0.55, -0.6);
+    bar.position.set(sx * 1.72, DECK + 0.55, -1.15);
     g.add(bar);
-    for (let z = -4.8; z <= 3.4; z += 1.4) {
+    for (let z = -4.8; z <= 2.5; z += 1.46) {
       const p = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.55, 6), chrome);
       p.position.set(sx * 1.72, DECK + 0.27, z);
       g.add(p);
@@ -275,7 +282,7 @@ function makeBoat() {
   return g;
 }
 
-export function createCruiser() {
+export function createCruiser({ blocked = () => false } = {}) {
   const group = new THREE.Group();
   group.name = 'cruiser';
   group.add(makePier());
@@ -284,97 +291,116 @@ export function createCruiser() {
   boat.add(model);
   group.add(boat);
   group.add(model.userData.wake);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(3.6, 1.8, 11), new THREE.MeshBasicMaterial({ visible: false }));
-  body.position.set(0, 1.0, 0);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(3.6, 1.8, 12.6), new THREE.MeshBasicMaterial({ visible: false }));
+  body.position.set(0, 1.0, 0.8);
   body.userData.interactive = true;
   boat.add(body);
-  const steering = new THREE.Object3D();
-  steering.position.y = -80;
-  boat.add(steering);
+  // steering：舵輪（VR の両手で回す。kartdrive.js の steerFromHands）
+  const wheel = model.userData.wheel;
+  const steering = wheel;
   // 女の子の席の台（操縦席のベンチの左）
   const girlPivot = new THREE.Object3D();
   girlPivot.position.set(0.5, DECK + 0.55, -1.2);
   model.add(girlPivot);
 
-  const curve = routeCurve();
-  const total = curve.getLength();
   const state = { speed: 0, yaw: DOCK.yaw, travelYaw: DOCK.yaw, steer: 0, onGrass: false, lateral: 0, u: 0 };
-  let s = 0;              // 道の上の位置（m）
+  const pos = new THREE.Vector2(DOCK.x, DOCK.z);
   let v = 0;
-  let phase = 'docked';   // docked / boarding / cruising / arrived
+  let rate = 0;
+  let roll = 0;
+  let phase = 'docked';   // docked（つないである）/ boarding（乗って女の子を待つ）/ cruising（自分で走る）
   let wait = 0;
   let riding = false;
   let girlSeated = false;
   let girlComing = false;
-  let look = 0;
   let time = 0;
-  let turned = 0;
-  let laps = 0;
-  const p = new THREE.Vector3();
-  const t = new THREE.Vector3();
+  let bob = 0;
+  let onBump = null;
+  let bumpCool = 0;
+  // 船体の当たり（船のローカル：横 x・前 z）。とがった船首から船尾の角まで
+  const hull = [[0, 7.2], [1.3, 4.6], [-1.3, 4.6], [1.8, 1.2], [-1.8, 1.2], [1.8, -2.5], [-1.8, -2.5], [1.75, -5.4], [-1.75, -5.4]];
+  const free = (x, z, yaw) => {
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    return hull.every(([r, f]) => { const px = x + fx * f + fz * r; const pz = z + fz * f - fx * r; return !blocked(px, pz); });
+  };
 
-  function placeAt(dt) {
+  function placeModel(dt) {
     time += dt;
-    const u = (s / total) % 1;
-    curve.getPointAt(u, p);
-    curve.getTangentAt(u, t);
-    // 桟橋の前（道の始まりと終わりの 10m）は、桟橋と平行（つないでおく向き）へ寄せる
-    let yaw = Math.atan2(t.x, t.z);
-    const nearDock = THREE.MathUtils.smoothstep(Math.min(s, total - s), 0, 10);
-    yaw = DOCK.yaw + Math.atan2(Math.sin(yaw - DOCK.yaw), Math.cos(yaw - DOCK.yaw)) * nearDock;
-    // 曲がると外へ少し傾き、波で少し揺れる（VR の目には上下だけ出す）
-    const prevYaw = state.yaw;
-    let dyaw = yaw - prevYaw;
-    dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
-    const rate = dt > 0 ? dyaw / dt : 0;
-    const bob = Math.sin(time * 1.3) * 0.05 + Math.sin(time * 0.7 + 1) * 0.03;
-    boat.position.set(p.x, SEA_LEVEL + bob, p.z);
-    boat.rotation.set(Math.sin(time * 0.9) * 0.012 - v * 0.0015, yaw, THREE.MathUtils.clamp(-rate * v * 0.01, -0.06, 0.06) + Math.sin(time * 1.1) * 0.01, 'YXZ');
-    state.yaw = state.travelYaw = yaw;
-    state.speed = v;
+    const speed01 = Math.min(1, Math.abs(v) / CRUISE);
+    bob = Math.sin(time * 1.3) * 0.05 + Math.sin(time * 0.7 + 1) * 0.03;
+    boat.position.set(pos.x, SEA_LEVEL + bob, pos.y);
+    // 曲がると外へ少し傾き、速いと船首が少し上がる。波で少し揺れる（VR の目には上下を半分だけ出す）
+    roll += (THREE.MathUtils.clamp(-rate * v * 0.012, -0.07, 0.07) - roll) * Math.min(1, dt * 2);
+    boat.rotation.set(Math.sin(time * 0.9) * 0.012 - speed01 * 0.03, state.yaw, roll + Math.sin(time * 1.1) * 0.01, 'YXZ');
     state.bob = bob;
     // 引き波
     const wake = model.userData.wake;
-    const len = Math.min(40, v * 3);
+    const len = Math.min(40, Math.abs(v) * 3);
     wake.visible = v > 0.5;
     wake.scale.set(8 + v * 0.8, len, 1);
     const back = 5.5 + len / 2;
-    wake.position.set(p.x - Math.sin(yaw) * back, SEA_LEVEL + 0.03, p.z - Math.cos(yaw) * back);
-    wake.rotation.set(-Math.PI / 2, yaw, 0, 'YXZ');
-    model.userData.wheel.rotation.z = THREE.MathUtils.clamp(-rate * 2, -1.2, 1.2);
+    wake.position.set(pos.x - Math.sin(state.travelYaw) * back, SEA_LEVEL + 0.03, pos.y - Math.cos(state.travelYaw) * back);
+    wake.rotation.set(-Math.PI / 2, state.travelYaw, 0, 'YXZ');
+    // 舵輪：左へ切ると（運転席から見て）左回り
+    wheel.rotation.z = -state.steer * 1.5;
     boat.updateMatrixWorld(true);
   }
-  // つないでおく所へ（道の始まり。s = 0 が桟橋の前）
-  placeAt(0);
+  placeModel(0);
+
+  function toDock() {
+    pos.set(DOCK.x, DOCK.z);
+    state.yaw = state.travelYaw = DOCK.yaw;
+    v = 0; rate = 0; roll = 0; state.steer = 0; state.speed = 0;
+    placeModel(0);
+  }
 
   function update(dt, input) {
-    look = THREE.MathUtils.clamp(look - (input?.steer ?? 0) * dt * 1.0, -1.6, 1.6);
-    switch (phase) {
-      case 'boarding':
-        wait += dt;
-        if ((girlSeated && wait > 2.5) || (!girlComing && wait > 3) || wait > 60) { phase = 'cruising'; turned = 0; }
-        break;
-      case 'cruising': {
-        // 出るときはゆっくり、戻ってきたら桟橋の前で止まる
-        const left = total - s;
-        const want = left < 80 ? Math.max(0.6, left * 0.17) : CRUISE;
-        v += THREE.MathUtils.clamp(want - v, -1.4 * dt, 0.9 * dt);
-        s += v * dt;
-        turned += v * dt;
-        if (s >= total - 0.3) { s = 0; v = 0; phase = 'arrived'; wait = 0; laps++; }
-        break;
-      }
-      case 'arrived':
-        wait += dt;
-        if (wait > 15) { phase = 'cruising'; turned = 0; }
-        break;
-      default:
-        break;
+    bumpCool -= dt;
+    if (phase === 'boarding') {
+      wait += dt;
+      if (girlSeated || (!girlComing && wait > 3) || wait > 60) phase = 'cruising';
     }
-    placeAt(dt);
+    const go = phase === 'cruising';
+    const throttle = go ? input?.throttle ?? 0 : 0;
+    const brake = go ? input?.brake ?? 0 : 0;
+    state.steer += ((input?.steer ?? 0) - state.steer) * Math.min(1, dt * 3);
+    // 大きな船なので、ゆっくり速くなり、ゆっくり止まる（最高 11m/s）
+    if (throttle > 0.02) v += throttle * ACCEL * (1 - Math.max(0, v) / CRUISE) * dt;
+    if (brake > 0.02) v = Math.max(-REVERSE, v - brake * 2.2 * dt);
+    v -= v * 0.015 * dt;
+    if (throttle < 0.02 && brake < 0.02) v -= Math.sign(v) * Math.min(Math.abs(v), 0.35 * dt);
+    // 向き：速いほどよく曲がる（止まっていても、船首の小さなスクリューで少しは回る）。後ろへ進むときは逆
+    const k = Math.min(1, Math.abs(v) / 4);
+    rate = state.steer * (0.06 + 0.24 * k) * (v < -0.1 ? -1 : 1);
+    state.yaw += rate * dt;
+    // 進む向きは少し遅れてついてくる（水の上で横へ流れる）
+    let slip = state.yaw - state.travelYaw;
+    slip = Math.atan2(Math.sin(slip), Math.cos(slip));
+    state.travelYaw += slip * Math.min(1, dt * 1.2);
+    const nx = pos.x + Math.sin(state.travelYaw) * v * dt;
+    const nz = pos.y + Math.cos(state.travelYaw) * v * dt;
+    // ぶつかる（浅瀬・岩場・桟橋・島・橋脚）：止めて少し跳ね返す。斜めなら沿って滑る。
+    // つないである所は桟橋の縁に近いので、はじめから当たっているときは、抜ける向きへは動ける
+    if (free(nx, nz, state.yaw) || !free(pos.x, pos.y, state.yaw)) {
+      pos.set(nx, nz);
+    } else if (free(nx, pos.y, state.yaw) && Math.abs(nx - pos.x) > 1e-4) {
+      pos.x = nx;
+      v *= 1 - Math.min(1, dt * 2);
+    } else if (free(pos.x, nz, state.yaw) && Math.abs(nz - pos.y) > 1e-4) {
+      pos.y = nz;
+      v *= 1 - Math.min(1, dt * 2);
+    } else {
+      if (Math.abs(v) > 1.5 && bumpCool < 0) { onBump?.(Math.abs(v)); bumpCool = 2; }
+      v = -v * 0.2;
+      state.travelYaw = state.yaw;
+    }
+    state.speed = v;
+    placeModel(dt);
   }
 
   const eyeLocal = new THREE.Vector3(-0.5, DECK + 0.55 + 0.72, -1.15);
+  const dockDist = () => Math.hypot(pos.x - DOCK.x, pos.y - DOCK.z);
   return {
     group,
     body,
@@ -387,25 +413,39 @@ export function createCruiser() {
     /** 乗っていないとき（world.js から）：つないでおく所で、ゆらゆら */
     idle(dt) {
       if (riding) return;
-      if (phase !== 'docked') { phase = 'docked'; s = 0; v = 0; }
-      placeAt(dt);
+      if (phase !== 'docked') { phase = 'docked'; toDock(); }
+      placeModel(dt);
     },
-    board() { riding = true; s = 0; v = 0; phase = 'boarding'; wait = 0; look = 0; laps = 0; placeAt(0); },
-    leave() { riding = false; phase = 'docked'; s = 0; v = 0; placeAt(0); },
-    /** 目（操縦席の右。船の上下の揺れは半分だけ） */
+    board() { riding = true; toDock(); phase = 'boarding'; wait = 0; },
+    leave() { riding = false; phase = 'docked'; toDock(); },
+    /** 目（操縦席の右。船の上下の揺れは半分だけ。傾きは入れない） */
     eye(out = new THREE.Vector3()) {
-      boat.updateMatrixWorld(true);
-      const e = boat.localToWorld(out.copy(eyeLocal));
-      e.y -= (state.bob ?? 0) * 0.5;
-      return e;
+      const yaw = state.yaw;
+      const c = Math.cos(yaw);
+      const sn = Math.sin(yaw);
+      // 船のローカル（横 x・前 z）を、向きだけ回してワールドへ
+      out.set(pos.x + eyeLocal.x * c + eyeLocal.z * sn, SEA_LEVEL + eyeLocal.y + bob * 0.5, pos.y - eyeLocal.x * sn + eyeLocal.z * c);
+      return out;
     },
-    get lookYawOffset() { return look; },
     /** PC の後ろからの視点（C） */
     chase(camera) {
-      const fx = Math.sin(state.yaw);
-      const fz = Math.cos(state.yaw);
-      camera.position.set(boat.position.x - fx * 14, boat.position.y + 6, boat.position.z - fz * 14);
-      camera.lookAt(boat.position.x + fx * 6, boat.position.y + 1.5, boat.position.z + fz * 6);
+      const fx = Math.sin(state.travelYaw);
+      const fz = Math.cos(state.travelYaw);
+      camera.position.set(pos.x - fx * 15, SEA_LEVEL + 6.5, pos.y - fz * 15);
+      camera.lookAt(pos.x + fx * 6, SEA_LEVEL + 1.5, pos.y + fz * 6);
+    },
+    /** VR：舵輪を両手で握って回す（a, b は body のローカル。右手が下がると右へ切る） */
+    steerFromHands(a, b) {
+      const c = wheel.position;
+      // body は船のローカルの (0, 1.0, 0.8) にある
+      const cx = c.x;
+      const cy = c.y - 1.0;
+      const cz = c.z - 0.8;
+      const near = (p) => Math.hypot(p.x - cx, p.y - cy, p.z - cz) < 0.45;
+      if (!near(a) || !near(b)) return null;
+      const [l, r] = a.x > b.x ? [a, b] : [b, a];
+      const angle = Math.atan2(r.y - l.y, l.x - r.x);
+      return { steer: THREE.MathUtils.clamp(angle / (Math.PI / 2), -1, 1), angle: THREE.MathUtils.radToDeg(angle) };
     },
     /** 乗り口（kartdrive.js の E）：つないであるとき、T 字の北の縁のうち from にいちばん近い所 */
     enterPoint(from, out = new THREE.Vector3()) {
@@ -417,18 +457,23 @@ export function createCruiser() {
     girlPivot,
     /** 女の子が乗り込む所（T 字の上） */
     girlBoard(out = new THREE.Vector3()) { return out.set(DOCK.x - 0.9, PIER.y, PIER.toZ + 0.5); },
-    get rpm01() { return 0.18 + Math.min(1, v / CRUISE) * 0.4; },
+    get rpm01() { return 0.18 + Math.min(1, Math.abs(v) / CRUISE) * 0.45; },
     get speed() { return v; },
+    get turnRate() { return rate; },
     get phase() { return phase; },
-    get progress() { return s / total; },
-    get laps() { return laps; },
     get riding() { return riding; },
+    /** 桟橋のそば（降りても暗くしなくてよい所）にいるか */
+    get atDock() { return dockDist() < 12 && Math.abs(v) < 1.5; },
+    /** 桟橋からの距離（m） */
+    get dockDistance() { return dockDist(); },
     set girlSeated(x) { girlSeated = Boolean(x); },
     set girlComing(x) { girlComing = Boolean(x); },
+    set onBump(fn) { onBump = fn; },
     /** 近いもの（女の子の声）：灯台・島までの距離 */
-    get nearLighthouse() { return Math.hypot(boat.position.x - 150, boat.position.z + 230) < 70; },
-    get nearIsland() { return Math.hypot(boat.position.x + 260, boat.position.z + 520) < 230; },
+    get nearLighthouse() { return Math.hypot(pos.x - 150, pos.y + 230) < 70; },
+    get nearIsland() { return Math.hypot(pos.x + 260, pos.y + 520) < 230; },
     boat,
-    total,
+    /** 試験用：いる所と向きを入れる */
+    debugPlace(x, z, yaw) { pos.set(x, z); state.yaw = state.travelYaw = yaw; v = 0; state.speed = 0; placeModel(0); },
   };
 }

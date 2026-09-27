@@ -22,13 +22,14 @@ const AI_LAT = 1.45 * 1.44 / GT3.mass;   // 速さの 2 乗あたりの、ダウ
 /** 1m ごとの、女の子が出せる速さの表 */
 /**
  * 女の子の車の速さ。コースの曲がり具合から、曲がれる速さ（AI_CORNER 倍）・手前のブレーキ（AI_BRAKE m/s²）・
- * 加速の限界（aiAccel）で速度表を作り、腕前（AI_SKILL）を掛けて走る。1 周 55 秒ほどに合わせた
- * （前は 1 周 67 秒で、遅すぎると言われた）
+ * 加速の限界（aiAccel）で速度表を作り、腕前（AI_SKILL）を掛けて走る。1 周 50 秒ほどに合わせた
+ * （はじめは 67 秒で遅すぎ、次に 55 秒にした。そのあと「50 秒ぐらいに」と言われ、曲がる速さ 1.12 倍・
+ * ブレーキ 19m/s²・加速 1.2 倍にした。表の上では 49.9 秒、実際に走ると少しだけ遅い）
  */
-const AI_CORNER = 1.0;
-const AI_BRAKE = 17;
+const AI_CORNER = 1.12;
+const AI_BRAKE = 19;
 const AI_SKILL = 1.0;
-const aiAccel = (v) => Math.max(2.6, 12.8 - v * 0.13);
+const aiAccel = (v) => Math.max(2.6, 12.8 * 1.2 - v * 0.13);
 
 function speedTable() {
   const n = Math.round(CIRCUIT_LENGTH);
@@ -209,7 +210,7 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
     // 腕前：離れすぎたら少し追いつく / 待つ
     const gap = wrapD(herProgress - playerProgress + (herS - ps) * 0);
     const lead = (herProgress - playerProgress);
-    // ふだんは 1 周 55 秒ほど。大きく離したときだけ少し待ち、離されたら少し追う
+    // ふだんは 1 周 50 秒ほど。大きく離したときだけ少し待ち、離されたら少し追う
     skill = THREE.MathUtils.clamp(AI_SKILL + (lead > 150 ? -0.05 : lead < -60 ? 0.03 : 0), 0.85, 1.03);
     let want = go ? table[Math.floor(herS) % table.length] * skill : 0;
     // 走る線：先のカーブの内側へ
@@ -224,11 +225,81 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
     }
     herLat += THREE.MathUtils.clamp(lineLat - herLat, -2.2 * dt, 2.2 * dt);
     const acc = aiAccel(herV);
-    herV += THREE.MathUtils.clamp(want - herV, -13 * dt, acc * dt);
+    herV += THREE.MathUtils.clamp(want - herV, -(AI_BRAKE + 2) * dt, acc * dt);
     herS = (herS + herV * dt) % CIRCUIT_LENGTH;
     poseHer(THREE.MathUtils.clamp(-k * 18, -1, 1));
     for (const w of her.wheels) w.spin.rotation.x += (herV / GT3.wheelRadius) * dt;
     void gap;
+  }
+
+  /**
+   * 女の子の車とプレイヤーの車の当たり判定（前は無く、すり抜けられた）。
+   * 女の子の車の向きで見た、プレイヤーの車の前後・横のずれで、2 台の箱（長さ 4.7m・幅 2.1m）の重なりを見る。
+   * 重なったら、重なりの浅いほうの向きへ押し戻す：
+   *   - 前後（追突）：押し戻し、速さを分け合う（同じ重さ・はね返り 0.3）。追突された側は前へ押される
+   *   - 横（幅寄せ）：横へ押し戻し、少しだけ遅くする
+   * 押し戻しは、プレイヤーの車の位置と、女の子の車の s / 横の位置の両方に半分ずつ
+   */
+  const CAR_L = 4.6;
+  const CAR_W = 2.0;
+  let bumpSaidAt = -99;
+  const rel = new THREE.Vector3();
+  function collide() {
+    const hp = her.root.position;
+    const pp = playerCar.group.position;
+    const hy = her.root.rotation.y;
+    const fx = Math.sin(hy);
+    const fz = Math.cos(hy);
+    rel.set(pp.x - hp.x, 0, pp.z - hp.z);
+    const along = rel.x * fx + rel.z * fz;       // + ならプレイヤーが前
+    const side = rel.x * fz - rel.z * fx;        // 女の子の車から見た横（+ は女の子の左）
+    if (Math.abs(pp.y - hp.y) > 2) return false;
+    // 向きが違うほど、横に長くなる（横を向いた車に当たったとき）
+    const dy = Math.atan2(Math.sin(playerCar.state.yaw - hy), Math.cos(playerCar.state.yaw - hy));
+    const c = Math.abs(Math.cos(dy));
+    const sn = Math.abs(Math.sin(dy));
+    const reachL = CAR_L / 2 + (CAR_L / 2) * c + (CAR_W / 2) * sn;
+    const reachW = CAR_W / 2 + (CAR_W / 2) * c + (CAR_L / 2) * sn;
+    const pl = reachL - Math.abs(along);
+    const pw = reachW - Math.abs(side);
+    if (pl <= 0 || pw <= 0) return false;
+    // プレイヤーの速さを、女の子の車の前向きに直したもの
+    const vp = playerCar.state.speed * Math.cos(dy);
+    let hard = 0;
+    if (pl < pw) {
+      const dir = Math.sign(along) || 1;
+      // 押し戻す（半分ずつ）
+      pp.x += fx * dir * pl * 0.5;
+      pp.z += fz * dir * pl * 0.5;
+      herS = (herS - dir * pl * 0.5 + CIRCUIT_LENGTH) % CIRCUIT_LENGTH;
+      // 近づいているときだけ、速さを分け合う
+      const closing = dir > 0 ? herV - vp : vp - herV;
+      if (closing > 0) {
+        const e = 0.3;
+        const mid = (herV + vp) / 2;
+        const newHer = mid - (dir > 0 ? 1 : -1) * e * closing / 2;
+        const newP = mid + (dir > 0 ? 1 : -1) * e * closing / 2;
+        herV = Math.max(0, newHer);
+        playerCar.state.speed = Math.max(playerCar.state.reverse ? -8 : 0, newP / Math.max(0.3, Math.cos(dy)));
+        hard = closing;
+      }
+    } else {
+      const dir = Math.sign(side) || 1;
+      // 横へ押し戻す（女の子の車の横の向き = (fz, -fx)）
+      pp.x += fz * dir * pw * 0.6;
+      pp.z += -fx * dir * pw * 0.6;
+      herLat -= dir * pw * 0.4;
+      herLat = THREE.MathUtils.clamp(herLat, -CIRCUIT.width / 2 + 1.1, CIRCUIT.width / 2 - 1.1);
+      playerCar.state.speed *= 0.985;
+      herV *= 0.985;
+      hard = Math.abs(vp - herV) * 0.3 + 1;
+    }
+    poseHer(0);
+    if (hard > 2.5 && clock - bumpSaidAt > 5) {
+      bumpSaidAt = clock;
+      voice?.say('gt3Bump');
+    }
+    return true;
   }
 
   function progress(prevS, s) { return wrapD(s - prevS); }
@@ -258,6 +329,7 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
     timer += dt;
     const go = state === 'race' || state === 'done' || state === 'free';
     driveHer(dt, go);
+    collide();
     sitInCar();
     const ps = playerCar.state.s;
     playerProgress += progress(playerPrevS, ps);

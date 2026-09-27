@@ -3,7 +3,7 @@ import { ROOM } from './room.js';
 import { gardenPath } from './catchball.js';
 import { GT3_SEAT } from './gt3.js';
 import { F40_PARK } from './roaddata.js';
-import { LOOP_OFS } from './road.js';
+import { LOOP_OFS, RAMP_OFS } from './road.js';
 
 /**
  * F40 ふうの車でドライブ（女の子の側）。プレイヤーがガレージの車の運転席に座ると、女の子はしていた遊びをやめて
@@ -24,7 +24,8 @@ const RUN = 2.2;
 const GET_IN = 1.2;
 const SEAT_TOP = 0.42;
 const GARDEN_EAST = new THREE.Vector2(5.6, -4.9);
-const TO_GARAGE = [new THREE.Vector2(8.5, -3.2), new THREE.Vector2(11, 2.3), new THREE.Vector2(17.6, 2.6), new THREE.Vector2(19.0, 4.95)];
+// 家の東のビリヤードの部屋（x 8.84 まで）の北東の角の外を回る
+const TO_GARAGE = [new THREE.Vector2(9.8, -3.4), new THREE.Vector2(11, 2.3), new THREE.Vector2(17.6, 2.6), new THREE.Vector2(19.0, 4.95)];
 
 export function createF40Game({ character, car, voice = null, playerHead = null, isNight = () => false }) {
   const body = character.body;
@@ -135,10 +136,13 @@ export function createF40Game({ character, car, voice = null, playerHead = null,
   function talk(dt) {
     const v = car.speed * 3.6;
     const p = car.group.position;
-    const onLoop = car.state.s >= LOOP_OFS;
+    const onLoop = car.state.s >= LOOP_OFS && car.state.s < RAMP_OFS;
+    const onRamp = car.state.s >= RAMP_OFS;
     for (const k of Object.keys(cool)) cool[k] -= dt;
     if (!said.out && Math.hypot(p.x - F40_PARK.x, p.z - F40_PARK.z) > 8) { said.out = true; say('f40Start'); return; }
     if (!said.hwy && onLoop) { said.hwy = true; say(isNight() ? 'f40Night' : 'f40Highway'); body.smile(2, 1); return; }
+    // ループ橋（ガレージへ戻る出口）をぐるっと回るとき
+    if (onRamp && !(cool.ramp > 0) && Math.abs(car.state.steer) > 0.25) { cool.ramp = 60; say('f40Ramp'); body.smile(2, 1); return; }
     if (v > 200 && !(cool.vfast > 0)) { cool.vfast = 40; say('f40VeryFast'); return; }
     if (v > 120 && !(cool.fast > 0)) { cool.fast = 60; say('f40Fast'); body.smile(2, 1); return; }
     if (onLoop && !said.sea && p.z < -200) { said.sea = true; say('f40Sea'); return; }

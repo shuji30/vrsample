@@ -140,8 +140,9 @@ export function createBeach() {
     const g = new THREE.Group();
     g.position.set(x, y, z);
     g.rotation.y = yaw;
-    const post = shade(new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.4, 0.08), darkWood));
-    post.position.y = 0.7;
+    const post = shade(new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.5, 0.08), darkWood));
+    // 支柱は板の後ろへ（前は板の真ん中を突き抜けて、表示の面に棒が見えていた）
+    post.position.set(0, 0.75, -0.06);
     g.add(post);
     const board = shade(new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.46, 0.04), wood));
     board.position.y = 1.35;

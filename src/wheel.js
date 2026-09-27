@@ -203,6 +203,34 @@ export function createWheelInput() {
       }
     } catch { /* ボタンから */ }
   }
+  /**
+   * つなぎ直す（車に乗ったとき・VR で H を押したとき）。HID でつないだ機器は、開いたままでも一度閉じてから
+   * 開き直す（開いたままでも入力が届かなくなっていることがあり、reopenHid は開いていれば何もしないため）。
+   * Gamepad API のハンコンは、ブラウザの決まりでページからは開き直せないので、見えているかだけ返す
+   * @returns {Promise<{ hid: number, devices: HIDDevice[], visible: boolean }>} 開き直した HID の数と機器、ハンドルの機器が見えているか
+   */
+  async function reconnect() {
+    let hid = 0;
+    const devices = [];
+    for (const pad of hidPads.slice()) {
+      const d = pad.device;
+      if (!d) continue;
+      try {
+        if (d.opened) await d.close();
+        await d.open();
+        hid++;
+        devices.push(d);
+      } catch {
+        // 開き直せなかった（抜かれたなど）。一覧から外し、あとで挿し直されたら connect で戻る
+        hidPads.splice(hidPads.indexOf(pad), 1);
+      }
+    }
+    await reopenHid();
+    // 押したままに見えていたボタンを忘れる（切れているあいだに離したボタンで、キーが押されたままにならないように）
+    lastPressed.clear();
+    const want = config.steer?.id;
+    return { hid, devices, visible: want ? Boolean(byId(want)) : pads().some(isSimDevice) };
+  }
   reopenHid();
   if (hidSupported) navigator.hid.addEventListener?.('connect', () => { reopenHid(); });
   /** ゲームパッドでない入力機器（ハンコン・ペダル・シフターなど） */
@@ -310,7 +338,7 @@ export function createWheelInput() {
 
   // --- ハンコンのボタン ------------------------------------------------------------
   // ハンコンのボタンを、キー（E 乗る / 降りる、C 視点、H 設定、Q AT / MT）に割り当てる。
-  // 設定の画面で「覚える」を押してから、使いたいボタンを押す。
+  // 設定の画面で、役割の名前のボタン（乗る / 降りる など）を押してから、使いたいボタンを押す。
   // シフトアップ / ダウン（GT3 のパドル）も割り当てられる。Logitech（G29 / G920 / G923）は、はじめから
   // 右のパドル（ボタン 4）がアップ、左のパドル（ボタン 5）がダウン
   const BUTTON_ACTIONS = [['KeyE', 'e', '乗る / 降りる'], ['KeyC', 'c', '視点（VR は目線の合わせ直し）'], ['KeyH', 'h', '設定の画面'], ['Space', ' ', 'ハンドブレーキ'], ['KeyX', 'x', 'シフトアップ'], ['KeyZ', 'z', 'シフトダウン'], ['KeyQ', 'q', 'AT / MT 切り替え']];
@@ -558,7 +586,17 @@ export function createWheelInput() {
       : `設定はこのブラウザに自動で保存されます${lastSaved ? `（${new Date(lastSaved).toLocaleTimeString()} に保存）` : ''}${importMessage ? `　${importMessage}` : ''}`;
     for (const el of panel.querySelectorAll('[data-btn]')) {
       const m = config.buttons?.[el.dataset.btn];
-      el.textContent = learning === el.dataset.btn ? 'ボタンを押してください…' : m ? `${short(m.id)} のボタン ${m.index}` : '未設定';
+      el.textContent = learning === el.dataset.btn ? 'ハンコンのボタンを押してください…' : m ? `${short(m.id)} のボタン ${m.index}` : '未設定';
+      el.style.color = learning === el.dataset.btn ? '#ffd28a' : '';
+    }
+    // 覚えるのを待っているボタンは、色を変える
+    for (const el of panel.querySelectorAll('[data-learn]')) {
+      const on = learning === el.dataset.learn;
+      if (el.dataset.on !== String(on)) {
+        el.dataset.on = String(on);
+        el.style.background = on ? '#ffd28a' : '';
+        el.style.color = on ? '#222' : '';
+      }
     }
     const stepEl = panel.querySelector('[data-step]');
     stepEl.textContent = wizard ? STEPS[wizard.step] : '';
@@ -639,8 +677,10 @@ export function createWheelInput() {
         ${['steer', ...PEDAL_ROLES].map((role) => `<div>${ROLE_NAMES[role]}：<select data-assign="${role}" style="max-width:320px"></select>
           ${role === 'steer' ? '<button data-flip="steer">左右を反転</button>'
             : `<button data-record="${role}:rest">離した値を記録</button><button data-record="${role}:full">踏みきった値を記録</button><button data-flip="${role}">反転</button>`}</div>`).join('')}
-        <b>ハンコンのボタン</b>（「覚える」を押してから、使いたいボタンを押す）<br>
-        ${BUTTON_ACTIONS.map(([code, , label]) => `${label}：<span data-btn="${code}"></span> <button data-learn="${code}">覚える</button>`).join('　')}<br>
+        <b>ハンコンのボタン</b>（下の名前のボタンを押してから、ハンコンの使いたいボタンを押す。もう一度押すとやめる）<br>
+        <div style="display:grid;grid-template-columns:max-content 1fr;gap:3px 10px;align-items:center;margin:3px 0 6px">
+          ${BUTTON_ACTIONS.map(([code, , label]) => `<button data-learn="${code}" style="text-align:left">${label}</button><span data-btn="${code}"></span>`).join('')}
+        </div>
         <small>ペダルが一覧に出ないとき：一度踏んでみる。それでも出なければ</small>
         <button data-hid>HID で直接つなぐ</button> <small data-hidstatus></small><br>
         <button data-inputs>入力機器の情報を書き出す</button><br>
@@ -661,7 +701,7 @@ export function createWheelInput() {
       if (el.dataset?.record) { const [role, which] = el.dataset.record.split(':'); record(role, which); }
       if (el.dataset?.flip) flip(el.dataset.flip);
       if (el.hasAttribute?.('data-hid')) connectHid();
-      if (el.dataset?.learn) learning = el.dataset.learn;
+      if (el.dataset?.learn) learning = learning === el.dataset.learn ? null : el.dataset.learn;
       if (el.hasAttribute?.('data-export')) {
         const dump = panel.querySelector('[data-inputdump]');
         dump.value = exportSettings();
@@ -723,6 +763,7 @@ export function createWheelInput() {
   }
   return {
     refresh,
+    reconnect,
     read,
     readPad,
     pollButtons,

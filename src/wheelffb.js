@@ -460,6 +460,24 @@ export function createWheelFFB() {
   return {
     /** 乗り物に乗ったときなど：切れていれば、前に選んだ機器をボタンなしで開き直す */
     refresh() { return device?.opened ? Promise.resolve(true) : reconnect(); },
+    /**
+     * 開いていても、一度閉じてから前に選んだ機器を開き直す（車に乗ったとき・VR で H を押したとき）。
+     * 開いたままでも力が届かなくなっていることがあるため。FFB を一度も有効にしていなければ何もしない
+     */
+    async forceReconnect(fresh = []) {
+      if (!supported) return false;
+      // 入力の側（wheel.js）がいま開き直したのと同じ機器なら、閉じずに FFB だけ始め直す（CAMMUS などの DD は、
+      // 入力と FFB が同じ HID の機器。両方から閉じ・開きすると取り合いになる）
+      if (device && fresh.includes(device)) {
+        release();
+        try { await open(device); return true; } catch { return false; }
+      }
+      if (device?.opened) {
+        release();
+        try { await device.close(); } catch { /* 開き直しで分かる */ }
+      }
+      return reconnect();
+    },
     supported,
     connect,
     update,

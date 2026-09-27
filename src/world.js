@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { createTextures } from './textures.js';
-import { createRoom, ROOM } from './room.js';
+import { createRoom, ROOM, ANNEX, EAST_DOOR } from './room.js';
+import { createBilliards, annexBlocks, tableBlocks, HOUSE_EAST } from './billiards.js';
+import { createBilliardGame } from './billiardgame.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
 import { createKart, gridSlot } from './kart.js';
@@ -34,6 +36,7 @@ import { createCircuit } from './circuit.js';
 import { createGT3 } from './gt3.js';
 import { createGT3Race } from './gt3race.js';
 import { createCorgi } from './corgi.js';
+import { createBoomerang } from './boomerang.js';
 import { createFireworks } from './fireworks.js';
 import { createBeach, inBeach, beachGround, BEACH_AREA, STAIRS_TOP_AREA } from './beach.js';
 import { createBeachGame } from './beachgame.js';
@@ -46,6 +49,7 @@ import { createSeatGame } from './seatgame.js';
 import { createCruiser, onPier, pierDeckY, PIER } from './cruiser.js';
 import { createCruiserGame } from './cruisergame.js';
 import { createJetski, seaBlocked } from './jetski.js';
+import { createDolphins } from './dolphins.js';
 import { createJetskiGame } from './jetskigame.js';
 import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
 import { createCessnaGame } from './cessnagame.js';
@@ -121,6 +125,8 @@ export function createWorld(renderer, scene, {
   const tex = createTextures(renderer, { quality: textureQuality });
 
   const room = createRoom(scene, tex);
+  // 本の部屋の東へ建て増ししたビリヤードの部屋と、台・球
+  const billiards = createBilliards({ scene, tex });
   const park = createPark(scene, tex);
 
   let lighting = null;
@@ -203,6 +209,16 @@ export function createWorld(renderer, scene, {
     grabbables.push(ball);
   }
   const tennisBalls = grabbables.filter((prop) => prop.userData.tennis);
+
+  // 食卓の手前（ソファー側）にブーメラン。投げると左へ曲がって飛び、落ちたらこむぎが拾って持ってくる
+  const boomerang = createBoomerang({
+    home: new THREE.Vector3(TABLE.center.x - 0.24, TABLE.top + 0.009, TABLE.center.z + 0.25),
+    homeYaw: 0.6,
+    clamp: (x, z, inset, from) => clampToBounds(x, z, inset, from),
+    groundHeight: (x, z) => groundHeight(x, z),
+  });
+  scene.add(boomerang.mesh);
+  grabbables.push(boomerang.mesh);
 
   // カート 2 台。女の子のカートは速め（HER_KART_PERF）。スタートの枠の前（プレイヤー、青）と後ろ（女の子、ピンク）に置く
   const karts = {
@@ -362,10 +378,11 @@ export function createWorld(renderer, scene, {
     // 女の子がサーキットにいるあいだは、ついていかない
     girlPosition: () => (character.body.loaded && !gt3Race?.active && !beachGame?.active ? character.body.position : null),
     ball: furniture.ball,
+    boomerang,
     voice,
     areas: [
       { minX: -5.5, maxX: 5.5, minZ: -13, maxZ: -4.5 },     // 庭
-      { minX: 6.5, maxX: 21, minZ: -5, maxZ: 4 },           // 家の右（GT3 の所）
+      { minX: HOUSE_EAST + 0.8, maxX: 21, minZ: -5, maxZ: 4 }, // 家の右（GT3 の所。ビリヤードの部屋より東）
       { minX: -16, maxX: -6.5, minZ: -5.5, maxZ: 4.5 },     // 家の左（メリーゴーランドのまわり）
       { minX: -16.5, maxX: -6, minZ: -13.5, maxZ: -6 },     // 遊び場
       { minX: -30, maxX: -17.5, minZ: -8, maxZ: -6 },       // 池のほとり
@@ -450,6 +467,10 @@ export function createWorld(renderer, scene, {
   };
   const jetski = createJetski({ blocked: (x, z) => cruiserBlocks(x, z) || road.pierBlocked(x, z) });
   scene.add(jetski.group);
+  // 海のイルカ（4 頭）。周遊の道に沿って泳ぎ、ときどき跳ぶ。走っている船の横に寄ってきて並んで泳ぐ
+  const dolphins = createDolphins({ count: 4, blocked: (x, z) => seaBlocked(x, z) || road.pierBlocked(x, z) });
+  scene.add(dolphins.group);
+  cruiserGame?.setDolphins(dolphins);
   let jetskiRidden = false;
   let jetskiWait = 0;
   const jetskiGame = camera ? createJetskiGame({ character, jetski, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
@@ -509,6 +530,15 @@ export function createWorld(renderer, scene, {
   const golfGame = camera ? createGolfGame({ character, golf, voice, camera, playerHead: (out) => camera.getWorldPosition(out) }) : null;
   if (golfGame) {
     golfGame.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
+    };
+  }
+  // ビリヤード：ビリヤードの部屋に入ると、女の子が来て交互に突く
+  const billiardEye = new THREE.Vector3();
+  const billiardGame = camera ? createBilliardGame({ character, billiards, voice, scene, camera, playerHead: (out) => camera.getWorldPosition(out) }) : null;
+  if (billiardGame) {
+    billiardGame.onFinish = () => {
       character.watch(furniture.ball);
       catchGame?.resume();
     };
@@ -573,7 +603,9 @@ export function createWorld(renderer, scene, {
   let horseGame = null;
   let horseRidden = false;
   // 馬は馬場の外（庭・公園・丘の上）へも出られる。家の中（と掃き出し窓の通り道）には入らない
-  const horseBlocked = (x, z) => x > ROOM.minX - 0.4 && x < ROOM.maxX + 0.4 && z > ROOM.minZ - 1.4 && z < ROOM.maxZ + 0.4;
+  // 家（本の部屋とビリヤードの部屋）には入らない
+  const horseBlocked = (x, z) => (x > ROOM.minX - 0.4 && x < ROOM.maxX + 0.4 && z > ROOM.minZ - 1.4 && z < ROOM.maxZ + 0.4)
+    || (x > ROOM.maxX && x < HOUSE_EAST + 0.4 && z > ANNEX.minZ - 0.6 && z < ANNEX.maxZ + 0.6);
   const horse = createHorse({ paddock: PADDOCK, park: HORSE_PARK, gate: GATE, ground: (x, z) => groundHeight(x, z), blocked: horseBlocked, clampTo: (x, z, from) => clampToBounds(x, z, 0.25, from), onGait: (g, prev) => horseGame?.onGait(g, prev) });
   scene.add(horse.group, horse.reins, horse.leadRope);
   horseGame = camera ? createHorseGame({ character, horse, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
@@ -632,6 +664,9 @@ export function createWorld(renderer, scene, {
   const THROUGH = 1.0;
   const regions = [
     { minX: ROOM.minX + MARGIN, maxX: ROOM.maxX - MARGIN, minZ: ROOM.minZ + MARGIN, maxZ: ROOM.maxZ - MARGIN },
+    // ビリヤードの部屋と、本の部屋の東の壁の出入り口（両方の部屋へ 1m ずつ食い込ませる）。台は clampToBounds で外す
+    { minX: ANNEX.minX + MARGIN, maxX: ANNEX.maxX - MARGIN, minZ: ANNEX.minZ + MARGIN, maxZ: ANNEX.maxZ - MARGIN },
+    { minX: ROOM.maxX - MARGIN - THROUGH, maxX: ANNEX.minX + MARGIN + THROUGH, minZ: EAST_DOOR.z - EAST_DOOR.width / 2 + 0.18, maxZ: EAST_DOOR.z + EAST_DOOR.width / 2 - 0.18 },
     { minX: door.x - door.width / 2 + 0.18, maxX: door.x + door.width / 2 - 0.18, minZ: outerZ - THROUGH, maxZ: ROOM.minZ + MARGIN + THROUGH },
     // 庭は手前の防球ネットのすぐ前まで
     { minX: GARDEN.minX, maxX: GARDEN.maxX, minZ: COURT_BACKSTOP.z + 0.05, maxZ: outerZ - 0.2 },
@@ -707,7 +742,9 @@ export function createWorld(renderer, scene, {
     const gt3Blocks = (x, z) => !gt3.state.atCircuit && Math.abs(x - GT3_PARK.x) < 2.5 + inset && Math.abs(z - GT3_PARK.z) < 1.2 + inset;
     // ガレージの壁と、ガレージに止めてある F40（走りに出ているあいだは、その場所を歩ける）
     const f40Blocks = (x, z) => f40AtHome() && Math.abs(x - F40_PARK.x) < 2.35 + inset && Math.abs(z - F40_PARK.z) < 1.05 + inset;
-    const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || ferrisBlocks(x, z, inset) || gt3Blocks(x, z) || road.garageBlocks(x, z, inset) || f40Blocks(x, z);
+    // ビリヤードの部屋の外壁と、台
+    const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || ferrisBlocks(x, z, inset) || gt3Blocks(x, z) || road.garageBlocks(x, z, inset) || f40Blocks(x, z)
+      || annexBlocks(x, z, inset) || tableBlocks(x, z, inset);
     if (solid(p.x, p.z)) {
       if (!from || solid(from.x, from.z)) return p;
       if (!solid(p.x, from.z)) return { x: p.x, z: from.z };
@@ -768,6 +805,7 @@ export function createWorld(renderer, scene, {
     else prop.rotation.set(0, 0, 0);
     data.velocity.set(0, 0, 0);
     data.spin.set(0, 0, 0);
+    data.onReset?.();
   }
 
   // 影を落とす範囲。プレイヤーがテニスコートへ出たらコートへ寄せ、庭へ
@@ -1025,6 +1063,18 @@ export function createWorld(renderer, scene, {
         ferrisGame.start();
       }
     }
+    // ビリヤード：ビリヤードの部屋に入ったら（ほかの遊びをしていなければ）
+    if (billiardGame) {
+      if (camera) camera.getWorldPosition(billiardEye);
+      billiardGame.playerHere = billiardGame.inAnnex(billiardEye.x, billiardEye.z);
+      if (billiardGame.wanted && !billiardGame.active && !seatGame?.active && !golfGame?.active && !beachGame?.active && !kartGame?.active && !bikeGame?.active) {
+        if (tennisGame?.active) tennisGame.stop();
+        else {
+          catchGame?.suspend();
+          billiardGame.start();
+        }
+      }
+    }
     // パットゴルフ：芝地に入ったら（ほかの遊びをしていなければ）
     if (golfGame) {
       if (camera) camera.getWorldPosition(golfEye);
@@ -1067,6 +1117,7 @@ export function createWorld(renderer, scene, {
     else if (ferrisGame?.active) ferrisGame.update(dt);
     else if (coasterGame?.active) coasterGame.update(dt);
     else if (golfGame?.active) golfGame.update(dt);
+    else if (billiardGame?.active) billiardGame.update(dt);
     else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
     }
@@ -1077,6 +1128,7 @@ export function createWorld(renderer, scene, {
     fireworks.update(dt, camera);
     park.hill.update(dt);
     // こむぎ。走りまわりはじめたら、近くの女の子が声をあげる
+    boomerang.update(dt);
     if (corgi) {
       corgi.update(dt);
       if (corgi.mode !== corgiMode && corgi.mode === 'zoomies' && !gt3Race?.active
@@ -1102,6 +1154,12 @@ export function createWorld(renderer, scene, {
     // クルーザー：乗っていないときは桟橋につないでおく
     if (!cruiserRidden) cruiser.idle(dt);
     if (!jetskiRidden) jetski.idle(dt);
+    // ビリヤードの球
+    billiards.step(dt);
+    // イルカ：乗っている船（クルーザー・ジェットスキー）の横へ寄ってくる
+    const boatNow = cruiserRidden ? { x: cruiser.boat.position.x, z: cruiser.boat.position.z, yaw: cruiser.state.yaw, speed: cruiser.speed }
+      : jetskiRidden ? { x: jetski.position.x, z: jetski.position.z, yaw: jetski.state.yaw, speed: jetski.speed } : null;
+    dolphins.update(dt, boatNow);
     // セスナ：乗ったのに女の子がいない（飛行場に来ていない）ときは、3 秒で動けるようにする
     cessnaWait = cessnaRidden && cessna.hold && !cessnaGame?.active ? cessnaWait + dt : 0;
     if (cessnaWait > 3) cessna.hold = false;
@@ -1134,7 +1192,8 @@ export function createWorld(renderer, scene, {
     // --- 小物の簡易物理 ----------------------------------------------------
     for (const prop of grabbables) {
       const data = prop.userData;
-      if (data.held || data.inBasket) continue;
+      // 飛んでいるブーメランと、こむぎがくわえているブーメランは boomerang.js / corgi.js が動かす
+      if (data.held || data.inBasket || data.flying || data.carried) continue;
 
       const prevY = prop.position.y;
       const prevX = prop.position.x;
@@ -1270,7 +1329,11 @@ export function createWorld(renderer, scene, {
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
   return {
+    billiardGame,
+    billiards,
+    dolphins,
     grabbables,
+    boomerang,
     interactables,
     floor: room.floor,
     /** 地面の高さ（カートコースの起伏。ほかは 0） */

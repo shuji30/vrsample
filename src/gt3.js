@@ -94,9 +94,32 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   if (style === 'f40') {
     // F40 ふう（赤い、低いくさび形。前は低く、ボンネットの上にリトラクタブルのふた、後ろは全幅の大きなウイング、
     // エンジンの上はすだれ、ドアに空気の取り入れ口、丸いテール。社名・エンブレムは付けない）
-    const lower = shade(new THREE.Mesh(new RoundedBoxGeometry(2.0, 0.5, 4.45, 3, 0.2), paint));
-    lower.position.set(0, 0.46, -0.05);
-    body.add(lower);
+    // 車体の下半分。前は 1 つの箱で、車室まで詰まっていたので、助手席の女の子の脚・腰が埋まっていた。
+    // 車室（左右 ±0.86・前後 -1.2〜0.9）をくり抜き、前・後ろのかたまり、左右のサイドシル、床下の板、
+    // ダッシュボード（下は足もとの空き）に分けた。外から見た形（幅 2.0・高さ 0.21〜0.71・長さ 4.45）は同じ
+    const CAB = { x: 0.86, zBack: -1.2, zFront: 0.9 };
+    const LOW = { y0: 0.21, y1: 0.71, zBack: -2.275, zFront: 2.175 };
+    const lowH = LOW.y1 - LOW.y0;
+    const lowY = (LOW.y0 + LOW.y1) / 2;
+    const front = shade(new THREE.Mesh(new RoundedBoxGeometry(2.0, lowH, LOW.zFront - CAB.zFront, 3, 0.2), paint));
+    front.position.set(0, lowY, (LOW.zFront + CAB.zFront) / 2);
+    body.add(front);
+    const rear = shade(new THREE.Mesh(new RoundedBoxGeometry(2.0, lowH, CAB.zBack - LOW.zBack, 3, 0.2), paint));
+    rear.position.set(0, lowY, (CAB.zBack + LOW.zBack) / 2);
+    body.add(rear);
+    for (const side of [-1, 1]) {
+      // 前後のかたまりに 0.2 ずつ食い込ませて、角の丸みのすき間をふさぐ
+      const sill = shade(new THREE.Mesh(new RoundedBoxGeometry(1.0 - CAB.x, lowH, CAB.zFront - CAB.zBack + 0.4, 2, 0.06), paint));
+      sill.position.set(side * (1.0 + CAB.x) / 2, lowY, (CAB.zFront + CAB.zBack) / 2);
+      body.add(sill);
+    }
+    const pan = shade(new THREE.Mesh(new THREE.BoxGeometry(2 * CAB.x + 0.02, 0.1, CAB.zFront - CAB.zBack + 0.3), paint));
+    pan.position.set(0, LOW.y0 + 0.05, (CAB.zFront + CAB.zBack) / 2);
+    body.add(pan);
+    // ダッシュボード：車室の前の端の上のほう。下（床 0.35〜0.6）は足を伸ばせるように空ける
+    const dashboard = shade(new THREE.Mesh(new RoundedBoxGeometry(2 * CAB.x, 0.17, 0.34, 2, 0.05), carbon));
+    dashboard.position.set(0, 0.69, CAB.zFront - 0.15);
+    body.add(dashboard);
     const nose = shade(new THREE.Mesh(new RoundedBoxGeometry(1.94, 0.22, 1.35, 3, 0.1), paint));
     nose.position.set(0, 0.68, 1.45);
     nose.rotation.x = 0.13;
@@ -255,7 +278,8 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   steering.rotation.set(0.55, Math.PI, 0);
   const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 8, 24), carbon);
   steering.add(wheel);
-  const hub = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, 0.04), carbon);
+  // 真ん中の四角い部分（ハブ）。メーター（下の dash）をこの運転席側の面にはめ込む
+  const hub = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.108, 0.04), carbon);
   steering.add(hub);
   body.add(steering);
   // 車輪（前の 2 つはハンドルで切れる）
@@ -290,12 +314,12 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   dashCanvas.height = 128;
   const dashTex = new THREE.CanvasTexture(dashCanvas);
   dashTex.colorSpace = THREE.SRGBColorSpace;
-  const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.12), new THREE.MeshBasicMaterial({ map: dashTex, toneMapped: false }));
-  // 車の真ん中（センターコンソール）の上段。運転席から見た前の道の外で、ボンネットの線より下。
-  // ハンドルの奥に置くと、目の 6cm 下・85cm 先で道の真ん中が隠れ、下げるとハンドルの輪と車体に隠れた
-  dash.position.set(SEAT.x - 0.34, 0.945, 0.45);
-  body.add(dash);
-  dash.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
+  // ハンドルの真ん中の四角い部分（ハブ）の、運転席側の面にはめ込む（実車の GT3 のハンドルのように、ハンドルと一緒に回る）。
+  // 前は車の真ん中（センターコンソール）の上段にあった。ハブはもとから目と前の道のあいだにあるので、新たに道を隠さない。
+  // ハブの面（ローカル +Z）から 1mm 浮かせる（重なってちらつかないように）。F40 も同じ
+  const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.184, 0.092), new THREE.MeshBasicMaterial({ map: dashTex, toneMapped: false }));
+  dash.position.set(0, 0, 0.021);
+  steering.add(dash);
   // コースの地図（メーターの下）。VR でも目を少し左下へ向ければ見える
   const mapCanvas = document.createElement('canvas');
   mapCanvas.width = 256;
@@ -306,11 +330,47 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   mapTex.generateMipmaps = false;
   mapTex.minFilter = THREE.LinearFilter;
   const mapPlane = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.15), new THREE.MeshBasicMaterial({ map: mapTex, toneMapped: false }));
-  // その下（センターコンソールの下段）
-  mapPlane.position.set(SEAT.x - 0.36, 0.83, 0.41);
-  body.add(mapPlane);
-  mapPlane.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
-  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, headMat: lightMat, mapPlane, mapCanvas, mapTex, mirrorFrame };
+  // ダッシュボードの上に立てた GPS（カーナビ）ふう：黒い縁の箱と、ダッシュボードへの短い台。車の真ん中寄りに置き、
+  // 運転席の目のほうへ向ける（車の前を向いて +X が運転席の側）。ダッシュボードの上（車体の上面 0.81）に載せ、上の縁は運転席から見たボンネットの線より下
+  // （前の道を隠さない）。F40 は高速道路で地図を描かないので付けない
+  const eyeAt = new THREE.Vector3(SEAT.x, 1.12, SEAT.z - 0.05);
+  const unit = (x, y, z) => {
+    const g = new THREE.Group();
+    g.position.set(x, y, z);
+    body.add(g);
+    g.lookAt(eyeAt);
+    return g;
+  };
+  const gps = unit(SEAT.x - 0.6, 0.905, 0.42);
+  const gpsCase = new THREE.Mesh(new RoundedBoxGeometry(0.226, 0.172, 0.03, 2, 0.012), carbon);
+  gpsCase.position.z = -0.016;
+  gps.add(gpsCase);
+  mapPlane.position.set(0, 0, 0.0005);
+  gps.add(mapPlane);
+  const gpsStand = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.03, 0.08, 10), carbon);
+  gpsStand.position.set(0, -0.1, -0.025);
+  gps.add(gpsStand);
+  gps.visible = style !== 'f40';
+  // ラップタイマー（青い枠の表示器）。ハンドルと GPS のあいだのダッシュボードの上に（運転席から見てハンドルのすぐ右。
+  // ドア側に置くと、ハンドルの輪に隠れた）。createGT3 の update が描く
+  const lapCanvas = document.createElement('canvas');
+  lapCanvas.width = 256;
+  lapCanvas.height = 128;
+  const lapTex = new THREE.CanvasTexture(lapCanvas);
+  lapTex.colorSpace = THREE.SRGBColorSpace;
+  const timer = unit(SEAT.x - 0.39, 0.89, 0.42);
+  const timerCase = new THREE.Mesh(new RoundedBoxGeometry(0.172, 0.096, 0.03, 2, 0.01),
+    new THREE.MeshStandardMaterial({ color: 0x1f6fe6, emissive: 0x0b3fa0, emissiveIntensity: 0.35, roughness: 0.35, metalness: 0.3 }));
+  timerCase.position.z = -0.016;
+  timer.add(timerCase);
+  const lapScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.152, 0.076), new THREE.MeshBasicMaterial({ map: lapTex, toneMapped: false }));
+  lapScreen.position.z = 0.0005;
+  timer.add(lapScreen);
+  const timerStand = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), carbon);
+  timerStand.position.set(0, -0.066, -0.02);
+  timer.add(timerStand);
+  timer.visible = style !== 'f40';
+  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, headMat: lightMat, mapPlane, mapCanvas, mapTex, mirrorFrame, gps, lapTimer: timer, lapCanvas, lapTex };
 }
 
 /**
@@ -342,6 +402,9 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
   const circuitMap = createCircuitMap();
   let lastLateralAcc = 0;
   const hud = { lap: '', pos: '' };
+  /** ラップタイマー（gt3race.js から）。秒。null は未計測 */
+  const laps = { current: null, last: null, best: null };
+  let lapIn = 0;
 
   function place(x, z, yaw, y = 0) {
     group.position.set(x, y, z);
@@ -427,7 +490,7 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
     let a = (drive - drag - braking) / m;
 
     // 芝に出るとすべって遅くなる
-    const near = T.nearest(group.position.x, group.position.z, state.s);
+    const near = T.nearest(group.position.x, group.position.z, state.s, group.position.y);
     state.s = near.s;
     state.u = near.s / T.length;
     state.lateral = near.lateral;
@@ -452,7 +515,7 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
     group.position.z += Math.cos(state.yaw) * v * dt;
 
     // 防護壁（橋の上は、路面の縁の壁）
-    const after = T.nearest(group.position.x, group.position.z, state.s);
+    const after = T.nearest(group.position.x, group.position.z, state.s, group.position.y);
     const limit = T.limit(after);
     if (Math.abs(after.lateral) > limit) {
       const f = T.frame(after.s);
@@ -490,6 +553,8 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
     if (dashIn < 0) { drawDash(); dashIn = 0.1; }
     mapIn -= dt;
     if (mapIn < 0 && state.atCircuit && !road) { drawMap(); mapIn = 0.2; }
+    lapIn -= dt;
+    if (lapIn < 0 && model.lapTimer.visible) { drawLapTimer(); lapIn = 0.05; }
   }
 
   /** 車内のコースの地図。自分は青、ほかの車（レースの相手）は setMapCars で */
@@ -499,6 +564,32 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
     c.fillRect(0, 0, 256, 192);
     circuitMap.draw(c, 0, 0, 256, 192, [...mapCars, { s: state.s, color: '#3a8aff', me: true }]);
     model.mapTex.needsUpdate = true;
+  }
+
+  /** ラップタイマー：いまの周を大きく、下に前の周とベスト（液晶ふうの緑がかった白） */
+  const lapFmt = (t) => (t === null ? '-:--.--' : `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, '0')}`);
+  function drawLapTimer() {
+    const c = model.lapCanvas.getContext('2d');
+    c.fillStyle = '#060a10';
+    c.fillRect(0, 0, 256, 128);
+    c.fillStyle = '#7fb4ff';
+    c.font = 'bold 18px sans-serif';
+    c.textAlign = 'left';
+    c.fillText('LAP', 10, 22);
+    c.textAlign = 'right';
+    c.fillText(hud.lap, 246, 22);
+    c.fillStyle = '#e8fff0';
+    c.font = 'bold 50px monospace';
+    c.textAlign = 'center';
+    c.fillText(lapFmt(laps.current), 128, 74);
+    c.font = 'bold 15px monospace';
+    c.fillStyle = '#b8c8d8';
+    c.textAlign = 'left';
+    c.fillText(`LAST ${lapFmt(laps.last)}`, 8, 112);
+    c.textAlign = 'right';
+    c.fillStyle = '#ffd24a';
+    c.fillText(`BEST ${lapFmt(laps.best)}`, 250, 112);
+    model.lapTex.needsUpdate = true;
   }
 
   function drawDash() {
@@ -591,6 +682,11 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
     place,
     placeOnCircuit,
     parkAtHome,
+    /** 検証用：好きな所へ置く（道の上なら、その道の s も合わせる） */
+    debugPlace(x, z, yaw, y = 0) {
+      place(x, z, yaw, y);
+      if (road) state.s = road.nearest(x, z, null, y).s;
+    },
     update,
     /** 追いかける視点は、長い車なので遠めに */
     chaseBack: 7.5,
@@ -611,6 +707,8 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
     get locked() { return locked; },
     /** メーターの周回・順位（gt3race.js から） */
     setHud(lap, pos) { hud.lap = lap; hud.pos = pos; },
+    /** ラップタイマー（{ current, last, best }。秒、null は未計測） */
+    setLapTimes(t) { laps.current = t.current ?? null; laps.last = t.last ?? null; laps.best = t.best ?? null; },
     /** 地図に出すほかの車 [{ s, color }] */
     setMapCars(list) { mapCars = list ?? []; },
     /** コースの地図（PC の画面の表示でも同じものを使う） */

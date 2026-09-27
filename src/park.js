@@ -710,9 +710,11 @@ function createBackdrop(tex, seed = 11) {
         z: from.z + (to.z - from.z) * t + (rand() - 0.5) * 1.0,
         sx: size, sy: size * 0.8, ry: rand() * Math.PI,
       };
-      if (!onRoad(leaf.x, leaf.z)) leaves.push(leaf);
+      if (!onRoad(leaf.x, leaf.z) && !atStairs(leaf.x, leaf.z, size)) leaves.push(leaf);
     }
   }
+  /** 浜辺へ降りる階段の前（北の生け垣を横切る所）。しげみで道がふさがれていたので空ける（rand の並びは変えない） */
+  const atStairs = (x, z, size) => Math.abs(x - STAIRS.x) < STAIRS_GATE_HALF + 1.2 + size / 2 && z < -32.5 && z > -40.5;
 
   /** 木立を 1 辺ぶん並べる。 */
   function treeRow(from, to, count) {

@@ -128,7 +128,8 @@ export function createSeesawGame({ character, seesaw, voice = null }) {
         body.position.lerpVectors(from, seat, e);
         body.turnTowards(seesaw.girlYaw(), dt);
         if (k > 0.5) body.setYaw(seesaw.girlYaw());
-        body.setSeat(e, 'upright');
+        // 板をまたいで脚を開く（膝を閉じると、脚が板に埋まっていた）。スカートは腰に沿わせる
+        body.setSeat(e, 'upright', { skirt: true, straddle: true });
         // いちばん下では、足を地面に着ける（地面へめり込ませない）
         body.setFootFloor(0);
         if (k > 0.4) holdHandles();
@@ -139,7 +140,7 @@ export function createSeesawGame({ character, seesaw, voice = null }) {
         seatPoint(seat);
         body.position.copy(seat);
         body.setYaw(seesaw.girlYaw());
-        body.setSeat(1, 'upright');
+        body.setSeat(1, 'upright', { skirt: true, straddle: true });
         holdHandles();
         // 向かいのプレイヤー（の目の高さ）を見る
         seesaw.eye(gaze.position);
@@ -164,7 +165,7 @@ export function createSeesawGame({ character, seesaw, voice = null }) {
         seesaw.girlSide(side);
         side.y = 0;
         body.position.lerpVectors(from, side, e);
-        body.setSeat(1 - e, 'upright');
+        body.setSeat(1 - e, 'upright', { skirt: true, straddle: true });
         if (k > 0.5) { body.reachHands(null); body.setGrip(0); }
         if (k >= 1) { body.setSeat(0, 'upright'); body.position.y = 0; finish(); }
         break;

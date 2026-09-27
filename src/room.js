@@ -19,6 +19,21 @@ export const ROOM = {
   get maxZ() { return this.depth / 2; },
 };
 
+/**
+ * 東（+X）へ建て増ししたビリヤードの部屋（billiards.js が建てる）。x・z はワールド（室内の面）。
+ * 西は本の部屋の東の壁（その外面 x 3.14 から）で、そこに出入り口（EAST_DOOR）を開ける
+ */
+export const ANNEX = {
+  minX: 3.0 + 0.14,
+  maxX: 8.7,
+  minZ: -2.4,
+  maxZ: 3.3,
+  height: 2.7,
+  wall: 0.14,
+};
+/** 本の部屋の東の壁の出入り口（ソファの南。z はワールド） */
+export const EAST_DOOR = { z: 2.6, width: 1.1, head: 2.1 };
+
 /** 開口部。x は壁のローカル座標（壁の中心が 0）、y は床からの高さ。 */
 const OPENINGS = {
   // 正面（-Z）: 庭へ出る掃き出し窓。腰高の窓ではなく床まで開いているので、
@@ -28,6 +43,8 @@ const OPENINGS = {
   left: { x: 0.7, width: 1.8, sill: 0.42, head: 2.32 },
   // 背面（+Z）: ドア
   door: { x: -1.05, width: 0.92, sill: 0, head: 2.04 },
+  // 右（+X）: ビリヤードの部屋への出入り口（右の壁のローカル x はワールドの z）
+  east: { x: EAST_DOOR.z, width: EAST_DOOR.width, sill: 0, head: EAST_DOOR.head },
 };
 
 /**
@@ -119,7 +136,14 @@ function addBaseboard(group, material) {
     run(ROOM.width, [0, 0, ROOM.minZ + inset], 0);
   }
   run(ROOM.depth, [ROOM.minX + inset, 0, 0], Math.PI / 2);
-  run(ROOM.depth, [ROOM.maxX - inset, 0, 0], -Math.PI / 2);
+  // 右の壁は、ビリヤードの部屋への出入り口ぶんを空ける
+  {
+    const e = OPENINGS.east;
+    const z0 = e.x - e.width / 2;
+    const z1 = e.x + e.width / 2;
+    run(z0 - ROOM.minZ, [ROOM.maxX - inset, 0, (ROOM.minZ + z0) / 2], -Math.PI / 2);
+    run(ROOM.maxZ - z1, [ROOM.maxX - inset, 0, (z1 + ROOM.maxZ) / 2], -Math.PI / 2);
+  }
 
   // 背面はドアの開口ぶんを空ける（ドアは壁ローカル x = -1.05、+Z 壁は反転）
   const door = OPENINGS.door;
@@ -256,7 +280,7 @@ export function createRoom(scene, tex) {
     front: [OPENINGS.front],
     back: [OPENINGS.door],
     left: [OPENINGS.left],
-    right: [],
+    right: [OPENINGS.east],
   };
 
   for (const [side, openings] of Object.entries(walls)) {

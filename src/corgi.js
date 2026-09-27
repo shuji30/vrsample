@@ -13,6 +13,9 @@ import * as THREE from 'three';
  *   greet   … プレイヤーが近くに来ると、寄ってきて前に座り、お尻を振って見上げる
  *   follow  … ときどき女の子のあとをついて歩く
  *   happy   … なでられた（VR は手を頭に近づける、PC はクリック）。お尻を振って「ワン！」
+ *   fetch   … 投げたブーメラン（boomerang.js）が地面に落ちたら、吠えて走っていき、くわえる
+ *   bring   … くわえたブーメランを、プレイヤーの 1m 前まで持ってきて放し、座ってお尻を振る
+ *             （行けない所に落ちて 25 秒たっても届かなければ、あきらめる。ブーメランは食卓へ戻る）
  * 歩ける範囲（world.js の clampToBounds）の中だけを動き、池・柵・建物は避ける（ぶつかったら行き先を替える）。
  */
 
@@ -143,9 +146,10 @@ function createModel() {
  * @param {() => THREE.Vector3} o.playerPosition 目の位置（カメラ）
  * @param {() => THREE.Vector3|null} o.girlPosition
  * @param {THREE.Object3D} o.ball キャッチボールの球
+ * @param {object} [o.boomerang] ブーメラン（boomerang.js）
  * @param {() => THREE.Object3D[]} o.hands VR の手（なでる）
  */
-export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPosition, girlPosition, ball, voice = null, areas }) {
+export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPosition, girlPosition, ball, boomerang = null, voice = null, areas }) {
   let hands = () => [];
   const model = createModel();
   const group = new THREE.Group();
@@ -183,6 +187,10 @@ export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPositi
   let happyFor = 0;
   const tmp = new THREE.Vector3();
   const headWorld = new THREE.Vector3();
+  const MOUTH = new THREE.Vector3(0, -0.055, 0.15);   // 頭（head）から見た口先
+  const mouthWorld = new THREE.Vector3();
+  const carryEuler = new THREE.Euler();
+  let fetches = 0;
 
   const angleDelta = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
   const rand = (a, b) => a + Math.random() * (b - a);
@@ -254,7 +262,14 @@ export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPositi
     const playerNear = Math.hypot(player.x - pos.x, player.z - pos.z) < 4.5;
 
     // 何をするか（強いものから）
-    if (mode !== 'happy' && mode !== 'chase' && ballFast && ball.position.distanceTo(pos) < 16 && Math.random() < 0.02) {
+    const busy = mode === 'fetch' || mode === 'bring';
+    if (!busy && boomerang?.landed && boomerang.mesh.position.distanceTo(pos) < 45
+      && Math.hypot(player.x - boomerang.mesh.position.x, player.z - boomerang.mesh.position.z) < 45) {
+      setMode('fetch');
+      lastBark = -100;
+      bark(2);
+      voice?.say('corgiFetch', { chance: 0.7 });
+    } else if (!busy && mode !== 'happy' && mode !== 'chase' && ballFast && ball.position.distanceTo(pos) < 16 && Math.random() < 0.02) {
       setMode('chase');
       bark(2);
     } else if ((mode === 'wander' || mode === 'follow') && playerNear && clock - lastGreet > 35) {
@@ -334,6 +349,44 @@ export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPositi
         if (modeTime > 25) { setMode('wander'); pickWanderTarget(); }
         break;
       }
+      case 'fetch': {
+        // 落ちたブーメランへ走っていき、口先が届いたらくわえる
+        if (!boomerang.landed) { setMode('wander'); pickWanderTarget(); break; }
+        const b = boomerang.mesh.position;
+        const d = steerTo(b.x, b.z, dt, true);
+        const facing = Math.abs(angleDelta(Math.atan2(b.x - pos.x, b.z - pos.z), yaw));
+        wantSpeed = d > 2 ? 3.8 : d > 0.5 ? 1.4 : 0;
+        if (d < 0.55 && facing < 0.6) {
+          boomerang.carry(true);
+          fetches++;
+          setMode('bring');
+          break;
+        }
+        // 届かない所（柵の向こうなど）：あきらめて、ブーメランは食卓へ戻す
+        if (modeTime > 25) { boomerang.reset(); setMode('wander'); pose = 'sit'; poseFor = 2; }
+        break;
+      }
+      case 'bring': {
+        if (!boomerang.carried) { setMode('happy'); happyFor = 2; break; }   // プレイヤーが口から取った
+        const fx = player.x - pos.x;
+        const fz = player.z - pos.z;
+        const d = Math.hypot(fx, fz);
+        if (d > 1.25 && modeTime < 40) {
+          steerTo(player.x - (fx / d) * 1.0, player.z - (fz / d) * 1.0, dt, true);
+          wantSpeed = d > 3 ? 3.2 : 1.3;
+        } else {
+          // 放す（口先の真下へ落ちて、ふつうの小物として寝る）
+          boomerang.carry(false);
+          boomerang.delivered();
+          setMode('happy');
+          happyFor = 3;
+          wag = 1;
+          lastBark = -100;
+          bark(2);
+          voice?.say('corgiBring', { chance: 0.8 });
+        }
+        break;
+      }
       case 'happy': {
         pose = 'sit';
         wag = 1;
@@ -377,6 +430,19 @@ export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPositi
     group.position.copy(pos);
     group.rotation.y = yaw;
     animate(dt);
+    if (boomerang?.carried) carryBoomerang();
+  }
+
+  /** くわえたブーメラン：口先に、腕を左右へ張り出して水平に */
+  function carryBoomerang() {
+    group.updateMatrixWorld(true);
+    model.head.localToWorld(mouthWorld.copy(MOUTH));
+    const m = boomerang.mesh;
+    m.position.copy(mouthWorld);
+    // 模型の面は local XY。肘（local -y 側）を口に、腕の先を左右へ
+    carryEuler.set(-Math.PI / 2, yaw + Math.PI, 0, 'YXZ');
+    m.quaternion.setFromEuler(carryEuler);
+    m.position.addScaledVector(tmp.set(Math.sin(yaw), 0, Math.cos(yaw)), 0.07);
   }
 
   function animate(dt) {
@@ -434,6 +500,8 @@ export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPositi
     get pose() { return pose; },
     get speed() { return speed; },
     get position() { return pos; },
+    /** ブーメランを持ってきた回数 */
+    get fetches() { return fetches; },
     /** 検証用 */
     debugZoomies() { nextZoomies = 0; setMode('wander'); },
     debugPlace(x, z) { pos.set(x, groundHeight(x, z), z); target.set(x, z); },

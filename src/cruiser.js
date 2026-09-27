@@ -150,8 +150,9 @@ function makePier() {
   const sy = pierDeckY(P.x, P.fromZ);
   sign.position.set(P.x + 1.6, sy + 1.6, P.fromZ + 0.6);
   g.add(sign);
-  const sp = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.4, 0.08), post);
-  sp.position.set(P.x + 1.6, sy + 0.7, P.fromZ + 0.6);
+  // 支柱は看板の下の縁まで（前は看板の中へ 10cm 入り、両面の表示の中に棒が見えていた）
+  const sp = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.3, 0.08), post);
+  sp.position.set(P.x + 1.6, sy + 0.65, P.fromZ + 0.6);
   g.add(sp);
   return g;
 }
@@ -238,8 +239,10 @@ function makeBoat() {
   dash.position.set(-0.5, DECK + 0.63, -0.3);
   g.add(dash);
   const wheel = new THREE.Group();
+  // 舵輪の面（輪のローカル +Z）を操縦席の目のほうへ向ける（目は 0.6m 後ろ・0.5m 上なので、面を 0.68rad 上へ起こす）。
+  // 前は面が船の前（プレイヤーから遠いほう）へ傾いていた。GT3 のハンドルと同じく Y で半回転してから X で起こす
   wheel.position.set(-0.5, DECK + 0.78, -0.55);
-  wheel.rotation.x = -0.7;
+  wheel.rotation.set(0.68, Math.PI, 0);
   const rim = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.015, 8, 24), chrome);
   wheel.add(rim);
   for (let i = 0; i < 3; i++) {
@@ -343,7 +346,8 @@ export function createCruiser({ blocked = () => false } = {}) {
     wake.position.set(pos.x - Math.sin(state.travelYaw) * back, SEA_LEVEL + 0.03, pos.y - Math.cos(state.travelYaw) * back);
     wake.rotation.set(-Math.PI / 2, state.travelYaw, 0, 'YXZ');
     // 舵輪：左へ切ると（運転席から見て）左回り
-    wheel.rotation.z = -state.steer * 1.5;
+    // 面がこちらを向いたので、左へ切る（steer > 0）と、こちらから見て左回り（+Z まわり）
+    wheel.rotation.z = state.steer * 1.5;
     boat.updateMatrixWorld(true);
   }
   placeModel(0);

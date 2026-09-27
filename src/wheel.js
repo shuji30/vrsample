@@ -728,6 +728,8 @@ export function createWheelInput() {
     pollButtons,
     openPanel,
     closePanel,
+    /** 設定の画面を開いているか（開いているあいだは、ハンコンで歩かない。kartdrive.js の walkInput） */
+    get panelOpen() { return Boolean(panel); },
     /** 検証用：キャリブレーションを進める */
     startCalibration() { startWizard(); },
     calibrationNext() { wizardNext(); },

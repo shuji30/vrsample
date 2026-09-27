@@ -17,6 +17,10 @@ import { BEACH, SEA_LEVEL, hillHeight } from './hill.js';
  * 座標は丘の地形（hill.js の hillHeight / BEACH）の上。
  */
 export const STAIRS = { x: -19, topZ: -40.8, bottomZ: -77.2 };
+/** 階段の上の門の半幅（門の柱の中心まで）。丘の縁の柵（park.js）はこのあいだを切る */
+export const STAIRS_GATE_HALF = 0.95;
+/** 丘の縁の柵の線（park.js と同じ。PLATEAU.minZ + 0.4） */
+const FENCE_Z = -40.6;
 /** 砂浜の歩ける範囲（world.js）。沖は水深 0.6m くらいまで入れる */
 export const BEACH_AREA = { minX: -40, maxX: 30, minZ: -95, maxZ: -76.6 };
 /** 丘の上の、階段の上の看板の前の歩ける所 */
@@ -116,15 +120,19 @@ export function createBeach() {
       tube.castShadow = true;
       group.add(tube);
     }
-    // 上の門（柵の切れ目の代わり）
+    // 上の門：丘の縁の柵の線に立てて、柱を柵の切れ目の両端にする（柵は park.js が切る）
     for (const side of [-1, 1]) {
       const p = shade(new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.2, 0.14), darkWood));
-      p.position.set(STAIRS.x + side * 0.85, 1.1, STAIRS.topZ + 0.5);
+      p.position.set(STAIRS.x + side * STAIRS_GATE_HALF, 1.1, FENCE_Z);
       group.add(p);
     }
-    const lintel = shade(new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.16, 0.18), darkWood));
-    lintel.position.set(STAIRS.x, 2.2, STAIRS.topZ + 0.5);
+    const lintel = shade(new THREE.Mesh(new THREE.BoxGeometry(STAIRS_GATE_HALF * 2 + 0.2, 0.16, 0.18), darkWood));
+    lintel.position.set(STAIRS.x, 2.2, FENCE_Z);
     group.add(lintel);
+    // 門から階段の一段目までの踏み板（柵の線と崖の縁のあいだの地面を渡る）
+    const landing = shade(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.1, FENCE_Z - (STAIRS.topZ - 0.3) + 0.3), wood));
+    landing.position.set(STAIRS.x, 0.05, (FENCE_Z + STAIRS.topZ - 0.3) / 2);
+    group.add(landing);
   }
 
   // --- 看板（上：海辺へ / 下：丘の上へ） ----------------------------------------------
@@ -151,7 +159,8 @@ export function createBeach() {
     return g;
   }
   let onTravel = null;
-  const topSign = sign(['海辺へ', '崖の階段で砂浜へ'], STAIRS.x + 1.3, 0, STAIRS.topZ + 1.2, 0, () => onTravel?.('beach'));
+  // 看板は門の東の横に、柵より手前（丘の側）へ。門の柱や入口にかからないように
+  const topSign = sign(['海辺へ', '崖の階段で砂浜へ'], STAIRS.x + STAIRS_GATE_HALF + 0.9, 0, FENCE_Z + 0.9, 0, () => onTravel?.('beach'));
   const bottomY = hillHeight(STAIRS.x + 1.6, STAIRS.bottomZ - 1.2);
   const bottomSign = sign(['丘の上へ', '家と公園に戻る'], STAIRS.x + 1.6, bottomY, STAIRS.bottomZ - 1.2, Math.PI, () => onTravel?.('hill'), '#6f7a3a');
   void topSign;

@@ -2,14 +2,14 @@ import * as THREE from 'three';
 import { GOLF_ZONE } from './hill.js';
 
 /**
- * パットパットゴルフ（コースと球）。観覧車の南の芝地に 6 ホール。女の子と交互に打つ（golfgame.js）。
+ * パットゴルフ（コースと球）。観覧車の南の芝地に 6 ホール。女の子と交互に打つ（golfgame.js）。
  *
  * ホールは軸にそろった長方形のつなぎ合わせ（レーン）。まわりは木の縁（球が跳ね返る）。
- * 1 まっすぐ・小さなこぶ / 2 L 字（曲がり角で縁に当てる）/ 3 風車（回る羽根のあいだのトンネルを抜ける）/
+ * 1 まっすぐ・小さなこぶ / 2 L 字（曲がり角で縁に当てる）/ 3 なみなみ（小さなこぶが 2 つ）/
  * 4 ポールのあいだを抜ける / 5 橋（高いこぶ）/ 6 上り坂の上のカップ（弱いと戻ってくる）。
  *
  * 球の転がり：レーンの高さ h(x, z) の傾きで加速（転がる球なので 5/7）、芝の抵抗で止まる。
- * 縁・ポール・風車の羽根では跳ね返る。カップの上を 1.3m/s より遅く通れば入る（速いと縁で跳ねる）。
+ * 縁・ポールでは跳ね返る（風車のしくみ（hole.windmill）は残してあるが、いまはどのホールにも無い）。カップの上を 1.3m/s より遅く通れば入る（速いと縁で跳ねる）。
  *
  * 打ち方：VR は右手のパターを振る（ヘッドが球に当たった速さで打つ）。PC は自分の番になると
  * 球の後ろへ視点が移る。ドラッグで狙い、スペースを押している長さで強さ、離して打つ（右下に強さの表示）。
@@ -36,10 +36,10 @@ function holeDefs() {
     name: 'L 字', par: 3, rects: [R(-32.8, -31.7, 17, 23.5), R(-31.7, -28.2, 22.4, 23.5)], tee: [-32.25, 17.6], cup: [-28.8, 22.95],
     aim: [[-32.25, 22.9]],
   });
-  // 3：風車（z 21 の壁のまん中に 0.28m のトンネル。前を羽根が回る）
+  // 3：なみなみ（小さなこぶが 2 つ続く）。以前は風車（羽根のあいだのトンネル）だったが、邪魔なので取り除いた
   H.push({
-    name: '風車', par: 3, rects: [R(-26.6, -25.5, 17, 25)], tee: [-26.05, 17.6], cup: [-26.05, 24.3],
-    windmill: { x: -26.05, z: 21, gap: 0.28 },
+    name: 'なみなみ', par: 2, rects: [R(-26.6, -25.5, 17, 25)], tee: [-26.05, 17.6], cup: [-26.05, 24.3],
+    h: (x, z) => bump(19.8, 0.5, 0.06)(x, z) + bump(22.2, 0.5, 0.06)(x, z),
   });
   // 4：ポールのあいだを抜ける
   H.push({
@@ -382,8 +382,11 @@ export function createGolf() {
         event = 'lip';
       }
     }
+    // 止まる：遅くて、坂の力が芝の抵抗より弱い（自分では動き出せない）とき。
+    // （以前は「坂がほぼ平ら（傾き 0.03 未満）」を条件にしていたので、6 番ホールの上り坂の途中の、
+    // 球が動かないのに傾きは 0.03 を超える所で止まると、転がり中のまま順番が進まなかった）
     const [gx, gz] = gradient(b.x, b.z);
-    if (Math.hypot(b.vx, b.vz) < 0.04 && Math.hypot(gx, gz) < 0.03) { b.vx = b.vz = 0; b.moving = false; return 'stop'; }
+    if (Math.hypot(b.vx, b.vz) < 0.04 && GRAV * Math.hypot(gx, gz) < DECEL * 0.95) { b.vx = b.vz = 0; b.moving = false; return 'stop'; }
     return event;
   }
 
@@ -405,7 +408,7 @@ export function createGolf() {
     c.fillStyle = '#fff';
     c.font = 'bold 30px sans-serif';
     c.textAlign = 'center';
-    c.fillText('パットパットゴルフ', 256, 36);
+    c.fillText('パットゴルフ', 256, 36);
     c.font = 'bold 20px sans-serif';
     const x0 = 118;
     const w = 50;
@@ -469,6 +472,8 @@ export function createGolf() {
       });
     },
     hideBalls() { balls.forEach((b) => { b.mesh.visible = false; }); },
+    /** 転がっている球を、その場で止める（転がり中のまま進まないときの保険。golfgame.js） */
+    stopAll() { balls.forEach((b) => { if (b.moving) { b.moving = false; b.vx = b.vz = 0; placeMesh(b); } }); },
     /** 打つ（速さ vx, vz） */
     strike(i, vx, vz) {
       const b = balls[i];

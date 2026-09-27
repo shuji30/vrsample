@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import { GARAGE, F40_PARK } from './roaddata.js';
 import { ROOM } from './room.js';
 import { createKartCourse } from './karttrack.js';
 import { createBikeCourse } from './biketrack.js';
 import { createHill, PLATEAU } from './hill.js';
+import { STAIRS, STAIRS_GATE_HALF } from './beach.js';
 
 /**
  * 窓の外の公園。さるすべりの木と滑り台がある。
@@ -693,18 +695,22 @@ function createBackdrop(tex, seed = 11) {
 
   const leaves = [];
   const trunks = [];
+  // ガレージから東へ出る取り付け道路（roaddata.js、z 3.4）の上とそのまわり（中心から 9m）には植えない（道の入口をふさがない）。
+  // 乱数は置かない所でも同じだけ引く（ほかの木の位置が変わらないように）
+  const onRoad = (x, z) => x > GARAGE.maxX - 1 && x < 40 && Math.abs(z - F40_PARK.z) < 9;
 
   /** 生垣を 1 辺ぶん並べる。dir は辺に沿った向き。 */
   function hedgeRow(from, to, count) {
     for (let i = 0; i < count; i++) {
       const t = i / (count - 1);
       const size = 1.6 + rand() * 0.9;
-      leaves.push({
+      const leaf = {
         x: from.x + (to.x - from.x) * t + (rand() - 0.5) * 1.0,
         y: 0.75 + rand() * 0.25,
         z: from.z + (to.z - from.z) * t + (rand() - 0.5) * 1.0,
         sx: size, sy: size * 0.8, ry: rand() * Math.PI,
-      });
+      };
+      if (!onRoad(leaf.x, leaf.z)) leaves.push(leaf);
     }
   }
 
@@ -715,15 +721,17 @@ function createBackdrop(tex, seed = 11) {
       const x = from.x + (to.x - from.x) * t + (rand() - 0.5) * 2.2;
       const z = from.z + (to.z - from.z) * t + (rand() - 0.5) * 2.2;
       const h = 5 + rand() * 3.5;
-      trunks.push({ x, y: h * 0.275, z, sy: h * 0.55 });
+      const skip = onRoad(x, z);
+      if (!skip) trunks.push({ x, y: h * 0.275, z, sy: h * 0.55 });
       for (let k = 0; k < 3; k++) {
         const size = h * (0.5 + rand() * 0.2);
-        leaves.push({
+        const leaf = {
           x: x + (rand() - 0.5) * 0.9,
           y: h * 0.68 + (rand() - 0.5) * 0.6,
           z: z + (rand() - 0.5) * 0.9,
           sx: size, sy: size, ry: rand() * Math.PI,
-        });
+        };
+        if (!skip) leaves.push(leaf);
       }
     }
   }
@@ -1065,19 +1073,26 @@ export function createPark(scene, tex) {
   {
     const fenceMat = new THREE.MeshStandardMaterial({ color: 0xf2efe6, roughness: 0.7 });
     const z = PLATEAU.minZ + 0.4;
+    // 崖の階段の入口（beach.js の門）のところは柵を切る。門の柱が切れ目の両端になる
+    // （以前は横木が門の前を横切っていて、通れないように見えた）
+    const gapMin = STAIRS.x - STAIRS_GATE_HALF;
+    const gapMax = STAIRS.x + STAIRS_GATE_HALF;
     const n = 36;
     for (let i = 0; i <= n; i++) {
       const x = PLATEAU.minX + ((PLATEAU.maxX - PLATEAU.minX) * i) / n;
+      if (x > gapMin - 0.6 && x < gapMax + 0.6) continue;
       const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.1, 0.1), fenceMat);
       post.position.set(x, 0.55, z);
       post.castShadow = true;
       group.add(post);
     }
-    for (const y of [0.5, 1.0]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(PLATEAU.maxX - PLATEAU.minX, 0.08, 0.05), fenceMat);
-      rail.position.set(0, y, z);
-      rail.castShadow = true;
-      group.add(rail);
+    for (const [x0, x1] of [[PLATEAU.minX, gapMin], [gapMax, PLATEAU.maxX]]) {
+      for (const y of [0.5, 1.0]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.08, 0.05), fenceMat);
+        rail.position.set((x0 + x1) / 2, y, z);
+        rail.castShadow = true;
+        group.add(rail);
+      }
     }
   }
 

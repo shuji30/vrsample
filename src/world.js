@@ -45,7 +45,7 @@ import { createGolfGame } from './golfgame.js';
 import { createSeatGame } from './seatgame.js';
 import { createCruiser, onPier, pierDeckY, PIER } from './cruiser.js';
 import { createCruiserGame } from './cruisergame.js';
-import { createJetski } from './jetski.js';
+import { createJetski, seaBlocked } from './jetski.js';
 import { createJetskiGame } from './jetskigame.js';
 import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
 import { createCessnaGame } from './cessnagame.js';
@@ -133,7 +133,12 @@ export function createWorld(renderer, scene, {
     if (fireworks) fireworks.active = key === 'night';
     // 夜は沖の灯台が光る
     park?.hill?.setNight(key === 'night');
+    // 高速道路の街灯（夕方から灯す）と、F40 のヘッドライト（夜）
+    road?.setNight(key === 'night' ? 1 : key === 'sunset' ? 0.5 : 0);
+    updateHeadlights?.();
   }
+  let road = null;
+  let updateHeadlights = null;
   const furniture = createFurniture(scene, tex, (key) => applyTheme(key));
 
   lighting = createLighting(renderer, scene, {
@@ -289,10 +294,25 @@ export function createWorld(renderer, scene, {
   const gt3 = createGT3({ park: GT3_PARK });
   scene.add(gt3.group);
   // 高速道路と、家の東の芝生の東の端のガレージ。F40 ふうの車（運転は GT3 と同じ。道の上だけを走る）
-  const road = createRoad();
+  road = createRoad();
   scene.add(road.group);
+  road.setNight(themeKey === 'night' ? 1 : themeKey === 'sunset' ? 0.5 : 0);
   const f40 = createGT3({ park: F40_PARK, color: 0xc8161d, style: 'f40', track: road.track, name: 'f40' });
   scene.add(f40.group);
+  // ヘッドライト（本物の光源 2 つ。影は付けない）。夜に乗っているあいだだけ灯す
+  const headlights = [-1, 1].map((side) => {
+    const l = new THREE.SpotLight(0xfff1d6, 0, 80, 0.42, 0.55, 1.1);
+    l.position.set(side * 0.66, 0.62, 2.45);   // 車の鼻先より前（後ろに置くと自分の車を照らす）
+    l.target.position.set(side * 0.9, 0, 24);
+    f40.model.root.add(l, l.target);
+    l.visible = false;
+    return l;
+  });
+  updateHeadlights = () => {
+    const on = f40Ridden && (themeKey === 'night' || themeKey === 'sunset');
+    for (const l of headlights) { l.visible = on; l.intensity = themeKey === 'night' ? 90 : 45; }
+    f40.model.headMat.emissiveIntensity = on ? 3 : 0.8;
+  };
   let f40Ridden = false;
   let f40Wait = 0;
   const f40AtHome = () => Math.hypot(f40.group.position.x - F40_PARK.x, f40.group.position.z - F40_PARK.z) < 3 && Math.abs(f40.speed) < 1;
@@ -393,11 +413,15 @@ export function createWorld(renderer, scene, {
     beach.onPoint = (winner, score, game) => beachGame.onPoint(winner, score, game);
   }
   // 砂浜の東の桟橋とクルーザー。プレイヤーが乗ると、女の子も桟橋を渡ってきて隣に座り、島をめぐる
-  const cruiser = createCruiser();
+  // 自分で操縦する。ぶつかる物：海の浅瀬・岩場・桟橋・島・灯台（seaBlocked）、高架の橋脚、ジェットスキー
+  const cruiser = createCruiser({
+    blocked: (x, z) => seaBlocked(x, z) || road.pierBlocked(x, z) || jetskiBlocks(x, z),
+  });
   scene.add(cruiser.group);
   let cruiserRidden = false;
   const cruiserGame = camera ? createCruiserGame({ character, cruiser, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
   if (cruiserGame) {
+    cruiser.onBump = (v) => cruiserGame.onBump(v);
     cruiserGame.onFinish = () => {
       if (beachGame?.active) beachGame.resume();
       else {
@@ -412,7 +436,17 @@ export function createWorld(renderer, scene, {
     const y = cruiser.state.yaw;
     const dx = x - b.x;
     const dz = z - b.z;
-    return Math.abs(dx * Math.sin(y) + dz * Math.cos(y)) < 6.4 && Math.abs(dx * Math.cos(y) - dz * Math.sin(y)) < 2.3;
+    // 前へ 7.4m（とがった船首）、後ろへ 5.5m、横へ 1.85m（と少しの余白）
+    const f = dx * Math.sin(y) + dz * Math.cos(y);
+    return f > -5.9 && f < 7.8 && Math.abs(dx * Math.cos(y) - dz * Math.sin(y)) < 2.3;
+  };
+  // クルーザーから見たジェットスキー（長さ 3.3m・幅 1.2m ＋余白）
+  const jetskiBlocks = (x, z) => {
+    const p = jetski.position;
+    const y = jetski.state.yaw;
+    const dx = x - p.x;
+    const dz = z - p.z;
+    return Math.abs(dx * Math.sin(y) + dz * Math.cos(y)) < 2.1 && Math.abs(dx * Math.cos(y) - dz * Math.sin(y)) < 1.0;
   };
   const jetski = createJetski({ blocked: (x, z) => cruiserBlocks(x, z) || road.pierBlocked(x, z) });
   scene.add(jetski.group);
@@ -430,7 +464,7 @@ export function createWorld(renderer, scene, {
     };
   }
   // F40：プレイヤーが運転席に座ると、女の子が助手席に来る
-  const f40Game = camera ? createF40Game({ character, car: f40, voice, playerHead: (out) => camera.getWorldPosition(out) }) : null;
+  const f40Game = camera ? createF40Game({ character, car: f40, voice, playerHead: (out) => camera.getWorldPosition(out), isNight: () => themeKey === 'night' }) : null;
   if (f40Game) {
     f40Game.onFinish = () => {
       character.watch(furniture.ball);
@@ -467,7 +501,7 @@ export function createWorld(renderer, scene, {
     };
   }
   void coasterEye;
-  // 観覧車の南のパットパットゴルフ。芝地に入ると、女の子も来て交互に打つ
+  // 観覧車の南のパットゴルフ。芝地に入ると、女の子も来て交互に打つ
   const golf = createGolf();
   scene.add(golf.group);
   golf.drawBoard([[], []], [0, 0]);
@@ -640,7 +674,7 @@ export function createWorld(renderer, scene, {
     { minX: -31.5, maxX: -16.0, minZ: -6.0, maxZ: 12.0 },
     // 家の右の芝生（GT3 を飾っておく所）。庭（x 6 まで）と 0.5m、カートコースの範囲（z -5 まで）と 0.6m 重ねる
     { minX: 5.5, maxX: 22.0, minZ: -5.6, maxZ: 4.5 },
-    // 観覧車の南のパットパットゴルフの芝地（観覧車のまわりの範囲と 0.5m 重ねる）
+    // 観覧車の南のパットゴルフの芝地（観覧車のまわりの範囲と 0.5m 重ねる）
     { minX: -37.5, maxX: -15.5, minZ: 11.5, maxZ: 34.5 },
     // 家の南の芝生と、ジェットコースターの駅のホーム（線路の手前まで）。家の右の芝生と 0.5m 重ねる
     { minX: -3.5, maxX: 18.0, minZ: 4.0, maxZ: COASTER.station.z - 0.75 },
@@ -991,7 +1025,7 @@ export function createWorld(renderer, scene, {
         ferrisGame.start();
       }
     }
-    // パットパットゴルフ：芝地に入ったら（ほかの遊びをしていなければ）
+    // パットゴルフ：芝地に入ったら（ほかの遊びをしていなければ）
     if (golfGame) {
       if (camera) camera.getWorldPosition(golfEye);
       golfGame.playerHere = golf.inZone(golfEye.x, golfEye.z);
@@ -1266,6 +1300,7 @@ export function createWorld(renderer, scene, {
         if (ferrisGame) ferrisGame.playerRiding = true;
       } else if (v === f40) {
         f40Ridden = true;
+        updateHeadlights();
         if (f40Game) f40Game.playerRiding = true;
       } else if (v === cessna) {
         cessnaRidden = true;
@@ -1308,6 +1343,7 @@ export function createWorld(renderer, scene, {
         const midway = !f40AtHome();
         if (midway) blackout();
         f40Ridden = false;
+        updateHeadlights();
         f40.locked = false;
         f40.parkAtHome();
         if (f40Game) {
@@ -1335,8 +1371,8 @@ export function createWorld(renderer, scene, {
           if (midway) jetskiGame.dropAtPier();
         }
       } else if (v === cruiser) {
-        // 桟橋に着いていればそのまま降りる。沖にいれば暗くして桟橋へ（女の子も）
-        const midway = cruiser.phase === 'cruising';
+        // 桟橋のそばで止まっていればそのまま降りる。沖にいれば暗くして桟橋へ（女の子も）
+        const midway = !cruiser.atDock;
         if (midway) blackout();
         cruiserRidden = false;
         cruiser.leave();

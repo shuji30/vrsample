@@ -66,8 +66,9 @@ function beachChairModel() {
   seat.castShadow = true;
   g.add(seat);
   const back = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.62, 0.03), cloth);
-  back.position.set(0, T + 0.27, 0.3);
-  back.rotation.x = -0.45;
+  // X まわりに + で回すと上の端が +Z（後ろ）へ倒れる（以前は - で、背もたれが前へ倒れていた）
+  back.position.set(0, T + 0.27, 0.35);
+  back.rotation.x = 0.45;
   back.castShadow = true;
   g.add(back);
   for (const sx of [-0.26, 0.26]) {
@@ -76,8 +77,8 @@ function beachChairModel() {
     legF.rotation.x = 0.25;
     g.add(legF);
     const legB = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.95, 6), frame);
-    legB.position.set(sx, 0.4, 0.26);
-    legB.rotation.x = -0.45;
+    legB.position.set(sx, 0.4, 0.33);
+    legB.rotation.x = 0.45;
     g.add(legB);
     const arm = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.03, 0.46), frame);
     arm.position.set(sx, T + 0.16, 0.02);

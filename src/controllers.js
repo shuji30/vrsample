@@ -6,6 +6,8 @@ const MOVE_SPEED = 1.45;        // m/s（室内なので歩く速さくらいに
 const ACCELERATION = 8.0;       // m/s^2 歩き出し
 const DECELERATION = 11.0;      // m/s^2 止まるほうが速い
 const SNAP_ANGLE = Math.PI / 6; // 30度
+const WHEEL_TURN = 1.1;         // rad/s ハンコンで歩くとき、ハンドルいっぱいで回る速さ（約 63°/s）
+const WHEEL_BACK = 0.7;         // ハンコンのブレーキで後ろへ歩く速さ（前の何倍か）
 const DEADZONE = 0.25;
 
 // 歩容。人が歩くとき頭は 1 歩ごとに 2〜3cm 沈む。これが無いと、
@@ -381,6 +383,7 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
 
   let padSource = null;
   let padSnap = false;
+  let wheelSource = null;
   function updateLocomotion(dt) {
     desired.set(0, 0, 0);
     if (driving) { velocity.set(0, 0, 0); return; }
@@ -444,6 +447,22 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
         clampToBounds();
         padSnap = true;
       }
+    }
+
+    // ハンコン（乗り物に乗っていないとき）：ハンドルで向きを変え、アクセルで前へ、ブレーキで後ろへ。
+    // 向きは、スナップターンではなく、ハンドルの角度に合わせてなめらかに回す（運転と同じ感覚になるように）
+    const wheel = wheelSource?.();
+    if (wheel) {
+      if (wheel.steer) {
+        rotateAroundHead(wheel.steer * Math.abs(wheel.steer) ** 0.5 * WHEEL_TURN * dt);
+        clampToBounds();
+        headWorldQuaternion(camQuat);
+        forward.set(0, 0, -1).applyQuaternion(camQuat);
+        forward.y = 0;
+        if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+        forward.normalize();
+      }
+      desired.addScaledVector(forward, (wheel.throttle - wheel.brake * WHEEL_BACK) * MOVE_SPEED);
     }
 
     // 斜め入力で速くならないように頭打ちにする
@@ -673,6 +692,8 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     setDriving(value) { driving = Boolean(value); hasLastHead = false; },
     /** VR の最中のゲームパッドのスティック（desktop.js の xrPad）を返す関数 */
     setPadSource(fn) { padSource = fn; },
+    /** 乗り物に乗っていないときのハンコンの入力（{ steer, throttle, brake } か null。kartdrive.js の walkInput） */
+    setWheelSource(fn) { wheelSource = fn; },
     alignHeadTo,
     /** 頭のワールドの位置・向き（VR の最中。XR のカメラから直接取るとリグが入らない） */
     headWorldPosition,

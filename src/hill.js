@@ -18,7 +18,7 @@ import { CIRCUIT_ZONE } from './circuit.js';
  */
 export const PLATEAU = { minX: -35, maxX: 35, minZ: -41, maxZ: 15 };
 export const SEA_LEVEL = -26;
-/** パットパットゴルフ（golf.js）の芝地。観覧車の南、平らな所のすぐ外を平ら（高さ 0）にする */
+/** パットゴルフ（golf.js）の芝地。観覧車の南、平らな所のすぐ外を平ら（高さ 0）にする */
 export const GOLF_ZONE = { minX: -38, maxX: -15, minZ: 13, maxZ: 35 };
 /** ゴルフの芝地にどれだけ入っているか（1 = 中、0 = 12m より外） */
 export function golfFlat(x, z) {

@@ -136,6 +136,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   function exit() {
     if (!driving) return;
     driving = false;
+    walkArmed.steer = walkArmed.throttle = walkArmed.brake = false;
     player.setDriving(false);
     desktop.setDriving(false);
     engine.stop();
@@ -347,6 +348,31 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     return { ...best, handbrake: Math.max(...candidates.map((c) => c.handbrake ?? 0)) };
   }
 
+  /**
+   * 乗り物に乗っていないときに、ハンコンで歩く（controllers.js / desktop.js が使う）。
+   * ハンドルで向きを変え、アクセルで前へ、ブレーキで後ろへ。ハンコン（ゲームパッドでない機器）が
+   * つながっているときだけ返す（ゲームパッドは、これまでどおり左スティックで歩く）。
+   * 軸ごとに、一度「離した（まっすぐの）」値を見るまでは 0 とする。ペダルを踏んだまま降りたときや、
+   * ペダルの軸の読み違いで踏まれたままに見えるときに、勝手に歩き出さないように
+   */
+  const walkArmed = { steer: false, throttle: false, brake: false };
+  function walkInput() {
+    if (driving) return null;
+    // 設定の画面でキャリブレーションしているあいだは、回しても踏んでも歩かない（閉じたら、離すまで待つ）
+    if (wheel.panelOpen) { walkArmed.steer = walkArmed.throttle = walkArmed.brake = false; return null; }
+    const w = wheel.read();
+    if (w?.kind !== 'wheel') return null;
+    if (Math.abs(w.steer) < 0.05) walkArmed.steer = true;
+    if (w.throttle < 0.05) walkArmed.throttle = true;
+    if (w.brake < 0.05) walkArmed.brake = true;
+    const out = {
+      steer: walkArmed.steer && Math.abs(w.steer) > 0.04 ? w.steer : 0,
+      throttle: walkArmed.throttle && w.throttle > 0.05 ? w.throttle : 0,
+      brake: walkArmed.brake && w.brake > 0.05 ? w.brake : 0,
+    };
+    return out.steer || out.throttle || out.brake ? out : null;
+  }
+
   // --- 毎フレーム ---------------------------------------------------------------
 
   function placeView() {
@@ -467,6 +493,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     /** いま乗っている（最後に乗った）乗り物 */
     get vehicle() { return vehicle; },
     get input() { return lastInput; },
+    walkInput,
     wheel,
     ffb,
   };

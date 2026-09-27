@@ -5,7 +5,7 @@ import { CAROUSEL } from './carousel.js';
 import { FERRIS } from './ferriswheel.js';
 
 /**
- * パットパットゴルフ（女の子・順番・打ち方）。プレイヤーが観覧車の南の芝地（golf.js）へ入ると、
+ * パットゴルフ（女の子・順番・打ち方）。プレイヤーが観覧車の南の芝地（golf.js）へ入ると、
  * 女の子もしていた遊びをやめて歩いてきて、1 番ホールから交互に打つ。
  *
  * 順番：はじめはプレイヤー。そのあとは、まだ入れていない人のうち、カップから遠いほう（ゴルフのきまり）。
@@ -240,7 +240,10 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
 
   /** 見ている所：プレイヤーの番はプレイヤーの球、転がっているあいだは転がっている球 */
   function spectate(dt) {
+    // reachHands(null) は「いま手のある所」へ伸ばし続ける（片手の reach に戻る）ので、reach(null) で放す。
+    // 放さないと、打ったあともパターを握っていた所へ腕が伸びたままになった
     body.reachHands(null);
+    body.reach(null);
     body.setGrip(0);
     body.setBend(0);
     golf.girlPutter.visible = false;
@@ -333,6 +336,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     pt.visible = true;
   }
   let throughFor = 0;
+  let rollingFor = 0;
   function pcTurn(dt) {
     const b = P();
     if (!pcTurnSet) { pcBehindBall(); pcTurnSet = true; charge = 0; charging = false; }
@@ -408,6 +412,9 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     else if (!(turn === 'player' && phase === 'aim')) golf.playerPutter.visible = false;
     throughFor = Math.max(0, throughFor - dt);
     events.forEach((ev, i) => { if (ev) onBallEvent(i, ev); });
+    // 保険：転がり始めて 30 秒たっても止まらないときは、その場で止めて次の番へ
+    rollingFor = phase === 'rolling' ? rollingFor + dt : 0;
+    if (rollingFor > 30) golf.stopAll();
     if (phase === 'rolling' && !P().moving && !Gb().moving) nextTurn();
     if (phase === 'holeDone') {
       timer += dt;
@@ -465,6 +472,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
         else if (phase === 'rolling' && turn === 'girl') {
           body.stand(dt);
           body.reachHands(null);
+          body.reach(null);
           golf.girlPutter.visible = false;
           const b = Gb();
           watchPoint(b.x, golf.laneY(b.x, b.z), b.z);
@@ -477,6 +485,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
 
   function finish() {
     body.reachHands(null);
+    body.reach(null);
     body.setGrip(0);
     body.setBend(0);
     body.setAttend(true);

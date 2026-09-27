@@ -3,20 +3,23 @@ import { SEA_LEVEL, hillHeight } from './hill.js';
 import { routeCurve } from './cruiser.js';
 import {
   HWY_Y, HWY_HALF, ACCESS_HALF, GARAGE, F40_PARK, ROAD_SAMPLES, ACCESS_LENGTH, LOOP_LENGTH,
-  accessNearest, loopNearest, roadFrame, accessHalf,
+  accessNearest, loopNearest, rampNearest, roadFrame, accessHalf, RAMP_HALF, RAMP_GRADE_X,
 } from './roaddata.js';
 
 /**
  * 高速道路・取り付け道路・ガレージの見た目と、車（gt3.js の createGT3 に track として渡す）の走れる所。
  *
- * 走れる所は、2 本の道（取り付け道路・高速道路）の路面を合わせたもの。車がいちばん「中に入っている」道を選んで、
+ * 走れる所は、3 本の道（取り付け道路・高速道路・ループ橋）の路面を合わせたもの。車がいちばん「中に入っている」道を選んで、
  * その道の縁の壁（路面の端から 1m 内）で止める。合流の所では 2 本の路面が重なっているので、行き来できる。
- * s は、取り付け道路なら 0〜、高速道路なら LOOP_OFS を足した値（gt3.js の state.s にそのまま入る）。
+ * ループ橋は高速道路の上をまたぐので、上から見ると重なる所がある。車の高さから 2.5m 以上離れた道は選ばない。
+ * s は、取り付け道路なら 0〜、高速道路なら LOOP_OFS、ループ橋なら RAMP_OFS を足した値（gt3.js の state.s にそのまま入る）。
  *
  * 高架の橋脚は、クルーザーの航路（cruiser.js）から 14m 以内には立てない。ジェットスキーは橋脚にぶつかる（pierBlocked）。
  */
 export const LOOP_OFS = 10000;
-const { accessPts, accessTan, loopPts, loopTan, NA, NL } = ROAD_SAMPLES;
+/** ループ橋の s に足す値 */
+export const RAMP_OFS = 20000;
+const { accessPts, accessTan, loopPts, loopTan, NA, NL, rampPts, rampTan, NR } = ROAD_SAMPLES;
 
 /** 路面の模様（アスファルト・両わきの白線・真ん中の破線）。v は 12m で 1 回 */
 function roadTexture(lanes) {
@@ -183,6 +186,8 @@ export function createRoad() {
   const halfA = (i) => accessHalf(i);
   group.add(ribbon(accessPts, accessTan, halfA, false, accessMat, 0.03));
   group.add(ribbon(loopPts, loopTan, () => HWY_HALF, true, hwyMat, 0.02));
+  // ループ橋（1 車線。白線は取り付け道路と同じ模様）。高速道路と重なる分かれ目では、高速道路より少し上に
+  group.add(ribbon(rampPts, rampTan, () => RAMP_HALF, false, accessMat, 0.035));
   // 高架の床版（路面の下の厚み。横から見て板に見えるように）
   {
     const pos = [];
@@ -203,22 +208,50 @@ export function createRoad() {
     deck.receiveShadow = true;
     group.add(deck);
   }
+  // ループ橋の床版（橋のところ。丘の側の地面すれすれの所と、高速道路の路面に重なる分かれ目は作らない）
+  {
+    const pos = [];
+    const quad = (a, b, c, d) => pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+    const onBridge = (k) => rampPts[k].x > RAMP_GRADE_X && rampPts[k].y > HWY_Y + 0.6;
+    for (let i = 0; i < NR - 1; i += 2) {
+      const j = Math.min(NR, i + 2);
+      if (!onBridge(i) || !onBridge(j)) continue;
+      const P = (k, y, side) => { const p = rampPts[k]; const t = rampTan[k]; const h = RAMP_HALF + 0.35; return [p.x + t.z * h * side, p.y + y, p.z - t.x * h * side]; };
+      for (const side of [-1, 1]) quad(P(i, -0.8, side), P(j, -0.8, side), P(j, 0, side), P(i, 0, side));
+      quad(P(i, -0.8, 1), P(j, -0.8, 1), P(j, -0.8, -1), P(i, -0.8, -1));
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    const rampDeck = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xb4b2ab, roughness: 0.9, side: THREE.DoubleSide }));
+    rampDeck.receiveShadow = true;
+    rampDeck.castShadow = true;
+    group.add(rampDeck);
+  }
   // 壁。合流の所では、もう一方の道の路面の中に入る部分を作らない
-  const insideLoop = (x, z) => Math.abs(loopNearest(x, z).lateral) < HWY_HALF - 0.2;
-  const insideAccess = (x, z) => { const a = accessNearest(x, z); return a.along > 0 && a.along < NA && Math.abs(a.lateral) < accessHalf(a.s) - 0.2; };
+  // y を渡すと、その高さから 2m 以内の路面だけを見る（ループ橋と、その下の高速道路を取り違えない）
+  const insideLoop = (x, z, y = null) => (y === null || Math.abs(y - HWY_Y) < 2) && Math.abs(loopNearest(x, z).lateral) < HWY_HALF - 0.2;
+  const insideAccess = (x, z, y = null) => { const a = accessNearest(x, z); return a.along > 0 && a.along < NA && Math.abs(a.lateral) < accessHalf(a.s) - 0.2 && (y === null || Math.abs(y - a.y) < 2); };
+  const insideRamp = (x, z, y = null, margin = 0.2) => { const r = rampNearest(x, z); return r.along > 0 && r.along < NR && Math.abs(r.lateral) < RAMP_HALF - margin && (y === null || Math.abs(y - r.y) < 2); };
   const edge = (pts, tans, halfAt, i, side) => { const p = pts[i]; const t = tans[i]; const h = halfAt(i) + 0.2; return [p.x + t.z * h * side, p.z - t.x * h * side]; };
   const accessKeep = (i, side) => {
     const p = accessPts[i];
     if (p.x < GARAGE.maxX + 0.2) return false;              // ガレージの中は壁がある
     const [x, z] = edge(accessPts, accessTan, halfA, i, side);
-    return !insideLoop(x, z);
+    return !insideLoop(x, z, p.y) && !insideRamp(x, z, p.y);
   };
   const loopKeep = (i, side) => {
     const [x, z] = edge(loopPts, loopTan, () => HWY_HALF, i, side);
-    return !insideAccess(x, z);
+    return !insideAccess(x, z, HWY_Y) && !insideRamp(x, z, HWY_Y);
+  };
+  const rampKeep = (i, side) => {
+    const p = rampPts[i];
+    const [x, z] = edge(rampPts, rampTan, () => RAMP_HALF, i, side);
+    return !insideLoop(x, z, p.y) && !insideAccess(x, z, p.y);
   };
   group.add(barriers(accessPts, accessTan, halfA, false, accessKeep, 0xc9c6bd));
   group.add(barriers(loopPts, loopTan, () => HWY_HALF, true, loopKeep, 0xd4d1c8));
+  group.add(barriers(rampPts, rampTan, () => RAMP_HALF, false, rampKeep, 0xc9c6bd));
   // 橋脚（36m ごと。路面の下が 1m より高いところ。クルーザーの航路の近くは立てない）
   const route = routeCurve().getSpacedPoints(600);
   const nearRoute = (x, z) => route.some((p) => Math.hypot(p.x - x, p.z - z) < 14);
@@ -251,6 +284,40 @@ export function createRoad() {
       }
     }
   }
+  // ループ橋の橋脚（18m ごと、真ん中に 1 本。下の道の路面の上には立てない）
+  {
+    const pierMat = new THREE.MeshStandardMaterial({ color: 0xa9a7a0, roughness: 0.9 });
+    const colGeo = new THREE.CylinderGeometry(0.7, 0.85, 1, 12);
+    const capGeo = new THREE.BoxGeometry(RAMP_HALF * 2 - 0.6, 0.6, 1.2);
+    for (let i = 8; i < NR - 4; i += 18) {
+      const p = rampPts[i];
+      if (p.x < RAMP_GRADE_X) continue;
+      const top = p.y - 0.8;
+      const bottom = hillHeight(p.x, p.z);
+      if (top - bottom < 1.2) continue;
+      // 下の道（高速道路・取り付け道路・ループ橋の低い所）の路面の上なら、少しずらして立てる。ずらしても重なれば立てない
+      const t = rampTan[i];
+      let x = p.x;
+      let z = p.z;
+      const blocked = (px, pz) => insideLoop(px, pz, null) || insideAccess(px, pz, null) || (rampNearest(px, pz).y < p.y - 2 && insideRamp(px, pz, null, -1.5));
+      if (blocked(x, z)) {
+        const alt = [[t.z, -t.x], [-t.z, t.x]].map(([nx, nz]) => [p.x + nx * (RAMP_HALF + 0.9), p.z + nz * (RAMP_HALF + 0.9)]).find(([ax, az]) => !blocked(ax, az));
+        if (!alt) continue;
+        [x, z] = alt;
+      }
+      const yaw = Math.atan2(t.x, t.z);
+      const cap = new THREE.Mesh(capGeo, pierMat);
+      cap.position.set(p.x, top - 0.3, p.z);
+      cap.rotation.y = yaw + Math.PI / 2;
+      cap.castShadow = true;
+      group.add(cap);
+      const col = new THREE.Mesh(colGeo, pierMat);
+      col.scale.y = top - 0.6 - bottom;
+      col.position.set(x, (top - 0.6 + bottom) / 2, z);
+      col.castShadow = true;
+      group.add(col);
+    }
+  }
   // 案内の標識（緑の板）：取り付け道路の丘の縁と、高速道路の合流の手前（北から・南から）
   const signMat = (lines) => new THREE.MeshBasicMaterial({ map: signTexture(lines), side: THREE.DoubleSide });
   const post = new THREE.MeshStandardMaterial({ color: 0x8b8f96, roughness: 0.5, metalness: 0.5 });
@@ -275,8 +342,9 @@ export function createRoad() {
   // 取り付け道路の東の縁（西から来る車に見える）
   const signA = gantry(36, 3.4, -Math.PI / 2, ['高速道路', 'この先 合流'], ACCESS_HALF + 0.6);
   signA.position.y = 0;
-  // 高速道路：南へ走る車（北から来る）と、北へ走る車（南から来る）に「出口 おかのうえ」
-  gantry(80, 40, Math.PI, ['出口 おかのうえ', '→ 家・ガレージ'], HWY_HALF + 0.6);
+  // 高速道路：南へ走る車（北から来る）には、左の車線からループ橋へ。北へ走る車（南から来る）には、左の取り付け道路へ
+  // （前は南へ走る車にも右の取り付け道路を案内していて、ほぼ U ターンだった）
+  gantry(80, -120, Math.PI, ['出口 おかのうえ', '← 左車線 ループ橋'], HWY_HALF + 0.6);
   gantry(80, 175, 0, ['出口 おかのうえ', '家・ガレージ ←'], HWY_HALF + 0.6);
   group.add(makeGarage());
 
@@ -298,8 +366,22 @@ export function createRoad() {
     const side = k % 2 ? 1 : -1;
     const p = loopPts[i];
     const t = loopTan[i];
-    if (insideAccess(p.x + t.z * side * (HWY_HALF + 0.9), p.z - t.x * side * (HWY_HALF + 0.9))) continue;
+    const lx = p.x + t.z * side * (HWY_HALF + 0.9);
+    const lz = p.z - t.x * side * (HWY_HALF + 0.9);
+    if (insideAccess(lx, lz)) continue;
+    // ループ橋の路面の上や、橋の下（支柱が橋を突き抜ける）には立てない
+    if (insideRamp(lx, lz, null, -3) || insideRamp(p.x, p.z, null, -3)) continue;
     addLamp(p, t, HWY_HALF, side);
+  }
+  // ループ橋も 30m ごと（ループの外側・橋の両わき）。下の道の路面の上には立てない
+  for (let i = 10, k = 0; i < NR - 10; i += 30, k++) {
+    const p = rampPts[i];
+    const t = rampTan[i];
+    const side = k % 2 ? 1 : -1;
+    const lx = p.x + t.z * side * (RAMP_HALF + 0.9);
+    const lz = p.z - t.x * side * (RAMP_HALF + 0.9);
+    if (insideLoop(lx, lz) || insideAccess(lx, lz)) continue;
+    addLamp(p, t, RAMP_HALF, side);
   }
   for (let i = 12, k = 0; i < NA - 24; i += 30, k++) {
     const p = accessPts[i];
@@ -362,18 +444,32 @@ export function createRoad() {
   const fl = { p: new THREE.Vector3(), t: new THREE.Vector3(), n: new THREE.Vector3() };
   const track = {
     length: LOOP_LENGTH,
-    nearest(x, z, sHint = null) {
-      const onLoop = sHint !== null && sHint >= LOOP_OFS;
-      const a = accessNearest(x, z, sHint !== null && !onLoop ? sHint : null);
+    /** y（車の高さ）を渡すと、そこから 2.5m 以上上や下の道は選ばない（橋と、その下の道） */
+    nearest(x, z, sHint = null, y = null) {
+      const onRamp = sHint !== null && sHint >= RAMP_OFS;
+      const onLoop = sHint !== null && sHint >= LOOP_OFS && !onRamp;
+      const onAccess = sHint !== null && sHint < LOOP_OFS;
+      const a = accessNearest(x, z, onAccess ? sHint : null);
       const l = loopNearest(x, z, onLoop ? sHint - LOOP_OFS : null);
+      const r = rampNearest(x, z, onRamp ? sHint - RAMP_OFS : null);
       const ha = accessHalf(a.s);
-      // どちらの道にどれだけ入っているか（負ほど内側）。取り付け道路の端より先は、その道の外
+      // どの道にどれだけ入っているか（負ほど内側）。取り付け道路・ループ橋の端より先は、その道の外
       const inA = a.along < -0.01 && a.s <= 0 ? Math.abs(a.lateral) - ha + 0.5 : a.along > NA ? 99 : Math.abs(a.lateral) - ha;
       const inL = Math.abs(l.lateral) - HWY_HALF;
-      if (inA <= inL) return { s: a.s, lateral: a.lateral, y: a.y, road: 'access', half: ha, along: a.along };
-      return { s: l.s + LOOP_OFS, lateral: l.lateral, y: l.y, road: 'loop', half: HWY_HALF };
+      const inR = r.along < 0 || r.along > NR ? 99 : Math.abs(r.lateral) - RAMP_HALF;
+      const cands = [
+        { in: inA, y: a.y, hit: () => ({ s: a.s, lateral: a.lateral, y: a.y, road: 'access', half: ha, along: a.along }) },
+        { in: inL, y: l.y, hit: () => ({ s: l.s + LOOP_OFS, lateral: l.lateral, y: l.y, road: 'loop', half: HWY_HALF }) },
+        { in: inR, y: r.y, hit: () => ({ s: r.s + RAMP_OFS, lateral: r.lateral, y: r.y, road: 'ramp', half: RAMP_HALF, along: r.along }) },
+      ];
+      const ok = y === null ? cands : cands.filter((c) => Math.abs(c.y - y) < 2.5);
+      const pool = ok.length ? ok : cands;
+      let best = pool[0];
+      for (const c of pool) if (c.in < best.in) best = c;
+      return best.hit();
     },
     frame(s) {
+      if (s >= RAMP_OFS) return roadFrame('ramp', s - RAMP_OFS, fl);
       return s >= LOOP_OFS ? roadFrame('loop', s - LOOP_OFS, fl) : roadFrame('access', s, fa);
     },
     onGrass: () => false,

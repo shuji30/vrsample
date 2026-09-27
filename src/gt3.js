@@ -490,7 +490,7 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
     let a = (drive - drag - braking) / m;
 
     // 芝に出るとすべって遅くなる
-    const near = T.nearest(group.position.x, group.position.z, state.s);
+    const near = T.nearest(group.position.x, group.position.z, state.s, group.position.y);
     state.s = near.s;
     state.u = near.s / T.length;
     state.lateral = near.lateral;
@@ -515,7 +515,7 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
     group.position.z += Math.cos(state.yaw) * v * dt;
 
     // 防護壁（橋の上は、路面の縁の壁）
-    const after = T.nearest(group.position.x, group.position.z, state.s);
+    const after = T.nearest(group.position.x, group.position.z, state.s, group.position.y);
     const limit = T.limit(after);
     if (Math.abs(after.lateral) > limit) {
       const f = T.frame(after.s);
@@ -682,6 +682,11 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
     place,
     placeOnCircuit,
     parkAtHome,
+    /** 検証用：好きな所へ置く（道の上なら、その道の s も合わせる） */
+    debugPlace(x, z, yaw, y = 0) {
+      place(x, z, yaw, y);
+      if (road) state.s = road.nearest(x, z, null, y).s;
+    },
     update,
     /** 追いかける視点は、長い車なので遠めに */
     chaseBack: 7.5,

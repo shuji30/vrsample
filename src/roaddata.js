@@ -90,7 +90,60 @@ export const LOOP_LENGTH = loopPts.length;
 const NL = LOOP_LENGTH;
 const wrapL = (s) => ((s % NL) + NL) % NL;
 
-/** 道の中心線の点・向き・左向き（road: 'access' | 'loop'） */
+// --- ループ橋（高速道路の東の直線を南へ走ってきて、ガレージへ戻る出口） ------------------------------
+// 取り付け道路は高速道路に西から南向きに合流するので、一周して南向きに戻ってくると、取り付け道路へは
+// ほぼ U ターン（鋭角）になっていた。左（東）の車線から分かれ、左回りに 270° 回りながら上がって西向きになり、
+// 高速道路（と、分かれた車線）の上を橋でまたいで西へ進み、丘の上でガレージの手前の取り付け道路に合流する。
+// 東の直線の東は、サーキットの平らな所（y -10）の西の端で、サーキットの路面（x 132 より東）とは離れている
+export const RAMP_HALF = 4;
+const RAMP_LOOP = { x: 117, z: 14, r: 25 };
+const RAMP_POINTS = (() => {
+  const pts = [
+    // 分かれる：高速道路の東の車線（中心の 3m 東）から、少しずつ東へ
+    [83, -92, HWY_Y], [83.2, -78, HWY_Y], [84.6, -62, HWY_Y], [87.4, -46, HWY_Y + 0.05], [90.4, -30, HWY_Y + 0.2],
+    [92.1, -14, HWY_Y + 0.5], [92.3, 2, HWY_Y + 0.85],
+  ];
+  // ループ（西の点で南向き → 南 → 東 → 北の点で西向き。左回り 270°）。上がりながら
+  const { x, z, r } = RAMP_LOOP;
+  const n = 12;
+  for (let k = 0; k <= n; k++) {
+    const a = Math.PI - (1.5 * Math.PI * k) / n;
+    pts.push([x + Math.cos(a) * r, z + Math.sin(a) * r, HWY_Y + 1.1 + (5.4 * k) / n]);
+  }
+  // 橋：高速道路の上を西へ（路面 y -1.5。高速道路の路面から 6.5m 上）。そのあと丘の上へゆるく上がって合流。
+  // ループの半径は 25m（22m では 54km/h で外の壁に当たった）
+  pts.push(
+    [103, -11, -1.5], [90, -11, -1.5], [77, -10.6, -1.5], [65, -9.6, -1.45], [54.5, -8.4, -1.3], [45, -7, -1.0],
+    [38.5, -5.2, -0.55], [33.5, -2.1, -0.2], [30.2, 0.7, -0.03], [27.4, 2.7, 0],
+  );
+  return pts;
+})();
+const rampCurve = new THREE.CatmullRomCurve3(RAMP_POINTS.map(([x, z, y]) => new THREE.Vector3(x, y, z)), false, 'centripetal');
+export const RAMP_LENGTH = rampCurve.getLength();
+const NR = Math.round(RAMP_LENGTH);
+const rampPts = rampCurve.getSpacedPoints(NR);
+const rampTan = rampPts.map((_, i) => rampCurve.getTangentAt(Math.min(1, i / NR)).setY(0).normalize());
+/** 道の上で、下の道とまたいでいる所より高い（橋）か。橋脚・地形のならしに使う */
+export const RAMP_GRADE_X = 48;   // これより西（丘の側）は地面すれすれ（地形をならす）。東は橋（橋脚で支える）
+
+/** ループ橋でいちばん近い所 { s, lateral, y, along } */
+export function rampNearest(x, z, sHint = null) {
+  let best = 0;
+  let bestD = Infinity;
+  const check = (i) => { const p = rampPts[i]; const d = (p.x - x) ** 2 + (p.z - z) ** 2; if (d < bestD) { bestD = d; best = i; } };
+  if (sHint === null) for (let i = 0; i <= NR; i++) check(i);
+  else for (let i = Math.max(0, Math.floor(sHint) - 60); i <= Math.min(NR, Math.floor(sHint) + 60); i++) check(i);
+  const t = rampTan[best];
+  const dx = x - rampPts[best].x;
+  const dz = z - rampPts[best].z;
+  const along = best + dx * t.x + dz * t.z;
+  const sc = THREE.MathUtils.clamp(along, 0, NR);
+  const i = Math.min(NR - 1, Math.floor(sc));
+  const y = THREE.MathUtils.lerp(rampPts[i].y, rampPts[i + 1].y, sc - i);
+  return { s: sc, lateral: dx * t.z - dz * t.x, y, along };
+}
+
+/** 道の中心線の点・向き・左向き（road: 'access' | 'loop' | 'ramp'） */
 export function roadFrame(road, s, out = { p: new THREE.Vector3(), t: new THREE.Vector3(), n: new THREE.Vector3() }) {
   if (road === 'loop') {
     const u = wrapL(s);
@@ -99,6 +152,12 @@ export function roadFrame(road, s, out = { p: new THREE.Vector3(), t: new THREE.
     const f = u - Math.floor(u);
     out.p.lerpVectors(loopPts[i], loopPts[j], f);
     out.t.lerpVectors(loopTan[i], loopTan[j], f).normalize();
+  } else if (road === 'ramp') {
+    const u = THREE.MathUtils.clamp(s, 0, NR);
+    const i = Math.min(NR - 1, Math.floor(u));
+    const f = u - i;
+    out.p.lerpVectors(rampPts[i], rampPts[i + 1], f);
+    out.t.lerpVectors(rampTan[i], rampTan[i + 1], f).normalize();
   } else {
     const u = THREE.MathUtils.clamp(s, 0, NA);
     const i = Math.min(NA - 1, Math.floor(u));
@@ -146,14 +205,26 @@ export function loopNearest(x, z, sHint = null) {
  * 道の下は路面より 5cm 下に、まわりはなめらかに（切り通し・盛り土）
  */
 export function roadCorridor(x, z) {
-  if (x < 30 || x > 96 || z < -6 || z > 142) return null;
+  // ループ橋の丘の側（地面すれすれの所）。道の下は路面の 5cm 下に、まわり 8m でなめらかに
+  let ramp = null;
+  if (x > 22 && x < RAMP_GRADE_X + 10 && z > -22 && z < 10) {
+    let best = -1;
+    let bestD = Infinity;
+    for (let i = rampGradeFrom; i <= NR; i++) { const p = rampPts[i]; const d = (p.x - x) ** 2 + (p.z - z) ** 2; if (d < bestD) { bestD = d; best = i; } }
+    const d = Math.sqrt(bestD) - RAMP_HALF - 1.5;
+    if (best >= 0 && d < 8) ramp = { w: (1 - smooth(d / 8)) * smooth((RAMP_GRADE_X - rampPts[best].x) / 6 + 1), y: rampPts[best].y - 0.05 };
+  }
+  if (x < 30 || x > 96 || z < -6 || z > 142) return ramp;
   let best = 0;
   let bestD = Infinity;
   for (let i = Math.max(0, sTop - 6); i <= NA; i++) { const p = accessPts[i]; const d = (p.x - x) ** 2 + (p.z - z) ** 2; if (d < bestD) { bestD = d; best = i; } }
   const d = Math.sqrt(bestD) - ACCESS_HALF - 2;
-  if (d > 12) return null;
-  return { w: 1 - smooth(d / 12), y: accessPts[best].y - 0.05 };
+  if (d > 12) return ramp;
+  const acc = { w: 1 - smooth(d / 12), y: accessPts[best].y - 0.05 };
+  return ramp && ramp.w > acc.w ? ramp : acc;
 }
+/** ループ橋の、地形をならす所の始まり（x が RAMP_GRADE_X + 10 より西） */
+const rampGradeFrom = rampPts.findIndex((p, i) => i > NR / 2 && p.x < RAMP_GRADE_X + 10);
 
 /** 道（取り付け道路・高速道路）から margin 以内か（木を生やさないため。hill.js） */
 export function nearRoad(x, z, margin = 15) {
@@ -161,8 +232,10 @@ export function nearRoad(x, z, margin = 15) {
   for (let i = 0; i < NL; i += 4) { const p = loopPts[i]; if ((p.x - x) ** 2 + (p.z - z) ** 2 < m2) return true; }
   const a2 = (ACCESS_HALF + margin) ** 2;
   for (let i = 0; i <= NA; i += 2) { const p = accessPts[i]; if ((p.x - x) ** 2 + (p.z - z) ** 2 < a2) return true; }
+  const r2 = (RAMP_HALF + margin) ** 2;
+  for (let i = 0; i <= NR; i += 2) { const p = rampPts[i]; if ((p.x - x) ** 2 + (p.z - z) ** 2 < r2) return true; }
   return false;
 }
 
 /** road.js が道の形を作るための点（そのまま渡す。書き換えない） */
-export const ROAD_SAMPLES = { accessPts, accessTan, loopPts, loopTan, NA, NL };
+export const ROAD_SAMPLES = { accessPts, accessTan, loopPts, loopTan, NA, NL, rampPts, rampTan, NR };

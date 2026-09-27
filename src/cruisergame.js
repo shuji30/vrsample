@@ -130,8 +130,10 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
     body.setSeat(1, 'upright', { skirt: true });
     body.setFootFloor(null);
     cruiser.girlPivot.updateMatrixWorld(true);
-    cruiser.girlPivot.localToWorld(left.set(0.06, 0.13, 0.24));
-    cruiser.girlPivot.localToWorld(right.set(-0.06, 0.14, 0.25));
+    // 手は左右の膝の上に（前は腰の前の真ん中へ寄せていて、肘が胴の中へ入り、腕が体にめり込んで見えた。
+    // 太ももの上でもまだ右の肘が胴の後ろへ入ったので、膝まで出して腕を伸ばし気味にする）
+    cruiser.girlPivot.localToWorld(left.set(0.085, 0.165, 0.31));
+    cruiser.girlPivot.localToWorld(right.set(-0.085, 0.165, 0.31));
     body.reachHands({ left: { target: left, amount: 1 }, right: { target: right, amount: 1 } });
     body.setGrip(0.3);
   }

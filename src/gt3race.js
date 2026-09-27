@@ -399,6 +399,7 @@ export function createGT3Race({ scene, character, playerCar, circuit, voice = nu
     const pos = herProgress > playerProgress ? 2 : 1;
     const lapText = state === 'grid' || state === 'lights' ? 'スタート前' : state === 'race' ? `周 ${Math.min(CIRCUIT.laps, playerLap + 1)}/${CIRCUIT.laps}` : 'ゴール';
     playerCar.setHud(lapText, state === 'race' ? `${pos}位` : '');
+    playerCar.setLapTimes({ current: state === 'race' ? clock - lapStart : null, last: lastLap, best: bestLap });
     hud.style.display = '';
     // 地図（車内の画面と PC の右上）。女の子の車はコースにいるあいだだけ
     playerCar.setMapCars(her.root.visible ? [{ s: herS, color: '#ff6ab0' }] : []);

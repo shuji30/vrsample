@@ -150,8 +150,9 @@ function makePier() {
   const sy = pierDeckY(P.x, P.fromZ);
   sign.position.set(P.x + 1.6, sy + 1.6, P.fromZ + 0.6);
   g.add(sign);
-  const sp = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.4, 0.08), post);
-  sp.position.set(P.x + 1.6, sy + 0.7, P.fromZ + 0.6);
+  // 支柱は看板の下の縁まで（前は看板の中へ 10cm 入り、両面の表示の中に棒が見えていた）
+  const sp = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.3, 0.08), post);
+  sp.position.set(P.x + 1.6, sy + 0.65, P.fromZ + 0.6);
   g.add(sp);
   return g;
 }

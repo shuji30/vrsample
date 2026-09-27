@@ -450,6 +450,9 @@ const talkEye = new THREE.Vector3();
   world.beach?.setHands(() => player.controllers);
   // VR の最中もゲームパッドで歩く・向きを変える
   player.setPadSource(() => desktop.xrPad);
+  // 乗り物に乗っていないときも、ハンコンで歩く（ハンドルで向き、アクセルで前、ブレーキで後ろ）
+  player.setWheelSource(() => kartDrive.walkInput());
+  desktop.setWheelSource(() => kartDrive.walkInput());
   desktop.onUse = () => Boolean(world.beachUse?.(camera));
   world.onPlayerTravel = (x, y, z, look) => {
     if (renderer.xr.isPresenting) {

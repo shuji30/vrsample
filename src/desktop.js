@@ -113,10 +113,13 @@ export function createDesktopControls(renderer, camera, world) {
 
   /** ゲームパッドの左スティック（gamepad.js）。キーと足し合わせる */
   const stick = { x: 0, y: 0 };
+  /** ハンコン（乗り物に乗っていないとき。kartdrive.js の walkInput）。アクセルで前、ブレーキで後ろ */
+  let wheelSource = null;
+  let wheelAhead = 0;
 
   function walk(dt) {
     const ahead = Math.max(-1, Math.min(1, (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0)
-      - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0) - stick.y));
+      - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0) - stick.y + wheelAhead));
     const side = Math.max(-1, Math.min(1, (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0)
       - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) + stick.x));
     if (ahead === 0 && side === 0) return;
@@ -310,6 +313,16 @@ export function createDesktopControls(renderer, camera, world) {
     camera.position.copy(controls.target).add(orbit);
   }
 
+  /**
+   * その場で向きを変える（ハンコンのハンドル。angle は左が +）。見回し（lookAround）は注視点のまわりを
+   * カメラが回るので、ハンドルに使うと 3m 先の点のまわりを回ってしまう。こちらは注視点をカメラのまわりに回す
+   */
+  const turnAxis = new THREE.Vector3(0, 1, 0);
+  function turnInPlace(angle) {
+    orbit.subVectors(controls.target, camera.position).applyAxisAngle(turnAxis, angle);
+    controls.target.copy(camera.position).add(orbit);
+  }
+
   /** VR のコントローラーの Gamepad（ゲームパッドの写しを見分けるのに使う） */
   function xrGamepads() {
     const session = renderer.xr.getSession?.();
@@ -330,6 +343,8 @@ export function createDesktopControls(renderer, camera, world) {
     },
     /** F を押したとき、先に聞く（砂浜のボール・貝がら。使ったら true） */
     set onUse(fn) { onUse = fn; },
+    /** 乗り物に乗っていないときのハンコンの入力（kartdrive.js の walkInput） */
+    setWheelSource(fn) { wheelSource = fn; },
     /** VR の最中のゲームパッドのスティック（{ move, look, connected }） */
     get xrPad() { return xrPad; },
     /** 診断用：VR の最中にパッドを読む決まり（auto / on / off） */
@@ -368,6 +383,10 @@ export function createDesktopControls(renderer, camera, world) {
       stick.x = pad.move.x;
       stick.y = pad.move.y;
       lookAround(pad.look.x, pad.look.y, seconds);
+      // ハンコン：ハンドルで向きを変える（左へ切ると左を向く）。後ろは前の 0.7 倍の速さ
+      const wheel = wheelSource?.();
+      wheelAhead = wheel ? wheel.throttle - wheel.brake * 0.7 : 0;
+      if (wheel?.steer) turnInPlace(wheel.steer * Math.abs(wheel.steer) ** 0.5 * 1.1 * seconds);
       walk(seconds);
       controls.update();
       // 目が地面より下へ行かないように（歩くときは地面の高さの差だけ上げ下げするので、一度ずれると戻らない。

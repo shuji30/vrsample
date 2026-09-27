@@ -370,6 +370,15 @@ export function createDesktopControls(renderer, camera, world) {
       lookAround(pad.look.x, pad.look.y, seconds);
       walk(seconds);
       controls.update();
+      // 目が地面より下へ行かないように（歩くときは地面の高さの差だけ上げ下げするので、一度ずれると戻らない。
+      // 地面から 0.8m より下になったら、目の高さ 1.62m へ戻す。C でも戻せる：main.js の resetView）
+      const ground = world.groundHeight?.(camera.position.x, camera.position.z) ?? 0;
+      if (camera.position.y < ground + 0.8) {
+        const up = ground + 1.62 - camera.position.y;
+        camera.position.y += up;
+        controls.target.y += up;
+        controls.update();
+      }
       updateBall(seconds);
     },
   };

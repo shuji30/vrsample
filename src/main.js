@@ -308,6 +308,8 @@ const talkEye = new THREE.Vector3();
     if ((event.key === 'd' || event.key === 'D') && !kartDrive.driving) debugPanel.toggle();
     if (event.key === 'r' || event.key === 'R') world.resetProps();
     if (event.key === 'm' || event.key === 'M') music.toggle();
+    // C：乗り物に乗っていないときは、視点の位置を戻す（乗っているあいだは kartdrive.js が視点の切り替えに使う）
+    if (event.code === 'KeyC' && !event.repeat && !kartDrive.driving) resetView();
     // 時間帯を順に（昼 → 夕方 → 夜）。夜は公園の奥で花火が上がる
     if (event.key === 't' || event.key === 'T') {
       const key = world.cycleTheme();
@@ -459,7 +461,37 @@ const talkEye = new THREE.Vector3();
       desktop.controls.update();
     }
   };
-  Object.assign(window.__vrsample, { world, player, desktop, debugPanel, music, kartDrive });
+  /**
+   * 視点を戻す（C）：いまいる所にいちばん近い歩ける所の、地面の上の目の高さへ。向きはそのまま。
+   * 地面の下にもぐってしまったとき・歩ける範囲の外へ出てしまったときのため。VR はリグを地面へ置いて、頭をそこへ合わせる
+   */
+  function resetView() {
+    const clamp = (x, z) => world.clampToBounds?.(x, z, 0.25) ?? { x, z };
+    const ground = (x, z) => world.groundHeight?.(x, z) ?? 0;
+    if (renderer.xr.isPresenting) {
+      const head = player.headWorldPosition(new THREE.Vector3());
+      const q = new THREE.Quaternion();
+      player.headWorldQuaternion(q);
+      const f = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+      const p = clamp(head.x, head.z);
+      player.player.position.y = ground(p.x, p.z);
+      player.alignHeadTo(p.x, p.z, Math.atan2(-f.x, -f.z), 1);
+      return;
+    }
+    const c = camera.position;
+    const t = desktop.controls.target;
+    let fx = t.x - c.x;
+    let fz = t.z - c.z;
+    const len = Math.hypot(fx, fz) || 1;
+    fx /= len;
+    fz /= len;
+    const p = clamp(c.x, c.z);
+    const g = ground(p.x, p.z);
+    camera.position.set(p.x, g + 1.62, p.z);
+    desktop.controls.target.set(p.x + fx * 3, g + 1.2, p.z + fz * 3);
+    desktop.controls.update();
+  }
+  Object.assign(window.__vrsample, { world, player, desktop, debugPanel, music, kartDrive, resetView });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する
   const voiceStatusEl = document.getElementById('voice-status');

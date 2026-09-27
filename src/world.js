@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createTextures } from './textures.js';
 import { createRoom, ROOM, ANNEX, EAST_DOOR } from './room.js';
-import { createBilliards, annexBlocks, tableBlocks, HOUSE_EAST } from './billiards.js';
+import { createBilliards, annexBlocks, tableBlocks, HOUSE_EAST, tableToWorld } from './billiards.js';
 import { createBilliardGame } from './billiardgame.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
@@ -209,6 +209,11 @@ export function createWorld(renderer, scene, {
     grabbables.push(ball);
   }
   const tennisBalls = grabbables.filter((prop) => prop.userData.tennis);
+  /** 家（部屋と、ビリヤードの部屋）の床の上か（pad だけ外へ広げる） */
+  function inHouseFootprint(x, z, pad) {
+    return (x > ROOM.minX - pad && x < ROOM.maxX + pad && z > ROOM.minZ - pad && z < ROOM.maxZ + pad)
+      || (x > ANNEX.minX - pad && x < ANNEX.maxX + pad && z > ANNEX.minZ - pad && z < ANNEX.maxZ + pad);
+  }
 
   // 食卓の手前（ソファー側）にブーメラン。投げると左へ曲がって飛び、落ちたらこむぎが拾って持ってくる
   const boomerang = createBoomerang({
@@ -216,6 +221,13 @@ export function createWorld(renderer, scene, {
     homeYaw: 0.6,
     clamp: (x, z, inset, from) => clampToBounds(x, z, inset, from),
     groundHeight: (x, z) => groundHeight(x, z),
+    indoors: (x, z) => inHouseFootprint(x, z, 0),
+    // 外の高いところ：家（壁と屋根、3.4m まで）とテニスの防球ネット（3m）にだけ当たる
+    tallHit: (px, pz, x, y, z) => {
+      if (y < 3.4 && inHouseFootprint(x, z, 0.2) && !inHouseFootprint(px, pz, 0.2)) return true;
+      const b = COURT_BACKSTOP;
+      return y < b.height && x > b.minX && x < b.maxX && Math.sign(pz - b.z) !== Math.sign(z - b.z);
+    },
   });
   scene.add(boomerang.mesh);
   grabbables.push(boomerang.mesh);
@@ -864,6 +876,7 @@ export function createWorld(renderer, scene, {
   // ラケットで打つ。打った音と弾む音は、聞いている位置（camera）からの距離で小さくする
   const impact = createImpactSound();
   const hearing = new THREE.Vector3();
+  const billiardSoundPos = new THREE.Vector3();
   function soundAt(position, kind, strength) {
     if (!camera) return;
     camera.getWorldPosition(hearing);
@@ -1156,6 +1169,11 @@ export function createWorld(renderer, scene, {
     if (!jetskiRidden) jetski.idle(dt);
     // ビリヤードの球
     billiards.step(dt);
+    // ビリヤードの音（球どうし・クッション・ポケット・突く）。聞く位置からの距離で小さくする
+    for (const snd of billiards.takeSounds()) {
+      tableToWorld(snd.x, snd.z, billiardSoundPos);
+      soundAt(billiardSoundPos, snd.kind, snd.strength);
+    }
     // イルカ：乗っている船（クルーザー・ジェットスキー）の横へ寄ってくる
     const boatNow = cruiserRidden ? { x: cruiser.boat.position.x, z: cruiser.boat.position.z, yaw: cruiser.state.yaw, speed: cruiser.speed }
       : jetskiRidden ? { x: jetski.position.x, z: jetski.position.z, yaw: jetski.state.yaw, speed: jetski.speed } : null;
@@ -1317,7 +1335,8 @@ export function createWorld(renderer, scene, {
       // 念のため。窓から飛び出すなどして行方不明になったら戻す
       tmp.set(prop.position.x, 0, prop.position.z);
       // （テニスコートの奥の柵が 30m 先にあるので、それより遠く）
-      if (prop.position.y < -2 || tmp.length() > 45) resetProp(prop);
+      // ブーメランは砂浜（地面が -25m）や遠くの公園でも落ちたままにする（こむぎが届かなければ、corgi.js が食卓へ戻す）
+      if (data.boomerang ? prop.position.y < groundHeight(prop.position.x, prop.position.z) - 2 : (prop.position.y < -2 || tmp.length() > 45)) resetProp(prop);
     }
 
     // --- ラケットで打つ ------------------------------------------------------

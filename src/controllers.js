@@ -242,6 +242,12 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     sinceRelease = 0;
     // 相手へ寄せるのはキャッチボールの球だけ
     if (object === world.ball) world.catchGame?.assistThrow(object.position, object.userData.velocity, 0.5);
+    // ブーメランの曲がる向き：右手なら左へ、左手なら右へ。手首をはっきり倒していたら（30° より）、倒した向き
+    // （コントローラーの右の軸が上を向く = 手の甲の上が左へ倒れる → 左）
+    if (object.userData.boomerang) {
+      const tilt = new THREE.Vector3(1, 0, 0).applyQuaternion(controller.getWorldQuaternion(new THREE.Quaternion())).y;
+      object.userData.turnSign = Math.abs(tilt) > 0.5 ? Math.sign(tilt) : controller.userData.handedness === 'left' ? -1 : 1;
+    }
     object.userData.spin.set(
       (Math.random() - 0.5) * 6,
       (Math.random() - 0.5) * 6,

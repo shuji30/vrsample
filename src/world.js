@@ -50,6 +50,7 @@ import { createCruiser, onPier, pierDeckY, PIER } from './cruiser.js';
 import { createCruiserGame } from './cruisergame.js';
 import { createJetski, seaBlocked } from './jetski.js';
 import { createDolphins } from './dolphins.js';
+import { createSeagulls } from './seagulls.js';
 import { createJetskiGame } from './jetskigame.js';
 import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
 import { createCessnaGame } from './cessnagame.js';
@@ -483,6 +484,10 @@ export function createWorld(renderer, scene, {
   const dolphins = createDolphins({ count: 4, blocked: (x, z) => seaBlocked(x, z) || road.pierBlocked(x, z) });
   scene.add(dolphins.group);
   cruiserGame?.setDolphins(dolphins);
+  // カモメ（7 羽）。砂浜・桟橋・丘の北の崖の縁・沖の上を輪を描いて飛ぶ。船に乗っていると 3 羽がついてくる
+  const seagulls = createSeagulls({ sound: Boolean(camera) });
+  scene.add(seagulls.group);
+  const gullEar = new THREE.Vector3();
   let jetskiRidden = false;
   let jetskiWait = 0;
   const jetskiGame = camera ? createJetskiGame({ character, jetski, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
@@ -1178,6 +1183,7 @@ export function createWorld(renderer, scene, {
     const boatNow = cruiserRidden ? { x: cruiser.boat.position.x, z: cruiser.boat.position.z, yaw: cruiser.state.yaw, speed: cruiser.speed }
       : jetskiRidden ? { x: jetski.position.x, z: jetski.position.z, yaw: jetski.state.yaw, speed: jetski.speed } : null;
     dolphins.update(dt, boatNow);
+    seagulls.update(dt, camera ? camera.getWorldPosition(gullEar) : null, boatNow);
     // セスナ：乗ったのに女の子がいない（飛行場に来ていない）ときは、3 秒で動けるようにする
     cessnaWait = cessnaRidden && cessna.hold && !cessnaGame?.active ? cessnaWait + dt : 0;
     if (cessnaWait > 3) cessna.hold = false;
@@ -1351,6 +1357,7 @@ export function createWorld(renderer, scene, {
     billiardGame,
     billiards,
     dolphins,
+    seagulls,
     grabbables,
     boomerang,
     interactables,

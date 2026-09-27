@@ -71,10 +71,9 @@ function beachChairModel() {
   back.rotation.x = 0.45;
   back.castShadow = true;
   g.add(back);
-  // 骨組み：背もたれの面（y = T + 0.27 で z = 0.35、傾き 0.45）の上を、地面から背もたれの上の端まで
-  // 後ろの脚が通る（座面の後ろの端もこの線の上）。前の脚は地面からひじ掛けの前の端まで。
-  // ひじ掛けは背もたれ（後ろの脚）から前の脚まで。以前は後ろの脚が背もたれの 9cm 後ろに離れて立ち、
-  // ひじ掛けも宙に浮いていた
+  // 骨組み：後ろの脚は地面からまっすぐ上へ立て、ひじ掛けの後ろの端（背もたれの面の上）で背もたれに付ける。
+  // 背もたれの左右の縁には、座面の後ろの端から上の端まで枠を通す。前の脚は地面からひじ掛けの前の端まで。
+  // 以前の後ろの脚は背もたれに沿って斜めで、足先が座面の下へ入り、後ろへ倒れそうに見えた
   const lean = Math.tan(back.rotation.x);
   const backZ = (y) => 0.35 + (y - (T + 0.27)) * lean;
   const rod = (x, y0, z0, y1, z1, r = 0.014) => {
@@ -89,7 +88,8 @@ function beachChairModel() {
   const armY = T + 0.16;
   const armFront = -0.21;
   for (const sx of [-0.26, 0.26]) {
-    rod(sx, -0.02, backZ(-0.02), topY, backZ(topY));             // 後ろの脚（背もたれの縁）
+    rod(sx, -0.02, backZ(armY), armY + 0.015, backZ(armY));      // 後ろの脚（真下へまっすぐ）
+    rod(sx, T - 0.02, backZ(T - 0.02), topY, backZ(topY), 0.012); // 背もたれの縁の枠
     rod(sx, -0.02, armFront - 0.05, armY, armFront + 0.01);      // 前の脚（ひじ掛けの前の端まで）
     const arm = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.03, backZ(armY) - armFront), frame);
     arm.position.set(sx, armY, (backZ(armY) + armFront) / 2);

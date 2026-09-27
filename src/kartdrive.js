@@ -5,7 +5,7 @@ import { BIKE } from './bike.js';
 import { BIKE_TRACK } from './biketrack.js';
 import { createWheelInput } from './wheel.js';
 import { createWheelFFB } from './wheelffb.js';
-import { createEngineSound } from './audio.js';
+import { createEngineSound, createSignalSound } from './audio.js';
 
 /**
  * プレイヤーがカート（またはポケバイ）に乗って運転する。乗り物は近いほうに乗る。
@@ -41,6 +41,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   const wheel = createWheelInput();
   const ffb = createWheelFFB();
   const engine = createEngineSound();
+  const signal = createSignalSound();
   const keys = new Set();
   let driving = false;
   let view = 'first';           // PC の視点：運転席 / 後ろから
@@ -87,10 +88,38 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     if (!vehicle.silent) engine.start();   // シーソーなど、エンジンの無い乗り物は鳴らさない
     if (renderer.xr.isPresenting) calibrateHead();
     world.onKartEnter?.(vehicle);
-    // 切れたハンコンをつなぎ直す（FFB・HID のペダルはボタンなしで開き直せる。Gamepad API のハンコンは
-    // ボタンを 1 回押すまで見えないので、そう知らせる）
-    ffb.refresh?.();
-    if (!wheel.refresh()) notice('ハンコンが見えません。ハンコンのボタンを 1 回押すと、つながります');
+    // ハンコンをつなぎ直す。車（ハンドルで運転する乗り物）は、開いていても一度閉じてから開き直す
+    // （開いたままでも入力や FFB が届かなくなっていることがあるため）。ほかの乗り物は、切れているときだけ。
+    // Gamepad API のハンコンはボタンを 1 回押すまで見えないので、そう知らせる
+    if (DRIVEN.has(vehicle.kind ?? 'kart')) reconnectWheel();
+    else {
+      ffb.refresh?.();
+      if (!wheel.refresh()) notice('ハンコンが見えません。ハンコンのボタンを 1 回押すと、つながります');
+    }
+  }
+  /** ハンドルで運転する乗り物（kind。カートは kind を持たないので 'kart'）。F40 は GT3 と同じ 'gt3' */
+  const DRIVEN = new Set(['kart', 'bike', 'gt3', 'jetski', 'cruiser', 'cessna']);
+  /**
+   * ハンコン（入力の HID・FFB）を閉じてから開き直す。beep：終わったら音で知らせる（VR では画面の知らせが見えない。
+   * 高い音 = ハンドルが見えている、低い音 2 回 = 見えない）
+   */
+  let reconnecting = null;
+  function reconnectWheel({ beep = false } = {}) {
+    if (reconnecting) return reconnecting;
+    // 入力（wheel.js）を先に開き直し、FFB はそのあとで始め直す（同じ機器のことがあるので、順番に）
+    reconnecting = wheel.reconnect()
+      .then(async (r) => { await (ffb.forceReconnect?.(r.devices) ?? false); return r; })
+      .then((r) => {
+        if (!r.visible) notice('ハンコンが見えません。ハンコンのボタンを 1 回押すと、つながります');
+        if (beep) {
+          if (r.visible) signal.beep(true);
+          else { signal.beep(false); setTimeout(() => signal.beep(false), 250); }
+        }
+        return r;
+      })
+      .catch(() => null)
+      .finally(() => { reconnecting = null; });
+    return reconnecting;
   }
   // 画面の上に短く出す知らせ（PC）。VR では見えないので、声の代わりに振動などは付けない
   let noticeEl = null;
@@ -192,6 +221,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       if (renderer.xr.isPresenting) calibrateHead();
       else view = view === 'first' ? 'chase' : 'first';
     }
+    // H：VR では設定の画面が見えないので、代わりにハンコンをつなぎ直す（音で知らせる）
+    if (event.code === 'KeyH' && !event.repeat && renderer.xr.isPresenting) { reconnectWheel({ beep: true }); return; }
     if (renderer.xr.isPresenting) return;
     if (event.code === 'KeyH') wheel.openPanel();
   });
@@ -494,6 +525,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     get vehicle() { return vehicle; },
     get input() { return lastInput; },
     walkInput,
+    reconnectWheel,
     wheel,
     ffb,
   };

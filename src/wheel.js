@@ -203,6 +203,34 @@ export function createWheelInput() {
       }
     } catch { /* ボタンから */ }
   }
+  /**
+   * つなぎ直す（車に乗ったとき・VR で H を押したとき）。HID でつないだ機器は、開いたままでも一度閉じてから
+   * 開き直す（開いたままでも入力が届かなくなっていることがあり、reopenHid は開いていれば何もしないため）。
+   * Gamepad API のハンコンは、ブラウザの決まりでページからは開き直せないので、見えているかだけ返す
+   * @returns {Promise<{ hid: number, devices: HIDDevice[], visible: boolean }>} 開き直した HID の数と機器、ハンドルの機器が見えているか
+   */
+  async function reconnect() {
+    let hid = 0;
+    const devices = [];
+    for (const pad of hidPads.slice()) {
+      const d = pad.device;
+      if (!d) continue;
+      try {
+        if (d.opened) await d.close();
+        await d.open();
+        hid++;
+        devices.push(d);
+      } catch {
+        // 開き直せなかった（抜かれたなど）。一覧から外し、あとで挿し直されたら connect で戻る
+        hidPads.splice(hidPads.indexOf(pad), 1);
+      }
+    }
+    await reopenHid();
+    // 押したままに見えていたボタンを忘れる（切れているあいだに離したボタンで、キーが押されたままにならないように）
+    lastPressed.clear();
+    const want = config.steer?.id;
+    return { hid, devices, visible: want ? Boolean(byId(want)) : pads().some(isSimDevice) };
+  }
   reopenHid();
   if (hidSupported) navigator.hid.addEventListener?.('connect', () => { reopenHid(); });
   /** ゲームパッドでない入力機器（ハンコン・ペダル・シフターなど） */
@@ -735,6 +763,7 @@ export function createWheelInput() {
   }
   return {
     refresh,
+    reconnect,
     read,
     readPad,
     pollButtons,

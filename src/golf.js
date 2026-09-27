@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GOLF_ZONE } from './hill.js';
 
 /**
- * パットパットゴルフ（コースと球）。観覧車の南の芝地に 6 ホール。女の子と交互に打つ（golfgame.js）。
+ * パットゴルフ（コースと球）。観覧車の南の芝地に 6 ホール。女の子と交互に打つ（golfgame.js）。
  *
  * ホールは軸にそろった長方形のつなぎ合わせ（レーン）。まわりは木の縁（球が跳ね返る）。
  * 1 まっすぐ・小さなこぶ / 2 L 字（曲がり角で縁に当てる）/ 3 なみなみ（小さなこぶが 2 つ）/
@@ -408,7 +408,7 @@ export function createGolf() {
     c.fillStyle = '#fff';
     c.font = 'bold 30px sans-serif';
     c.textAlign = 'center';
-    c.fillText('パットパットゴルフ', 256, 36);
+    c.fillText('パットゴルフ', 256, 36);
     c.font = 'bold 20px sans-serif';
     const x0 = 118;
     const w = 50;

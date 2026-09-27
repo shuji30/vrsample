@@ -501,7 +501,7 @@ export function createWorld(renderer, scene, {
     };
   }
   void coasterEye;
-  // 観覧車の南のパットパットゴルフ。芝地に入ると、女の子も来て交互に打つ
+  // 観覧車の南のパットゴルフ。芝地に入ると、女の子も来て交互に打つ
   const golf = createGolf();
   scene.add(golf.group);
   golf.drawBoard([[], []], [0, 0]);
@@ -674,7 +674,7 @@ export function createWorld(renderer, scene, {
     { minX: -31.5, maxX: -16.0, minZ: -6.0, maxZ: 12.0 },
     // 家の右の芝生（GT3 を飾っておく所）。庭（x 6 まで）と 0.5m、カートコースの範囲（z -5 まで）と 0.6m 重ねる
     { minX: 5.5, maxX: 22.0, minZ: -5.6, maxZ: 4.5 },
-    // 観覧車の南のパットパットゴルフの芝地（観覧車のまわりの範囲と 0.5m 重ねる）
+    // 観覧車の南のパットゴルフの芝地（観覧車のまわりの範囲と 0.5m 重ねる）
     { minX: -37.5, maxX: -15.5, minZ: 11.5, maxZ: 34.5 },
     // 家の南の芝生と、ジェットコースターの駅のホーム（線路の手前まで）。家の右の芝生と 0.5m 重ねる
     { minX: -3.5, maxX: 18.0, minZ: 4.0, maxZ: COASTER.station.z - 0.75 },
@@ -1025,7 +1025,7 @@ export function createWorld(renderer, scene, {
         ferrisGame.start();
       }
     }
-    // パットパットゴルフ：芝地に入ったら（ほかの遊びをしていなければ）
+    // パットゴルフ：芝地に入ったら（ほかの遊びをしていなければ）
     if (golfGame) {
       if (camera) camera.getWorldPosition(golfEye);
       golfGame.playerHere = golf.inZone(golfEye.x, golfEye.z);

@@ -156,9 +156,11 @@ function makeRoom(group, tex) {
   floor.position.set(cx - 0.01, 0.001, cz);
   floor.receiveShadow = true;
   group.add(floor);
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(w, d), ceilMat);
+  // 天井は屋根の箱の下の面（高さ H）から 2cm 下げる。同じ高さに重ねていたら、Z ファイティングでちらついた
+  // 縁は壁の中へ 2cm 入れる（壁の内側の面ちょうどで止めると、境目が点線のようにちらついた）
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(w + 0.04, d + 0.04), ceilMat);
   ceil.rotation.x = Math.PI / 2;
-  ceil.position.set(cx, H, cz);
+  ceil.position.set(cx, H - 0.02, cz);
   group.add(ceil);
   // 壁（厚み 14cm の押し出し。窓は穴）。shape は壁のローカル x（壁の中心が 0）・y（床から）
   const wallPiece = (width, holes) => {
@@ -222,6 +224,13 @@ function makeRoom(group, tex) {
   for (const [len, x, z, ry] of [[w, cx, ANNEX.minZ + 0.006, 0], [w, cx, ANNEX.maxZ - 0.006, Math.PI], [d, ANNEX.maxX - 0.006, cz, -Math.PI / 2]]) {
     const b = new THREE.Mesh(new THREE.BoxGeometry(len, 0.09, 0.012), trimMat);
     b.position.set(x, 0.045, z);
+    b.rotation.y = ry;
+    group.add(b);
+  }
+  // 廻り縁（壁と天井の境目の細い木）。屋根の影の縁が壁のいちばん上に点線のように漏れてちらついたので、境目を覆う
+  for (const [len, x, z, ry] of [[w + 0.04, cx, ANNEX.minZ + 0.012, 0], [w + 0.04, cx, ANNEX.maxZ - 0.012, 0], [d, ANNEX.maxX - 0.012, cz, Math.PI / 2], [d, ANNEX.minX + 0.012, cz, Math.PI / 2]]) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(len, 0.05, 0.024), trimMat);
+    b.position.set(x, H - 0.02 - 0.025, z);
     b.rotation.y = ry;
     group.add(b);
   }
@@ -451,6 +460,8 @@ export function createBilliards({ scene, tex }) {
   const CUSHION = 0.75;
   const BALL_E = 0.95;
   let events = [];          // この 1 回の突きで起きたこと（billiardgame.js が読む）
+  const sounds = [];        // 鳴らす音（world.js が毎フレーム取り出す）：{ kind, strength, x, z }（台のローカル）
+  const sound = (kind, strength, b) => { if (sounds.length < 16) sounds.push({ kind, strength: Math.min(1, strength), x: b.x, z: b.z }); };
   const axis = new THREE.Vector3();
   const spin = new THREE.Quaternion();
 
@@ -465,6 +476,7 @@ export function createBilliards({ scene, tex }) {
         b.drop = 0;
         b.vx = b.vz = 0;
         events.push({ type: 'pocket', n: b.n });
+        sound('pocket', 0.4 + Math.min(0.6, Math.hypot(b.vx, b.vz)), b);
         return true;
       }
     }
@@ -480,10 +492,10 @@ export function createBilliards({ scene, tex }) {
     const nearCornerX = ax > TABLE.halfL - CORNER_MOUTH;
     const nearCornerZ = az > TABLE.halfW - CORNER_MOUTH;
     const inSideMouth = ax < SIDE_MOUTH;
-    if (b.x > L && !nearCornerZ) { b.x = L - (b.x - L); if (b.vx > 0) { b.vx *= -CUSHION; b.vz *= 0.92; events.push({ type: 'rail', n: b.n }); } }
-    if (b.x < -L && !nearCornerZ) { b.x = -L - (b.x + L); if (b.vx < 0) { b.vx *= -CUSHION; b.vz *= 0.92; events.push({ type: 'rail', n: b.n }); } }
-    if (b.z > Wd && !nearCornerX && !inSideMouth) { b.z = Wd - (b.z - Wd); if (b.vz > 0) { b.vz *= -CUSHION; b.vx *= 0.92; events.push({ type: 'rail', n: b.n }); } }
-    if (b.z < -Wd && !nearCornerX && !inSideMouth) { b.z = -Wd - (b.z + Wd); if (b.vz < 0) { b.vz *= -CUSHION; b.vx *= 0.92; events.push({ type: 'rail', n: b.n }); } }
+    if (b.x > L && !nearCornerZ) { b.x = L - (b.x - L); if (b.vx > 0) { sound('cushion', b.vx / 2.5, b); b.vx *= -CUSHION; b.vz *= 0.92; events.push({ type: 'rail', n: b.n }); } }
+    if (b.x < -L && !nearCornerZ) { b.x = -L - (b.x + L); if (b.vx < 0) { sound('cushion', -b.vx / 2.5, b); b.vx *= -CUSHION; b.vz *= 0.92; events.push({ type: 'rail', n: b.n }); } }
+    if (b.z > Wd && !nearCornerX && !inSideMouth) { b.z = Wd - (b.z - Wd); if (b.vz > 0) { sound('cushion', b.vz / 2.5, b); b.vz *= -CUSHION; b.vx *= 0.92; events.push({ type: 'rail', n: b.n }); } }
+    if (b.z < -Wd && !nearCornerX && !inSideMouth) { b.z = -Wd - (b.z + Wd); if (b.vz < 0) { sound('cushion', -b.vz / 2.5, b); b.vz *= -CUSHION; b.vx *= 0.92; events.push({ type: 'rail', n: b.n }); } }
     // 口の奥の壁（ポケットを外れて口の中で跳ねる）：台の外へは出さない
     const outL = TABLE.halfL + 0.04;
     const outW = TABLE.halfW + 0.045;
@@ -528,6 +540,7 @@ export function createBilliards({ scene, tex }) {
         a.vx -= j2 * nx; a.vz -= j2 * nz;
         b.vx += j2 * nx; b.vz += j2 * nz;
         events.push({ type: 'hit', a: a.n, b: b.n, speed: rel });
+        sound('ballHit', rel / 2.5, a);
       }
     }
     for (const b of live) { if (!pocketCheck(b)) cushions(b); }
@@ -581,6 +594,7 @@ export function createBilliards({ scene, tex }) {
     cue.vx = (dirX / l) * speed;
     cue.vz = (dirZ / l) * speed;
     events = [];
+    sound('cue', speed / 4, cue);
   }
   /** 手球を置き直す（落ちたとき）。ほかの球と重なる所は避ける */
   function spotCue(x = HEAD_SPOT.x, z = HEAD_SPOT.z) {
@@ -619,6 +633,8 @@ export function createBilliards({ scene, tex }) {
     get moving() { return moving(); },
     /** 最後に突いてから起きたこと（pocket / rail / hit） */
     get events() { return events; },
+    /** たまった音を取り出す（取り出したら空にする） */
+    takeSounds() { return sounds.splice(0, sounds.length); },
     lamp,
   };
 }

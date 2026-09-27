@@ -193,6 +193,19 @@ const LOUNGE_POSE = {
  * わずかに下げ、膝を軽く曲げて足先をペダルへ出す。膝はハンドルの下をくぐる
  * （腿を上げると、膝がハンドルを突き抜けた）。腕は reachHands でハンドルを握る。
  */
+/**
+ * 細い板（シーソー）をまたいで座る。SIT_POSE との差ぶんだけ書く（setSeat の straddle）。
+ * 膝を閉じた座り方だと、幅 22cm の板が腿のあいだを通り、脚が板に埋まっていた。腿を少し下へ垂らして
+ * （水平から 47° 下がり）、左右へ開き（左脚は +Z・右脚は -Z が開く向き）、板の両わきへ脚を下ろす。
+ * 脛はほぼ真下。スカートは setSeat の skirt で腰に沿わせる（腿といっしょに持ち上がって中が見えないように）
+ */
+const STRADDLE_POSE = {
+  leftUpperLeg: [-0.72, 0.02, 0.3],
+  rightUpperLeg: [-0.72, -0.02, -0.3],
+  leftLowerLeg: [0.72, 0, 0],
+  rightLowerLeg: [0.72, 0, 0],
+};
+
 const KART_POSE = {
   hips: [-0.06, 0, 0],
   spine: [-0.08, 0, 0],
@@ -280,7 +293,7 @@ const FOOT_SOLE = { ankle: 0.085, toes: 0.032 };
 
 const POSE_BONES = [...new Set([
   ...Object.keys(STAND_POSE), ...Object.keys(SIT_POSE), ...Object.keys(CROSS_LEGS),
-  ...Object.keys(LOUNGE_POSE), ...Object.keys(KART_POSE), ...Object.keys(NAP_POSE), 'hips', 'neck', 'head',
+  ...Object.keys(LOUNGE_POSE), ...Object.keys(KART_POSE), ...Object.keys(NAP_POSE), ...Object.keys(STRADDLE_POSE), 'hips', 'neck', 'head',
 ])];
 
 /** 指を軽く握らせる。開いたままの手は VR で見ると妙に目につく */
@@ -511,6 +524,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let napAmount = 0;      // 横になっている度合い
   let kartSeat = 0;       // カートの座り方の度合い（setSeat から）
   let tuck = 0;           // 横になる途中で脚を引き寄せる度合い
+  let straddle = 0;       // 細い板をまたいで脚を開く度合い（シーソー。setSeat の straddle）
   let legCross = 0;       // 足を組んでいる度合い（ふつうの座りのとき）
   let legCrossWant = 0;
   let armCross = 0;       // 腕を組んでいる度合い
@@ -1152,6 +1166,8 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       v = lerp(v, NAP_POSE[name]?.[i] ?? 0, napAmount);
       const tuckValue = TUCK_POSE[name];
       if (tuckValue && tuck > 0) v = lerp(v, tuckValue[i], tuck);
+      const straddleValue = STRADDLE_POSE[name];
+      if (straddleValue && straddle > 0) v = lerp(v, straddleValue[i], straddle);
       _seatValue[i] = v;
     }
     return _seatValue;
@@ -2033,11 +2049,14 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     /**
      * 外から座らせる（カートの座席など。drive しているときだけ効く）。amount は座りの
      * 混ざり具合、style は 'kart'（カートの座席）か 'lounge'（背もたれに預けて脚を伸ばす）。
-     * skirt: true で、スカートを腿に沿わせる（向かいに人が座るとき。カートの座席はいつも）
+     * skirt: true で、スカートを腿に沿わせる（向かいに人が座るとき。カートの座席はいつも）。
+     * straddle: true で、細い板をまたいで脚を開いて座る（シーソー）
      */
-    setSeat(amount, style = 'kart', { skirt = false } = {}) {
+    setSeat(amount, style = 'kart', { skirt = false, straddle: wantStraddle = false } = {}) {
       if (!driver) return;
       sitAmount = clamp01(amount);
+      // straddle: true で、細い板をまたいで脚を開いて座る（シーソー）
+      straddle = wantStraddle ? 1 : 0;
       lounge = style === 'lounge' ? 1 : 0;
       kartSeat = style === 'kart' && sitAmount > 0 ? 1 : 0;
       skirtOnLegs((kartSeat > 0 || skirt) && sitAmount > 0.35);

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createTextures } from './textures.js';
 import { createRoom, ROOM, ANNEX, EAST_DOOR } from './room.js';
 import { createBilliards, annexBlocks, tableBlocks, HOUSE_EAST } from './billiards.js';
+import { createBilliardGame } from './billiardgame.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
 import { createKart, gridSlot } from './kart.js';
@@ -517,6 +518,15 @@ export function createWorld(renderer, scene, {
   const golfGame = camera ? createGolfGame({ character, golf, voice, camera, playerHead: (out) => camera.getWorldPosition(out) }) : null;
   if (golfGame) {
     golfGame.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
+    };
+  }
+  // ビリヤード：ビリヤードの部屋に入ると、女の子が来て交互に突く
+  const billiardEye = new THREE.Vector3();
+  const billiardGame = camera ? createBilliardGame({ character, billiards, voice, scene, camera, playerHead: (out) => camera.getWorldPosition(out) }) : null;
+  if (billiardGame) {
+    billiardGame.onFinish = () => {
       character.watch(furniture.ball);
       catchGame?.resume();
     };
@@ -1040,6 +1050,18 @@ export function createWorld(renderer, scene, {
         ferrisGame.start();
       }
     }
+    // ビリヤード：ビリヤードの部屋に入ったら（ほかの遊びをしていなければ）
+    if (billiardGame) {
+      if (camera) camera.getWorldPosition(billiardEye);
+      billiardGame.playerHere = billiardGame.inAnnex(billiardEye.x, billiardEye.z);
+      if (billiardGame.wanted && !billiardGame.active && !seatGame?.active && !golfGame?.active && !beachGame?.active && !kartGame?.active && !bikeGame?.active) {
+        if (tennisGame?.active) tennisGame.stop();
+        else {
+          catchGame?.suspend();
+          billiardGame.start();
+        }
+      }
+    }
     // パットゴルフ：芝地に入ったら（ほかの遊びをしていなければ）
     if (golfGame) {
       if (camera) camera.getWorldPosition(golfEye);
@@ -1082,6 +1104,7 @@ export function createWorld(renderer, scene, {
     else if (ferrisGame?.active) ferrisGame.update(dt);
     else if (coasterGame?.active) coasterGame.update(dt);
     else if (golfGame?.active) golfGame.update(dt);
+    else if (billiardGame?.active) billiardGame.update(dt);
     else if (tennisGame?.active) tennisGame.update(dt);
     else catchGame?.update(dt);
     }
@@ -1291,6 +1314,7 @@ export function createWorld(renderer, scene, {
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
   return {
+    billiardGame,
     billiards,
     dolphins,
     grabbables,

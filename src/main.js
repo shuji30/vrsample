@@ -268,6 +268,8 @@ async function start() {
 // セスナ：機内から見ているあいだ（VR・PC の運転席視点）は、機体を水平のまま見せる（酔いにくいように）
 if (world.cessna) world.cessna.firstPerson = () => kartDrive.driving && kartDrive.vehicle === world.cessna && (renderer.xr.isPresenting || kartDrive.view === 'first');
 world.golfGame?.bind({ controllers: player.controllers, desktop, isXR: () => renderer.xr.isPresenting });
+// ビリヤード：VR は右手のキュー（左手がブリッジ）、PC は視点を手球の後ろへ
+world.billiardGame?.bind({ controllers: player.controllers, desktop, isXR: () => renderer.xr.isPresenting });
 // 会話の「そろそろいこうか」は、E と同じく立つ
 if (world.talk) world.talk.onLeave = () => kartDrive.exit();
 const talkEye = new THREE.Vector3();

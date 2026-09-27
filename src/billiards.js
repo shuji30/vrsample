@@ -253,6 +253,21 @@ function makeRoom(group, tex) {
   const foot = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 0.12), trimMat);
   foot.position.set(0, 0.03, 0.03);
   rack.add(foot);
+  // 立ててあるキュー（4 本。少し壁へもたせかける）
+  const cueWood = new THREE.MeshStandardMaterial({ color: 0xe2c79a, roughness: 0.45 });
+  const cueButt = new THREE.MeshStandardMaterial({ color: 0x2a1a12, roughness: 0.5 });
+  for (let i = 0; i < 4; i++) {
+    const c = new THREE.Group();
+    c.position.set(-0.24 + i * 0.16, 0.04, 0.06);
+    c.rotation.x = -0.06;
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.0065, 0.0145, 1.45, 10), cueWood);
+    shaft.position.y = 0.725;
+    c.add(shaft);
+    const butt = new THREE.Mesh(new THREE.CylinderGeometry(0.0142, 0.0152, 0.42, 10), cueButt);
+    butt.position.y = 0.21;
+    c.add(butt);
+    rack.add(c);
+  }
   group.add(rack);
   return { floor, rack };
 }
@@ -401,14 +416,12 @@ export function createBilliards({ scene, tex }) {
   const table = makeTable(group, tex);
   const balls = makeBalls(group);
   const cue = balls[0];
-  // 台の上のランプの光（影は付けない。球の下に影の円を置く）と、部屋の天井の明かり
-  const lamp = new THREE.SpotLight(0xfff1dc, 14, 0, 1.05, 0.6, 2);
+  // 台の上のランプの光（影は付けない。球の下に影の円を置く）。部屋の明かりもこれ 1 つで兼ねる
+  // （光源を 1 つ足すと、シーンのすべての材質が 1 つぶん重くなり、足したときに全部の材質を作り直す。VR では効くので最小に）
+  const lamp = new THREE.SpotLight(0xfff1dc, 16, 0, 1.25, 0.75, 2);
   lamp.position.set(TABLE.x, SURFACE_Y + 0.86, TABLE.z);
   lamp.target.position.set(TABLE.x, 0, TABLE.z);
   group.add(lamp, lamp.target);
-  const fill = new THREE.PointLight(0xffe6c8, 2.5, 0, 2);
-  fill.position.set((ANNEX.minX + ANNEX.maxX) / 2, ANNEX.height - 0.25, (ANNEX.minZ + ANNEX.maxZ) / 2);
-  group.add(fill);
 
   // --- 並べる ---------------------------------------------------------------
   /** ナインボールのひし形（1 が先頭、9 が真ん中）。手球はヘッドスポット */
@@ -607,6 +620,5 @@ export function createBilliards({ scene, tex }) {
     /** 最後に突いてから起きたこと（pocket / rail / hit） */
     get events() { return events; },
     lamp,
-    fill,
   };
 }

@@ -598,6 +598,8 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
   if (typeof window !== 'undefined') {
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'Space' || state !== 'play' || isXR()) return;
+      // ラケットを持っているときのスペースはラケットを振る（desktop.js）
+      if (desktop?.swing?.holding) return;
       if (turn === 'player' && phase === 'aim' && !B.moving) { e.preventDefault(); if (!e.repeat) charging = true; }
     });
     window.addEventListener('keyup', (e) => {

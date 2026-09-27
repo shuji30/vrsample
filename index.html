@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>VR Sample — 窓の外に公園のある部屋</title>
+  <title>ふたりの休日 〜海の見える丘で〜</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1020'/%3E%3Cpath d='M5 12h22a3 3 0 0 1 3 3v2a5 5 0 0 1-5 5h-3l-3-3h-6l-3 3H7a5 5 0 0 1-5-5v-2a3 3 0 0 1 3-3z' fill='%238ef0ff'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./style.css" />
   <script type="importmap">
@@ -19,14 +19,14 @@
 <body>
   <div id="overlay">
     <button id="overlay-close" type="button" title="説明を閉じる（I キーで開け閉め）" aria-label="説明を閉じる">×</button>
-    <h1>窓の外に公園のある部屋</h1>
+    <h1>ふたりの休日<span class="subtitle">〜海の見える丘で〜</span></h1>
     <p style="font-size:12px;color:#8fa3cc">× で閉じられます（I キーで開け閉め）</p>
     <p>ヘッドセットのブラウザで開いて「ENTER VR」を押すと VR に入れます。PC でもそのまま遊べます。</p>
 
     <h2>女の子の名前</h2>
     <form id="girl-name" autocomplete="off">
       <input id="girl-name-input" type="text" maxlength="10" placeholder="名前（例：さくら）" aria-label="女の子の名前" />
-      <input id="girl-name-yomi" type="text" maxlength="10" placeholder="よみ（ひらがな・なくてもよい）" aria-label="名前のよみ" />
+      <input id="girl-name-yomi" type="text" maxlength="10" placeholder="よみ（ひらがな）" aria-label="名前のよみ" />
       <button id="girl-name-save" type="submit">決める</button>
     </form>
     <p id="girl-name-note" class="note">名前を付けると、スコア表や会話で名前で呼びます（このブラウザに覚えます。VR に入る前に付けてください）</p>

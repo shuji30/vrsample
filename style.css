@@ -38,6 +38,15 @@ canvas { display: block; }
   letter-spacing: 0.02em;
 }
 
+#overlay h1 .subtitle {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: normal;
+  color: #bfe8ff;
+  letter-spacing: 0.08em;
+}
+
 #overlay p { margin: 6px 0; }
 
 #overlay ul {

@@ -46,6 +46,7 @@ import { createSeatGame } from './seatgame.js';
 import { createCruiser, onPier, pierDeckY, PIER } from './cruiser.js';
 import { createCruiserGame } from './cruisergame.js';
 import { createJetski, seaBlocked } from './jetski.js';
+import { createDolphins } from './dolphins.js';
 import { createJetskiGame } from './jetskigame.js';
 import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
 import { createCessnaGame } from './cessnagame.js';
@@ -450,6 +451,10 @@ export function createWorld(renderer, scene, {
   };
   const jetski = createJetski({ blocked: (x, z) => cruiserBlocks(x, z) || road.pierBlocked(x, z) });
   scene.add(jetski.group);
+  // 海のイルカ（4 頭）。周遊の道に沿って泳ぎ、ときどき跳ぶ。走っている船の横に寄ってきて並んで泳ぐ
+  const dolphins = createDolphins({ count: 4, blocked: (x, z) => seaBlocked(x, z) || road.pierBlocked(x, z) });
+  scene.add(dolphins.group);
+  cruiserGame?.setDolphins(dolphins);
   let jetskiRidden = false;
   let jetskiWait = 0;
   const jetskiGame = camera ? createJetskiGame({ character, jetski, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
@@ -1102,6 +1107,10 @@ export function createWorld(renderer, scene, {
     // クルーザー：乗っていないときは桟橋につないでおく
     if (!cruiserRidden) cruiser.idle(dt);
     if (!jetskiRidden) jetski.idle(dt);
+    // イルカ：乗っている船（クルーザー・ジェットスキー）の横へ寄ってくる
+    const boatNow = cruiserRidden ? { x: cruiser.boat.position.x, z: cruiser.boat.position.z, yaw: cruiser.state.yaw, speed: cruiser.speed }
+      : jetskiRidden ? { x: jetski.position.x, z: jetski.position.z, yaw: jetski.state.yaw, speed: jetski.speed } : null;
+    dolphins.update(dt, boatNow);
     // セスナ：乗ったのに女の子がいない（飛行場に来ていない）ときは、3 秒で動けるようにする
     cessnaWait = cessnaRidden && cessna.hold && !cessnaGame?.active ? cessnaWait + dt : 0;
     if (cessnaWait > 3) cessna.hold = false;
@@ -1270,6 +1279,7 @@ export function createWorld(renderer, scene, {
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
   return {
+    dolphins,
     grabbables,
     interactables,
     floor: room.floor,

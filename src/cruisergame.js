@@ -137,9 +137,36 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
     body.reachHands({ left: { target: left, amount: 1 }, right: { target: right, amount: 1 } });
     body.setGrip(0.3);
   }
+  // イルカ（world.js が setDolphins で渡す）。見つけた・跳んだで声をあげ、しばらくそっちを見る
+  let dolphins = null;
+  let saidDolphin = false;
+  let dolphinJumpCool = 0;
+  let dolphinLook = 0;
+  const dolphinAt = new THREE.Vector3();
+  function setDolphins(d) {
+    dolphins = d;
+    d.onJump = (x, z) => {
+      if (state !== 'ride' || !cruiser.boat) return;
+      const b = cruiser.boat.position;
+      if (Math.hypot(x - b.x, z - b.z) > 45) return;
+      dolphinAt.set(x, b.y + 1.5, z);
+      dolphinLook = 2.5;
+      if (dolphinJumpCool > 0) return;
+      dolphinJumpCool = 14;
+      voice?.say('cruiseDolphinJump');
+      body.smile(2.5, 1);
+      talkIn = Math.max(talkIn, 8);
+    };
+  }
   /** 見る所（台のローカル）：前の海・横の景色・プレイヤー */
   function lookLocal(dt) {
     lookFor -= dt;
+    dolphinLook -= dt;
+    if (dolphinLook > 0) {
+      cruiser.girlPivot.worldToLocal(gaze.position.copy(dolphinAt));
+      character.watch(gaze);
+      return;
+    }
     if (lookFor <= 0) {
       const r = Math.random();
       lookMode = voice?.speaking || r < 0.35 ? 'player' : r < 0.65 ? 'side' : 'ahead';
@@ -163,6 +190,21 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
   function talk(dt) {
     if (cruiser.phase !== 'cruising') return;
     const far = cruiser.dockDistance;
+    dolphinJumpCool -= dt;
+    // イルカが近く（50m 以内）に来た：はじめて見つけたとき
+    if (dolphins && !saidDolphin) {
+      const b = cruiser.boat.position;
+      const n = dolphins.nearest(b.x, b.z, dolphinAt);
+      if (n.distance < 50) {
+        saidDolphin = true;
+        dolphinAt.y = b.y + 1;
+        dolphinLook = 3;
+        voice?.say('cruiseDolphin');
+        body.smile(2.5, 1);
+        talkIn = Math.max(talkIn, 10);
+        return;
+      }
+    }
     if (!saidLighthouse && cruiser.nearLighthouse) { saidLighthouse = true; voice?.say('cruiseLighthouse'); talkIn = Math.max(talkIn, 12); return; }
     if (!saidIsland && cruiser.nearIsland) { saidIsland = true; voice?.say('cruiseIsland'); body.smile(2, 1); talkIn = Math.max(talkIn, 12); return; }
     // 沖へ出て（150m より遠く）から戻ってきた：桟橋が近い・着いた
@@ -171,7 +213,7 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
     if (wentFar && saidBack && cruiser.atDock) {
       voice?.say('cruiseEnd');
       body.smile(2.5, 1);
-      saidLighthouse = saidIsland = saidBack = wentFar = false;
+      saidLighthouse = saidIsland = saidBack = wentFar = saidDolphin = false;
       talkIn = 20;
       return;
     }
@@ -312,6 +354,7 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
   }
 
   return {
+    setDolphins,
     update,
     start,
     dropAtPier,

@@ -4,6 +4,7 @@ import { ROOM } from './room.js';
 import { createKartCourse } from './karttrack.js';
 import { createBikeCourse } from './biketrack.js';
 import { createHill, PLATEAU } from './hill.js';
+import { STAIRS, STAIRS_GATE_HALF } from './beach.js';
 
 /**
  * 窓の外の公園。さるすべりの木と滑り台がある。
@@ -1072,19 +1073,26 @@ export function createPark(scene, tex) {
   {
     const fenceMat = new THREE.MeshStandardMaterial({ color: 0xf2efe6, roughness: 0.7 });
     const z = PLATEAU.minZ + 0.4;
+    // 崖の階段の入口（beach.js の門）のところは柵を切る。門の柱が切れ目の両端になる
+    // （以前は横木が門の前を横切っていて、通れないように見えた）
+    const gapMin = STAIRS.x - STAIRS_GATE_HALF;
+    const gapMax = STAIRS.x + STAIRS_GATE_HALF;
     const n = 36;
     for (let i = 0; i <= n; i++) {
       const x = PLATEAU.minX + ((PLATEAU.maxX - PLATEAU.minX) * i) / n;
+      if (x > gapMin - 0.6 && x < gapMax + 0.6) continue;
       const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.1, 0.1), fenceMat);
       post.position.set(x, 0.55, z);
       post.castShadow = true;
       group.add(post);
     }
-    for (const y of [0.5, 1.0]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(PLATEAU.maxX - PLATEAU.minX, 0.08, 0.05), fenceMat);
-      rail.position.set(0, y, z);
-      rail.castShadow = true;
-      group.add(rail);
+    for (const [x0, x1] of [[PLATEAU.minX, gapMin], [gapMax, PLATEAU.maxX]]) {
+      for (const y of [0.5, 1.0]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.08, 0.05), fenceMat);
+        rail.position.set((x0 + x1) / 2, y, z);
+        rail.castShadow = true;
+        group.add(rail);
+      }
     }
   }
 

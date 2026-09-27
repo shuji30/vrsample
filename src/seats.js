@@ -71,17 +71,28 @@ function beachChairModel() {
   back.rotation.x = 0.45;
   back.castShadow = true;
   g.add(back);
+  // 骨組み：背もたれの面（y = T + 0.27 で z = 0.35、傾き 0.45）の上を、地面から背もたれの上の端まで
+  // 後ろの脚が通る（座面の後ろの端もこの線の上）。前の脚は地面からひじ掛けの前の端まで。
+  // ひじ掛けは背もたれ（後ろの脚）から前の脚まで。以前は後ろの脚が背もたれの 9cm 後ろに離れて立ち、
+  // ひじ掛けも宙に浮いていた
+  const lean = Math.tan(back.rotation.x);
+  const backZ = (y) => 0.35 + (y - (T + 0.27)) * lean;
+  const rod = (x, y0, z0, y1, z1, r = 0.014) => {
+    const len = Math.hypot(y1 - y0, z1 - z0);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 6), frame);
+    m.position.set(x, (y0 + y1) / 2, (z0 + z1) / 2);
+    m.rotation.x = Math.atan2(z1 - z0, y1 - y0);
+    m.castShadow = true;
+    g.add(m);
+  };
+  const topY = T + 0.27 + 0.31 * Math.cos(back.rotation.x);
+  const armY = T + 0.16;
+  const armFront = -0.21;
   for (const sx of [-0.26, 0.26]) {
-    const legF = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, T + 0.05, 6), frame);
-    legF.position.set(sx, (T + 0.05) / 2 - 0.03, -0.2);
-    legF.rotation.x = 0.25;
-    g.add(legF);
-    const legB = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.95, 6), frame);
-    legB.position.set(sx, 0.4, 0.33);
-    legB.rotation.x = 0.45;
-    g.add(legB);
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.03, 0.46), frame);
-    arm.position.set(sx, T + 0.16, 0.02);
+    rod(sx, -0.02, backZ(-0.02), topY, backZ(topY));             // 後ろの脚（背もたれの縁）
+    rod(sx, -0.02, armFront - 0.05, armY, armFront + 0.01);      // 前の脚（ひじ掛けの前の端まで）
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.03, backZ(armY) - armFront), frame);
+    arm.position.set(sx, armY, (backZ(armY) + armFront) / 2);
     g.add(arm);
   }
   return g;

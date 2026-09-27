@@ -272,6 +272,8 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
   /** 桟橋の上なら、付け根（砂浜）まで歩いてから終わる */
   function goBack() {
     detach();
+    // 降りるときの reachHands(null) は「いま手のある所」へ伸ばし続けるので、ここで放す（桟橋を歩くあいだ腕が伸びたままにならないように）
+    body.reach(null);
     cruiser.girlSeated = false;
     cruiser.girlComing = false;
     body.setAttend(true);

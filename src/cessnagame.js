@@ -237,7 +237,9 @@ export function createCessnaGame({ character, cessna, voice = null, scene = null
         body.position.y += Math.sin(Math.PI * k) * 0.3;
         body.setSeat(1 - e, 'upright', { skirt: true });
         if (k > 0.3) { body.reachHands(null); body.setGrip(0); }
-        if (k >= 1) { body.setSeat(0, 'upright'); body.position.y = Y; body.setAttend(true); state = 'idle'; }
+        // reachHands(null) は「いま手のある所」へ伸ばし続ける（片手の reach に戻る）ので、reach(null) で放す。
+        // 放さないと、降りたあとも膝の上だった所へ腕が伸びたままになった（飛行場ではそのままそばにつくので、finish を通らない）
+        if (k >= 1) { body.reach(null); body.setSeat(0, 'upright'); body.position.y = Y; body.setAttend(true); state = 'idle'; }
         break;
       }
       default:
@@ -259,6 +261,7 @@ export function createCessnaGame({ character, cessna, voice = null, scene = null
     detach();
     body.setFootFloor(null);
     body.reachHands(null);
+    body.reach(null);
     body.setGrip(0);
     body.setSeat(0, 'upright');
     cessna.girlDoor(door);

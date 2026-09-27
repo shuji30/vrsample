@@ -240,7 +240,10 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
 
   /** 見ている所：プレイヤーの番はプレイヤーの球、転がっているあいだは転がっている球 */
   function spectate(dt) {
+    // reachHands(null) は「いま手のある所」へ伸ばし続ける（片手の reach に戻る）ので、reach(null) で放す。
+    // 放さないと、打ったあともパターを握っていた所へ腕が伸びたままになった
     body.reachHands(null);
+    body.reach(null);
     body.setGrip(0);
     body.setBend(0);
     golf.girlPutter.visible = false;
@@ -465,6 +468,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
         else if (phase === 'rolling' && turn === 'girl') {
           body.stand(dt);
           body.reachHands(null);
+          body.reach(null);
           golf.girlPutter.visible = false;
           const b = Gb();
           watchPoint(b.x, golf.laneY(b.x, b.z), b.z);
@@ -477,6 +481,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
 
   function finish() {
     body.reachHands(null);
+    body.reach(null);
     body.setGrip(0);
     body.setBend(0);
     body.setAttend(true);

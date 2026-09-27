@@ -253,6 +253,8 @@ export function createJetskiGame({ character, jetski, beach = null, voice = null
   /** 桟橋の上なら、付け根（砂浜）まで歩いてから終わる */
   function goBack() {
     detach();
+    // 降りるときの reachHands(null) は「いま手のある所」へ伸ばし続けるので、ここで放す（桟橋を歩くあいだ腕が伸びたままにならないように）
+    body.reach(null);
     body.setAttend(true);
     if (!onPier(body.position.x, body.position.z)) { finish(); return; }
     path = [ROOT.clone()];

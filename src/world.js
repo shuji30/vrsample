@@ -47,10 +47,13 @@ import { createCruiser, onPier, pierDeckY, PIER } from './cruiser.js';
 import { createCruiserGame } from './cruisergame.js';
 import { createJetski } from './jetski.js';
 import { createJetskiGame } from './jetskigame.js';
+import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
+import { createCessnaGame } from './cessnagame.js';
+import { AIRFIELD_ZONE } from './hill.js';
 import { createTalk } from './talk.js';
 
 /** 地面の高さ：カートコースの起伏と、崖の下の砂浜（そのほかの丘の上は 0） */
-const groundHeight = (x, z) => (onPier(x, z) ? pierDeckY(x, z) : inBeach(x, z) ? beachGround(x, z) : kartGround(x, z));
+const groundHeight = (x, z) => (onPier(x, z) ? pierDeckY(x, z) : inBeach(x, z) ? beachGround(x, z) : inAirfield(x, z) ? AIRFIELD_ZONE.y : kartGround(x, z));
 
 /**
  * 女の子のカートの性能の倍率（最高速・加速・グリップ）。ふつうのカートの性能では、
@@ -415,6 +418,23 @@ export function createWorld(renderer, scene, {
       }
     };
   }
+  // 丘の南西のふもとの飛行場とセスナ。看板で行くと女の子も来て、セスナの右の席に乗る
+  const cessna = createCessna({ onTravel: (dest) => travel(dest) });
+  scene.add(cessna.group, cessna.field);
+  let cessnaRidden = false;
+  let cessnaWait = 0;
+  const cessnaGame = camera ? createCessnaGame({ character, cessna, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
+  if (cessnaGame) {
+    cessnaGame.onFinish = () => {
+      character.watch(furniture.ball);
+      catchGame?.resume();
+    };
+  }
+  cessna.onEvent = (kind) => {
+    // ぶつかったら暗くして、止めておく所へ（cessna.js が戻す）
+    if (kind === 'crash') blackout();
+    cessnaGame?.onEvent(kind);
+  };
   // 家の南のジェットコースター。プレイヤーが乗ると、女の子も隣に乗る
   const coaster = createCoaster();
   scene.add(coaster.group);
@@ -463,6 +483,17 @@ export function createWorld(renderer, scene, {
   const travelPoint = new THREE.Vector3();
   function travel(dest) {
     blackout();
+    if (dest === 'airfield') {
+      onPlayerTravel?.(AIRFIELD_ARRIVAL.x, AIRFIELD_ZONE.y, AIRFIELD_ARRIVAL.z, { x: -0.9, z: -0.45 });
+      if (cessnaGame) cessnaGame.playerHere = true;
+      return;
+    }
+    if (dest === 'hillFromAirfield') {
+      travelPoint.set(HILL_RETURN.x, 0, HILL_RETURN.z);
+      onPlayerTravel?.(travelPoint.x, 0, travelPoint.z, { x: 0.3, z: -1 });
+      if (cessnaGame) { cessnaGame.playerHere = false; cessnaGame.leave(travelPoint); }
+      return;
+    }
     if (dest === 'beach') {
       beach.bottomPoint(travelPoint);
       onPlayerTravel?.(travelPoint.x, travelPoint.y, travelPoint.z - 0.4, { x: 0, z: -1 });
@@ -580,6 +611,9 @@ export function createWorld(renderer, scene, {
     // 砂浜から北の沖へ延びる桟橋（cruiser.js）と、その先の T 字。砂浜と 1m、T 字と重ねる
     { minX: PIER.x - PIER.width / 2 + 0.1, maxX: PIER.x + PIER.width / 2 - 0.1, minZ: PIER.toZ + 0.05, maxZ: BEACH_AREA.minZ + 1.0 },
     { minX: PIER.headMinX + 0.1, maxX: PIER.headMaxX - 0.1, minZ: PIER.toZ + 0.05, maxZ: PIER.headZ - 0.05 },
+    // 丘の南西のふもとの飛行場（cessna.js。丘の上とはつながっていない。看板で行き来する）：駐機場（滑走路の西の端まで）と滑走路
+    { minX: APRON.minX, maxX: APRON.maxX, minZ: RUNWAY.z - RUNWAY.width / 2, maxZ: APRON.maxZ },
+    { minX: RUNWAY.x0, maxX: RUNWAY.x1, minZ: RUNWAY.z - RUNWAY.width / 2, maxZ: RUNWAY.z + RUNWAY.width / 2 },
     // 観覧車のまわり（池の南、メリーゴーランドの西）。池のまわり（z -5.5 まで）と 0.5m、
     // メリーゴーランドの芝生（x -16.5 から）と 0.5m 重ねる。脚とゴンドラの通り道は clampToBounds で外す
     { minX: -31.5, maxX: -16.0, minZ: -6.0, maxZ: 12.0 },
@@ -870,6 +904,14 @@ export function createWorld(renderer, scene, {
         carouselGame.start();
       }
     }
+    // 飛行場へ行ったら、していた遊びをやめて一緒に来る
+    if (cessnaGame?.wanted && !cessnaGame.active) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        cessnaGame.start();
+      }
+    }
     // 砂浜へ下りたら、していた遊びをやめて下りてくる
     if (beachGame?.wanted && !beachGame.active) {
       if (tennisGame?.active) tennisGame.stop();
@@ -940,6 +982,7 @@ export function createWorld(renderer, scene, {
     // 体と手が 1 フレーム前の席と鎖に合わせたままになり、こいでいるあいだ手が鎖から離れて見えた
     buranko.updateGirl(dt);
     if (seatGame?.active) seatGame.update(dt);
+    else if (cessnaGame?.active) cessnaGame.update(dt);
     else if (cruiserGame?.active) cruiserGame.update(dt);
     else if (jetskiGame?.active) jetskiGame.update(dt);
     else if (beachGame?.active) beachGame.update(dt);
@@ -987,6 +1030,9 @@ export function createWorld(renderer, scene, {
     // クルーザー：乗っていないときは桟橋につないでおく
     if (!cruiserRidden) cruiser.idle(dt);
     if (!jetskiRidden) jetski.idle(dt);
+    // セスナ：乗ったのに女の子がいない（飛行場に来ていない）ときは、3 秒で動けるようにする
+    cessnaWait = cessnaRidden && cessna.hold && !cessnaGame?.active ? cessnaWait + dt : 0;
+    if (cessnaWait > 3) cessna.hold = false;
     // 乗ったのに女の子が来ない（ほかの遊びの途中など）ときは、3 秒で動けるようにする
     jetskiWait = jetskiRidden && jetski.hold && !jetskiGame?.active ? jetskiWait + dt : 0;
     if (jetskiWait > 3) jetski.hold = false;
@@ -1145,7 +1191,7 @@ export function createWorld(renderer, scene, {
     basket.update(tennisBalls);
   }
 
-  const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, cruiser.body, jetski.body, gt3.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
+  const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, cruiser.body, jetski.body, cessna.body, ...cessna.interactables, gt3.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
   return {
@@ -1177,6 +1223,10 @@ export function createWorld(renderer, scene, {
         ferrisRidden = true;
         ferris.board();
         if (ferrisGame) ferrisGame.playerRiding = true;
+      } else if (v === cessna) {
+        cessnaRidden = true;
+        cessna.board();
+        if (cessnaGame) cessnaGame.playerRiding = true;
       } else if (v === jetski) {
         jetskiRidden = true;
         jetski.board();
@@ -1208,6 +1258,16 @@ export function createWorld(renderer, scene, {
         if (ferrisGame) {
           ferrisGame.playerRiding = false;
           if (midway) ferrisGame.dropAtStation();
+        }
+      } else if (v === cessna) {
+        // 地上で止まっていればそのまま降りる。空や走っている途中なら、暗くして止めておく所へ（女の子も）
+        const midway = !cessna.parked;
+        if (midway) { blackout(); cessna.reset(); }
+        cessnaRidden = false;
+        cessna.leave();
+        if (cessnaGame) {
+          cessnaGame.playerRiding = false;
+          if (midway) cessnaGame.dropAtPlane();
         }
       } else if (v === jetski) {
         // 桟橋のそばならそのまま降りる。沖にいれば暗くして桟橋へ（女の子も）
@@ -1269,6 +1329,8 @@ export function createWorld(renderer, scene, {
     cruiserGame,
     jetski,
     jetskiGame,
+    cessna,
+    cessnaGame,
     golf,
     golfGame,
     beach,

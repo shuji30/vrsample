@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BEACH, SEA_LEVEL, hillHeight } from './hill.js';
+import { girlName, onGirlNameChange } from './girlname.js';
 
 /**
  * 北の崖の下の砂浜。丘の上の柵のところ（厩の東）から崖に沿って木の階段が下りていて、上と下の看板で
@@ -307,7 +308,7 @@ export function createBeach() {
     x.textAlign = 'center';
     x.font = '18px sans-serif';
     x.fillText('あなた', 64, 28);
-    x.fillText('女の子', 192, 28);
+    x.fillText(girlName(), 192, 28, 120);
     x.font = 'bold 56px sans-serif';
     x.fillStyle = '#7fc8ff';
     x.fillText(String(score.player), 64, 86);
@@ -321,6 +322,7 @@ export function createBeach() {
   }
   const WIN = 7;
   drawScore();
+  onGirlNameChange(() => drawScore());
   let onPoint = null;
   /** 落ちた所で点を決める：相手のコートの中に入れたら、打った人の点。外・自分の側・ネットにかかったら相手の点 */
   function judge(x, z, by) {
@@ -333,7 +335,7 @@ export function createBeach() {
     score[winner] += 1;
     let note = '';
     let game = null;
-    if (score[winner] >= WIN) { game = winner; note = winner === 'player' ? 'あなたの勝ち！' : '女の子の勝ち！'; }
+    if (score[winner] >= WIN) { game = winner; note = winner === 'player' ? 'あなたの勝ち！' : `${girlName()}の勝ち！`; }
     drawScore(note);
     onPoint?.(winner, { ...score }, game, inCourt);
     if (game) { score.player = 0; score.girl = 0; setTimeout(() => drawScore(), 4000); }

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SEA_LEVEL, hillHeight, AIRFIELD_ZONE, COASTER_ZONE, PLATEAU } from './hill.js';
 import { FERRIS } from './ferriswheel.js';
+import { girlName } from './girlname.js';
 
 /**
  * 飛行場とセスナ（高翼の 4 人乗りの軽飛行機ふう。実在の会社の塗装・登録記号は付けない）。
@@ -450,7 +451,7 @@ export function createCessna({ onTravel = () => {} } = {}) {
     hud.style.display = on ? '' : 'none';
     if (!on) return;
     const alt = Math.max(0, Math.round(pos.y - Math.max(hillHeight(pos.x, pos.z), SEA_LEVEL)));
-    hud.textContent = `速さ ${Math.round(v * 3.6)} km/h　高さ ${alt} m${hold ? '　（女の子を待っています）' : ''}\n`
+    hud.textContent = `速さ ${Math.round(v * 3.6)} km/h　高さ ${alt} m${hold ? `　（${girlName()}を待っています）` : ''}\n`
       + (onGround ? 'W 加速（86km/h を超えると離陸）/ S ブレーキ / A・D 向き / C 視点 / E 降りる' : 'W 上昇 / S 降下 / A・D 旋回 / C 視点 / E 降りる（暗くして戻る）');
   }
 

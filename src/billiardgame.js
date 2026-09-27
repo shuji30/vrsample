@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { ROOM, ANNEX, EAST_DOOR } from './room.js';
 import { gardenPath } from './catchball.js';
 import { BALL_R, TABLE, POCKETS, HEAD_SPOT, tableToWorld, detourAnnex, HOUSE_EAST } from './billiards.js';
+import { girlName, escapeHtml, onGirlNameChange } from './girlname.js';
 
 /**
  * ビリヤード（ナインボール・かんたんルール）を女の子と交互に。
@@ -129,9 +130,9 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
     c.textAlign = 'center';
     c.fillText('ナインボール', 256, 44);
     c.font = 'bold 26px sans-serif';
-    c.fillText(`あなた ${wins.player}  -  ${wins.girl} 女の子`, 256, 86);
+    c.fillText(`あなた ${wins.player}  -  ${wins.girl} ${girlName()}`, 256, 86, 480);
     c.fillStyle = '#ffd24a';
-    c.fillText(message || (turn === 'player' ? 'あなたの番' : '女の子の番'), 256, 128);
+    c.fillText(message || (turn === 'player' ? 'あなたの番' : `${girlName()}の番`), 256, 128, 480);
     // 残っている球
     const left = remaining();
     left.forEach((n, i) => {
@@ -152,8 +153,8 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
   }
   function showHud(extra = '') {
     if (!hud) return;
-    const whose = phase === 'over' ? message : phase === 'rolling' ? '球が転がっています' : turn === 'player' ? (breakShot ? 'あなたのブレイク' : 'あなたの番') : '女の子の番';
-    hud.innerHTML = `ビリヤード（ナインボール）　${whose}　<span style="opacity:.8">あなた ${wins.player} - ${wins.girl} 女の子</span>`
+    const whose = phase === 'over' ? message : phase === 'rolling' ? '球が転がっています' : turn === 'player' ? (breakShot ? 'あなたのブレイク' : 'あなたの番') : `${girlName()}の番`;
+    hud.innerHTML = `ビリヤード（ナインボール）　${escapeHtml(whose)}　<span style="opacity:.8">あなた ${wins.player} - ${wins.girl} ${escapeHtml(girlName())}</span>`
       + `<br><span style="font-weight:400;font-size:12px">のこり：${remaining().join(' ')}　${isXR() ? '' : 'ドラッグで狙う・スペース長押しで力をためて離す'}</span>${extra}`;
     hud.style.display = '';
   }
@@ -170,6 +171,7 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
     message = '';
     drawBoard();
   }
+  onGirlNameChange(() => drawBoard());
   function finish() {
     body.reachHands(null);
     body.reach(null);
@@ -630,7 +632,7 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
       wins[shooter]++;
       phase = 'over';
       timer = 0;
-      message = shooter === 'player' ? 'あなたの勝ち！' : '女の子の勝ち！';
+      message = shooter === 'player' ? 'あなたの勝ち！' : `${girlName()}の勝ち！`;
       voice?.say(shooter === 'player' ? 'billiardLose' : 'billiardWin');
       if (shooter === 'girl') body.smile(3, 1);
       breaker = other;

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { girlName, givenGirlName, girlNameSpoken } from './girlname.js';
 
 /**
  * 女の子との会話（座って並んだとき・向かい合ったとき）。選ぶ形の会話。
@@ -29,6 +30,8 @@ const TOPICS = [
   { id: 'sea', q: '海、きれいだね', key: 'talkSea', where: ['beach'], smile: true },
   { id: 'swim', q: '泳ぐ？', key: 'talkSwim', where: ['beach'] },
   { id: 'stars', q: '星、きれいだね', key: 'talkStars', night: true, smile: true },
+  // 名前を付けたときだけ。問いの文と台詞に名前が入る
+  { id: 'name', q: () => `${givenGirlName()}って、よんでもいい？`, key: 'talkName', named: true, smile: true },
 ];
 
 /** 女の子から聞いてくること。answers は [プレイヤーの答え, 女の子の返事の台詞, 笑う？] */
@@ -105,7 +108,7 @@ export function createTalk({ voice = null, body = null, interactables = null }) 
 
   function draw() {
     const list = phase === 'choose' ? rows() : [];
-    const head = said ? `あなた「${said}」` : (phase === 'choose' ? (asking ? '女の子が聞いています' : 'なにを話す？') : '…');
+    const head = said ? `あなた「${said}」` : (phase === 'choose' ? (asking ? `${girlName()}が聞いています` : 'なにを話す？') : '…');
     const p = pcPanel();
     if (p) {
       p.innerHTML = `<div style="opacity:.85;margin:0 2px 6px">${head}</div>`
@@ -142,6 +145,7 @@ export function createTalk({ voice = null, body = null, interactables = null }) 
   function fits(t) {
     if (t.where && !t.where.includes(where)) return false;
     if (t.night && !night) return false;
+    if (t.named && !givenGirlName()) return false;
     return !recent.includes(t.id);
   }
 
@@ -162,7 +166,7 @@ export function createTalk({ voice = null, body = null, interactables = null }) 
       pool.sort(() => Math.random() - 0.5);
       pool.sort((a, b) => (b.where || b.night ? 1 : 0) - (a.where || a.night ? 1 : 0));
       const pick = [pool[0], ...pool.slice(1).sort(() => Math.random() - 0.5)].slice(0, 3);
-      options = pick.map((t) => ({ text: t.q, key: t.key, smile: Boolean(t.smile), id: t.id }));
+      options = pick.map((t) => ({ text: typeof t.q === 'function' ? t.q() : t.q, key: t.key, smile: Boolean(t.smile), id: t.id, named: Boolean(t.named) }));
     }
     if (recent.length > 8) recent = recent.slice(-8);
     phase = 'choose';
@@ -180,7 +184,7 @@ export function createTalk({ voice = null, body = null, interactables = null }) 
     if (o.id) recent.push(o.id);
     log.push(`choose:${o.key}`);
     phase = 'wait';
-    pending = { key: o.key, smile: o.smile, in: 0.6 };
+    pending = { key: o.key, smile: o.smile, named: o.named, in: 0.6 };
     waitFor = 2.2;
     turns++;
     draw();
@@ -192,7 +196,7 @@ export function createTalk({ voice = null, body = null, interactables = null }) 
     if (pending) {
       pending.in -= dt;
       if (pending.in <= 0) {
-        voice?.say(pending.key);
+        voice?.say(pending.key, pending.named ? { n: givenGirlName(), spoken: girlNameSpoken() } : undefined);
         if (pending.smile) body?.smile?.(2.5, 1);
         pending = null;
       }

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { KART_TRACK, TRACK_LENGTH, trackPoint, trackTangent } from './karttrack.js';
 import { gridSlot } from './kart.js';
 import { createSignalSound } from './audio.js';
+import { girlName } from './girlname.js';
 
 /**
  * 女の子とのカートレースの進行。
@@ -200,8 +201,8 @@ export function createKartRace({ scene, playerKart, herKart, voice = null }) {
         const onGrid = playerOnGrid();
         holdTimer = ready && onGrid ? holdTimer + dt : 0;
         if (ready && !onGrid && !gridAsked) { voice?.say('raceGrid'); gridAsked = true; }
-        show('', !seated ? '女の子がカートに乗るのを待っています'
-          : !ready ? '女の子がスタートの枠へ戻っています'
+        show('', !seated ? `${girlName()}がカートに乗るのを待っています`
+          : !ready ? `${girlName()}がスタートの枠へ戻っています`
             : onGrid ? 'まもなくスタート' : `スタートの枠に止まると\nレースが始まります（${RACE.laps} 周）`);
         if (holdTimer > START_HOLD) startCountdown();
         break;
@@ -267,7 +268,7 @@ export function createKartRace({ scene, playerKart, herKart, voice = null }) {
           timer = 0;
         } else {
           const pos = position();
-          show('', p.finished ? `ゴール！ ${pos} 位\n女の子を待っています`
+          show('', p.finished ? `ゴール！ ${pos} 位\n${girlName()}を待っています`
             : `LAP ${lapOf(p)} / ${RACE.laps}\n${pos} 位　${timer.toFixed(1)} 秒`);
         }
         break;

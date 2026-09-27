@@ -6,6 +6,7 @@ import { createDesktopControls } from './desktop.js';
 import { createKartDrive } from './kartdrive.js';
 import { createDebugPanel } from './debug.js';
 import { createMusic } from './music.js';
+import { givenGirlName, givenGirlNameYomi, setGirlName, girlNameSpoken } from './girlname.js';
 
 const statusEl = document.getElementById('status');
 
@@ -500,6 +501,35 @@ const talkEye = new THREE.Vector3();
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する
   const voiceStatusEl = document.getElementById('voice-status');
+  // 女の子の名前（説明画面）。付けると女の子が喜ぶ。入力中のキーは、歩く・拾う・乗るなどへ渡さない
+  {
+    const form = document.getElementById('girl-name');
+    const nameEl = document.getElementById('girl-name-input');
+    const yomiEl = document.getElementById('girl-name-yomi');
+    const noteEl = document.getElementById('girl-name-note');
+    const showNote = () => {
+      const n = givenGirlName();
+      if (noteEl && n) noteEl.textContent = `いまの名前：${n}${givenGirlNameYomi() ? `（${givenGirlNameYomi()}）` : ''}。空にして「決める」で「女の子」に戻せます`;
+    };
+    if (nameEl) nameEl.value = givenGirlName();
+    if (yomiEl) yomiEl.value = givenGirlNameYomi();
+    showNote();
+    for (const el of [nameEl, yomiEl]) {
+      for (const type of ['keydown', 'keyup']) el?.addEventListener(type, (e) => { if (e.key !== 'Enter') e.stopPropagation(); });
+    }
+    form?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const before = givenGirlName();
+      const n = setGirlName(nameEl?.value ?? '', yomiEl?.value ?? '');
+      if (nameEl) nameEl.value = n;
+      if (yomiEl) yomiEl.value = givenGirlNameYomi();
+      if (!n && noteEl) noteEl.textContent = '名前を消しました（「女の子」と呼びます）';
+      showNote();
+      if (n && n !== before) world.voice?.say('girlNamed', { n, spoken: girlNameSpoken() });
+      document.activeElement?.blur?.();
+    });
+  }
+
   world.voice?.onStatus((st) => {
     if (!voiceStatusEl) return;
     const short = (name) => name.replace(/^(Microsoft|Google|Apple)\s+/i, '').replace(/\s*-\s*Japanese.*$/i, '');

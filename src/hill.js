@@ -28,6 +28,18 @@ export function golfFlat(x, z) {
 }
 /** ジェットコースター（coaster.js）のコースが通る所。遠くの丘の木を植えない */
 export const COASTER_ZONE = { minX: -14, maxX: 40, minZ: 8, maxZ: 118 };
+/**
+ * 丘の南西のふもとの飛行場（cessna.js）。高さ -20（海面の 6m 上。まわりのふもとは海の下なので、盛り上げた台地）の平らな所で、まわり 45m でなめらかにつなぐ。
+ * 東のサーキットの平らな所（y -10）とは 400m 以上離して、あいだに段差ができないようにしてある
+ */
+export const AIRFIELD_ZONE = { minX: -440, maxX: -30, minZ: 185, maxZ: 255, y: -20 };
+/** 飛行場の平らな所にどれだけ入っているか（1 = 中、0 = 45m より外） */
+export function airfieldFlat(x, z) {
+  const Z = AIRFIELD_ZONE;
+  const dx = Math.max(Z.minX - x, 0, x - Z.maxX);
+  const dz = Math.max(Z.minZ - z, 0, z - Z.maxZ);
+  return 1 - smooth(Math.hypot(dx, dz) / 45);
+}
 
 const smooth = (t) => { const c = Math.min(1, Math.max(0, t)); return c * c * (3 - 2 * c); };
 
@@ -68,7 +80,10 @@ export function hillHeight(x, z) {
   if (wg > 0) h += (0 - h) * wg;
   // 東のふもとのサーキットの平らな所（y -10）。まわり 70m でなめらかにつなぐ
   const w = circuitFlat(x, z);
-  return w > 0 ? h + (CIRCUIT_ZONE.y - h) * w : h;
+  if (w > 0) h += (CIRCUIT_ZONE.y - h) * w;
+  // 南西のふもとの飛行場の平らな所（y -20）
+  const wa = airfieldFlat(x, z);
+  return wa > 0 ? h + (AIRFIELD_ZONE.y - h) * wa : h;
 }
 
 /** サーキットの平らな所にどれだけ入っているか（1 = 中、0 = 70m より外） */
@@ -131,8 +146,10 @@ export function createHill(tex) {
   const P = PLATEAU;
 
   // --- 地形 --------------------------------------------------------------------
-  const xs = axis(-130, 130, 2.5, 1800, 1.14, [P.minX, P.maxX]);
-  const zs = axis(-150, 80, 2.5, 1800, 1.14, [P.minZ, P.maxZ]);
+  // 飛行場の縁と滑走路のまわりにも格子の線を入れる（遠くは格子が粗く、縁の坂が滑走路の上へかぶらないように）
+  const A = AIRFIELD_ZONE;
+  const xs = axis(-130, 130, 2.5, 1800, 1.14, [P.minX, P.maxX, A.minX, A.minX + 20, A.maxX - 20, A.maxX]);
+  const zs = axis(-150, 80, 2.5, 1800, 1.14, [P.minZ, P.maxZ, A.minZ, A.minZ + 12, 204, 226, A.maxZ - 8, A.maxZ]);
   const nx = xs.length;
   const nz = zs.length;
   const pos = new Float32Array(nx * nz * 3);
@@ -210,6 +227,7 @@ export function createHill(tex) {
     const C = COASTER_ZONE;
     if (x > C.minX - 6 && x < C.maxX + 6 && z > C.minZ - 6 && z < C.maxZ + 6) continue;   // コースターのコース
     if (golfFlat(x, z) > 0.02) continue;   // ゴルフの芝地
+    if (airfieldFlat(x, z) > 0.02) continue;   // 飛行場
     const y = hillHeight(x, z);
     if (y < SEA_LEVEL + 2.5 || circuitFlat(x, z) > 0.05) continue;
     spots.push([x, y, z, 5 + rand() * 6]);

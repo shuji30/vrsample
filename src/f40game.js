@@ -24,7 +24,8 @@ const RUN = 2.2;
 const GET_IN = 1.2;
 const SEAT_TOP = 0.42;
 const GARDEN_EAST = new THREE.Vector2(5.6, -4.9);
-const TO_GARAGE = [new THREE.Vector2(8.5, -3.2), new THREE.Vector2(11, 2.3), new THREE.Vector2(17.6, 2.6), new THREE.Vector2(19.0, 4.95)];
+// 家の東のビリヤードの部屋（x 8.84 まで）の北東の角の外を回る
+const TO_GARAGE = [new THREE.Vector2(9.8, -3.4), new THREE.Vector2(11, 2.3), new THREE.Vector2(17.6, 2.6), new THREE.Vector2(19.0, 4.95)];
 
 export function createF40Game({ character, car, voice = null, playerHead = null, isNight = () => false }) {
   const body = character.body;

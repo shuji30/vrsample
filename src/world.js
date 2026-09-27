@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createTextures } from './textures.js';
-import { createRoom, ROOM } from './room.js';
+import { createRoom, ROOM, ANNEX, EAST_DOOR } from './room.js';
+import { createBilliards, annexBlocks, tableBlocks, HOUSE_EAST } from './billiards.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
 import { createKart, gridSlot } from './kart.js';
@@ -122,6 +123,8 @@ export function createWorld(renderer, scene, {
   const tex = createTextures(renderer, { quality: textureQuality });
 
   const room = createRoom(scene, tex);
+  // 本の部屋の東へ建て増ししたビリヤードの部屋と、台・球
+  const billiards = createBilliards({ scene, tex });
   const park = createPark(scene, tex);
 
   let lighting = null;
@@ -366,7 +369,7 @@ export function createWorld(renderer, scene, {
     voice,
     areas: [
       { minX: -5.5, maxX: 5.5, minZ: -13, maxZ: -4.5 },     // 庭
-      { minX: 6.5, maxX: 21, minZ: -5, maxZ: 4 },           // 家の右（GT3 の所）
+      { minX: HOUSE_EAST + 0.8, maxX: 21, minZ: -5, maxZ: 4 }, // 家の右（GT3 の所。ビリヤードの部屋より東）
       { minX: -16, maxX: -6.5, minZ: -5.5, maxZ: 4.5 },     // 家の左（メリーゴーランドのまわり）
       { minX: -16.5, maxX: -6, minZ: -13.5, maxZ: -6 },     // 遊び場
       { minX: -30, maxX: -17.5, minZ: -8, maxZ: -6 },       // 池のほとり
@@ -578,7 +581,9 @@ export function createWorld(renderer, scene, {
   let horseGame = null;
   let horseRidden = false;
   // 馬は馬場の外（庭・公園・丘の上）へも出られる。家の中（と掃き出し窓の通り道）には入らない
-  const horseBlocked = (x, z) => x > ROOM.minX - 0.4 && x < ROOM.maxX + 0.4 && z > ROOM.minZ - 1.4 && z < ROOM.maxZ + 0.4;
+  // 家（本の部屋とビリヤードの部屋）には入らない
+  const horseBlocked = (x, z) => (x > ROOM.minX - 0.4 && x < ROOM.maxX + 0.4 && z > ROOM.minZ - 1.4 && z < ROOM.maxZ + 0.4)
+    || (x > ROOM.maxX && x < HOUSE_EAST + 0.4 && z > ANNEX.minZ - 0.6 && z < ANNEX.maxZ + 0.6);
   const horse = createHorse({ paddock: PADDOCK, park: HORSE_PARK, gate: GATE, ground: (x, z) => groundHeight(x, z), blocked: horseBlocked, clampTo: (x, z, from) => clampToBounds(x, z, 0.25, from), onGait: (g, prev) => horseGame?.onGait(g, prev) });
   scene.add(horse.group, horse.reins, horse.leadRope);
   horseGame = camera ? createHorseGame({ character, horse, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
@@ -637,6 +642,9 @@ export function createWorld(renderer, scene, {
   const THROUGH = 1.0;
   const regions = [
     { minX: ROOM.minX + MARGIN, maxX: ROOM.maxX - MARGIN, minZ: ROOM.minZ + MARGIN, maxZ: ROOM.maxZ - MARGIN },
+    // ビリヤードの部屋と、本の部屋の東の壁の出入り口（両方の部屋へ 1m ずつ食い込ませる）。台は clampToBounds で外す
+    { minX: ANNEX.minX + MARGIN, maxX: ANNEX.maxX - MARGIN, minZ: ANNEX.minZ + MARGIN, maxZ: ANNEX.maxZ - MARGIN },
+    { minX: ROOM.maxX - MARGIN - THROUGH, maxX: ANNEX.minX + MARGIN + THROUGH, minZ: EAST_DOOR.z - EAST_DOOR.width / 2 + 0.18, maxZ: EAST_DOOR.z + EAST_DOOR.width / 2 - 0.18 },
     { minX: door.x - door.width / 2 + 0.18, maxX: door.x + door.width / 2 - 0.18, minZ: outerZ - THROUGH, maxZ: ROOM.minZ + MARGIN + THROUGH },
     // 庭は手前の防球ネットのすぐ前まで
     { minX: GARDEN.minX, maxX: GARDEN.maxX, minZ: COURT_BACKSTOP.z + 0.05, maxZ: outerZ - 0.2 },
@@ -712,7 +720,9 @@ export function createWorld(renderer, scene, {
     const gt3Blocks = (x, z) => !gt3.state.atCircuit && Math.abs(x - GT3_PARK.x) < 2.5 + inset && Math.abs(z - GT3_PARK.z) < 1.2 + inset;
     // ガレージの壁と、ガレージに止めてある F40（走りに出ているあいだは、その場所を歩ける）
     const f40Blocks = (x, z) => f40AtHome() && Math.abs(x - F40_PARK.x) < 2.35 + inset && Math.abs(z - F40_PARK.z) < 1.05 + inset;
-    const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || ferrisBlocks(x, z, inset) || gt3Blocks(x, z) || road.garageBlocks(x, z, inset) || f40Blocks(x, z);
+    // ビリヤードの部屋の外壁と、台
+    const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || ferrisBlocks(x, z, inset) || gt3Blocks(x, z) || road.garageBlocks(x, z, inset) || f40Blocks(x, z)
+      || annexBlocks(x, z, inset) || tableBlocks(x, z, inset);
     if (solid(p.x, p.z)) {
       if (!from || solid(from.x, from.z)) return p;
       if (!solid(p.x, from.z)) return { x: p.x, z: from.z };
@@ -1107,6 +1117,8 @@ export function createWorld(renderer, scene, {
     // クルーザー：乗っていないときは桟橋につないでおく
     if (!cruiserRidden) cruiser.idle(dt);
     if (!jetskiRidden) jetski.idle(dt);
+    // ビリヤードの球
+    billiards.step(dt);
     // イルカ：乗っている船（クルーザー・ジェットスキー）の横へ寄ってくる
     const boatNow = cruiserRidden ? { x: cruiser.boat.position.x, z: cruiser.boat.position.z, yaw: cruiser.state.yaw, speed: cruiser.speed }
       : jetskiRidden ? { x: jetski.position.x, z: jetski.position.z, yaw: jetski.state.yaw, speed: jetski.speed } : null;
@@ -1279,6 +1291,7 @@ export function createWorld(renderer, scene, {
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
   return {
+    billiards,
     dolphins,
     grabbables,
     interactables,

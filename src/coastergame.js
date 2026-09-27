@@ -18,7 +18,8 @@ const OUTSIDE_Z = ROOM.minZ - ROOM.wall - 0.25;
 const WALK = 1.25;
 const GET_IN = 1.1;
 const SEAT_TOP = 0.05;   // 台（座面）の上
-const VIA = [new THREE.Vector2(6.8, -3.2), new THREE.Vector2(7.6, 3.2), new THREE.Vector2(8.6, 7.6)];
+// 家の東のビリヤードの部屋（x 8.84 まで・z -2.54〜3.44）の東を回る
+const VIA = [new THREE.Vector2(6.8, -3.4), new THREE.Vector2(9.7, -3.4), new THREE.Vector2(9.7, 4.3), new THREE.Vector2(8.6, 7.6)];
 
 export function createCoasterGame({ character, coaster, voice = null, scene, playerHead }) {
   const body = character.body;

@@ -95,6 +95,11 @@ const EDGE_Z = SOFA.frontZ + 0.16;
 const HOP = 0.10;
 /** 横になる / 起き上がる途中で腰を浮かせる高さ（m）。倒す途中で腰の横が沈む */
 const ROLL_LIFT = 0.12;
+/** ビリヤードの部屋から本の部屋へ出る所（room.js の EAST_DOOR：東の壁 x 3.0〜3.14・z 2.05〜3.15） */
+const ANNEX_DOOR = {
+  wallX: 3.0,
+  path: [[3.9, 2.6], [2.3, 2.6]].map(([x, z]) => new THREE.Vector2(x, z)),
+};
 const EXIT_PATH = [
   [1.35, -1.4],
   [1.15, -3.25],
@@ -2097,7 +2102,10 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     /** 部屋から掃き出し窓までの道順（経路の節点をたどってソファの前から出る） */
     exitRoute() {
       const size = ROUTE.length;
-      const from = nearestNode();
+      // ビリヤードの部屋（本の部屋の東の壁より東）にいれば、東の壁の出入り口を通って、ソファの南（節点 4）から
+      const inAnnex = group.position.x > ANNEX_DOOR.wallX;
+      const from = inAnnex ? 4 : nearestNode();
+      const lead = inAnnex ? ANNEX_DOOR.path.map((p) => p.clone()) : [];
       const forward = (EXIT_NODE - from + size) % size;
       const backward = (from - EXIT_NODE + size) % size;
       const step = forward <= backward ? 1 : -1;
@@ -2106,7 +2114,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
         i = (i + step + size) % size;
         points.push(ROUTE[i].clone());
       }
-      return points.concat(EXIT_PATH.map((p) => p.clone()));
+      return lead.concat(points, EXIT_PATH.map((p) => p.clone()));
     },
     /** 掃き出し窓から部屋へ戻る道順（exitRoute の窓より先を逆にたどる） */
     entryRoute() {

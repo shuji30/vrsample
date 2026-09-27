@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { ROOM } from './room.js';
+import { detourAnnex } from './billiards.js';
 import { PARK, COURT_BACKSTOP } from './park.js';
 import { createThrow } from './throwing.js';
 
@@ -509,7 +510,8 @@ export function createCatchGame({ character, ball, camera, scene, voice = null }
       if (Math.abs(here.x) < ROOM.maxX + 1.5) around.push(new THREE.Vector2(sideX, here.y));
       around.push(new THREE.Vector2(THREE.MathUtils.clamp(here.x, -6, 6), OUTSIDE_Z - 1.2));
     }
-    const route = around.length ? [...around, ...gardenPath(around[around.length - 1], spot)] : gardenPath(here, spot);
+    // 家の東のビリヤードの部屋を突き抜けないよう、角を回る点を足す
+    const route = detourAnnex([here, ...(around.length ? [...around, ...gardenPath(around[around.length - 1], spot)] : gardenPath(here, spot))]).slice(1);
     if (route.length === 1 && Math.hypot(spot.x - body.position.x, spot.y - body.position.z) < ADJUST_RANGE) {
       path = [];
       timer = 0;

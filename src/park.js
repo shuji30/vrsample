@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GARAGE, F40_PARK } from './roaddata.js';
 import { ROOM } from './room.js';
 import { createKartCourse } from './karttrack.js';
 import { createBikeCourse } from './biketrack.js';
@@ -693,18 +694,22 @@ function createBackdrop(tex, seed = 11) {
 
   const leaves = [];
   const trunks = [];
+  // ガレージから東へ出る取り付け道路（roaddata.js、z 3.4）の上とそのまわり（中心から 9m）には植えない（道の入口をふさがない）。
+  // 乱数は置かない所でも同じだけ引く（ほかの木の位置が変わらないように）
+  const onRoad = (x, z) => x > GARAGE.maxX - 1 && x < 40 && Math.abs(z - F40_PARK.z) < 9;
 
   /** 生垣を 1 辺ぶん並べる。dir は辺に沿った向き。 */
   function hedgeRow(from, to, count) {
     for (let i = 0; i < count; i++) {
       const t = i / (count - 1);
       const size = 1.6 + rand() * 0.9;
-      leaves.push({
+      const leaf = {
         x: from.x + (to.x - from.x) * t + (rand() - 0.5) * 1.0,
         y: 0.75 + rand() * 0.25,
         z: from.z + (to.z - from.z) * t + (rand() - 0.5) * 1.0,
         sx: size, sy: size * 0.8, ry: rand() * Math.PI,
-      });
+      };
+      if (!onRoad(leaf.x, leaf.z)) leaves.push(leaf);
     }
   }
 
@@ -715,15 +720,17 @@ function createBackdrop(tex, seed = 11) {
       const x = from.x + (to.x - from.x) * t + (rand() - 0.5) * 2.2;
       const z = from.z + (to.z - from.z) * t + (rand() - 0.5) * 2.2;
       const h = 5 + rand() * 3.5;
-      trunks.push({ x, y: h * 0.275, z, sy: h * 0.55 });
+      const skip = onRoad(x, z);
+      if (!skip) trunks.push({ x, y: h * 0.275, z, sy: h * 0.55 });
       for (let k = 0; k < 3; k++) {
         const size = h * (0.5 + rand() * 0.2);
-        leaves.push({
+        const leaf = {
           x: x + (rand() - 0.5) * 0.9,
           y: h * 0.68 + (rand() - 0.5) * 0.6,
           z: z + (rand() - 0.5) * 0.9,
           sx: size, sy: size, ry: rand() * Math.PI,
-        });
+        };
+        if (!skip) leaves.push(leaf);
       }
     }
   }

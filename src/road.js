@@ -280,6 +280,83 @@ export function createRoad() {
   gantry(80, 175, 0, ['出口 おかのうえ', '家・ガレージ ←'], HWY_HALF + 0.6);
   group.add(makeGarage());
 
+  // --- 街灯（夜のドライブ用） -----------------------------------------------------------
+  // 高速道路は 40m ごとに左右交互（片側 80m ごと）、取り付け道路は 30m ごと。支柱は壁の外、腕を道の上へ伸ばす。
+  // 数十本の本物の光源は重いので、灯具を光らせ、真下の路面に加算の「光だまり」を置いて照らして見せる
+  // （光だまりは夜・夕方だけ。灯具は霧に埋もれないように fog を切る。遠くまで灯の列が見える）
+  const lamps = [];
+  const addLamp = (p, t, half, side) => {
+    const nx = t.z * side;
+    const nz = -t.x * side;
+    const px = p.x + nx * (half + 0.9);
+    const pz = p.z + nz * (half + 0.9);
+    const hx = p.x + nx * Math.max(0, half - 2.6);
+    const hz = p.z + nz * Math.max(0, half - 2.6);
+    lamps.push({ px, pz, hx, hz, y: p.y, yaw: Math.atan2(hx - px, hz - pz) });
+  };
+  for (let i = 0, k = 0; i < NL; i += 40, k++) {
+    const side = k % 2 ? 1 : -1;
+    const p = loopPts[i];
+    const t = loopTan[i];
+    if (insideAccess(p.x + t.z * side * (HWY_HALF + 0.9), p.z - t.x * side * (HWY_HALF + 0.9))) continue;
+    addLamp(p, t, HWY_HALF, side);
+  }
+  for (let i = 12, k = 0; i < NA - 24; i += 30, k++) {
+    const p = accessPts[i];
+    if (p.x < GARAGE.maxX + 3) continue;
+    addLamp(p, accessTan[i], ACCESS_HALF, k % 2 ? 1 : -1);
+  }
+  const LAMP_H = 9;
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x8d9197, roughness: 0.5, metalness: 0.6 });
+  const headMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, emissive: 0xffd9a0, emissiveIntensity: 0.05, roughness: 0.4, fog: false });
+  const poolTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 128;
+    const x = c.getContext('2d');
+    const g = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.55)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g;
+    x.fillRect(0, 0, 128, 128);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  })();
+  const poolMat = new THREE.MeshBasicMaterial({ map: poolTex, color: 0xffc98a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+  const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.1, 0.15, LAMP_H, 8), poleMat, lamps.length);
+  const arms = new THREE.InstancedMesh(new THREE.BoxGeometry(0.08, 0.08, 1), poleMat, lamps.length);
+  const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.42, 0.14, 0.9), headMat, lamps.length);
+  const poolGeo = new THREE.PlaneGeometry(18, 18);
+  poolGeo.rotateX(-Math.PI / 2);
+  const pools = new THREE.InstancedMesh(poolGeo, poolMat, lamps.length);
+  pools.renderOrder = 3;
+  {
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const v = new THREE.Vector3();
+    const sc = new THREE.Vector3();
+    lamps.forEach((l, i) => {
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), l.yaw);
+      poles.setMatrixAt(i, m4.compose(v.set(l.px, l.y + LAMP_H / 2, l.pz), new THREE.Quaternion(), sc.set(1, 1, 1)));
+      const len = Math.hypot(l.hx - l.px, l.hz - l.pz);
+      arms.setMatrixAt(i, m4.compose(v.set((l.px + l.hx) / 2, l.y + LAMP_H - 0.05, (l.pz + l.hz) / 2), q, sc.set(1, 1, len)));
+      heads.setMatrixAt(i, m4.compose(v.set(l.hx, l.y + LAMP_H - 0.12, l.hz), q, sc.set(1, 1, 1)));
+      pools.setMatrixAt(i, m4.compose(v.set(l.hx, l.y + 0.06, l.hz), q, sc.set(1, 1, 1)));
+    });
+    for (const m of [poles, arms, heads]) { m.castShadow = true; m.instanceMatrix.needsUpdate = true; }
+    pools.instanceMatrix.needsUpdate = true;
+    pools.visible = false;
+    group.add(poles, arms, heads, pools);
+  }
+  /** 夜の明るさ（0 = 昼、0.5 = 夕方、1 = 夜）：街灯を灯して、路面に光だまりを出す */
+  function setNight(level) {
+    headMat.emissiveIntensity = level > 0 ? 2.2 + level * 2 : 0.05;
+    pools.visible = level > 0;
+    poolMat.opacity = 0.6 * level;
+  }
+
   // --- 走れる所（gt3.js の track） -------------------------------------------------
   const fa = { p: new THREE.Vector3(), t: new THREE.Vector3(), n: new THREE.Vector3() };
   const fl = { p: new THREE.Vector3(), t: new THREE.Vector3(), n: new THREE.Vector3() };
@@ -317,6 +394,8 @@ export function createRoad() {
   return {
     group,
     track,
+    setNight,
+    lamps,
     /** 高架の橋脚にぶつかるか（ジェットスキー） */
     pierBlocked(x, z) { return piers.some((p) => (p.x - x) ** 2 + (p.z - z) ** 2 < 2.2 * 2.2); },
     /** ガレージの壁（歩いて通り抜けない。world.js の clampToBounds） */

@@ -310,7 +310,7 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   mapPlane.position.set(SEAT.x - 0.36, 0.83, 0.41);
   body.add(mapPlane);
   mapPlane.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
-  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, mapPlane, mapCanvas, mapTex, mirrorFrame };
+  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, headMat: lightMat, mapPlane, mapCanvas, mapTex, mirrorFrame };
 }
 
 /**

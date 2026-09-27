@@ -26,7 +26,7 @@ const SEAT_TOP = 0.42;
 const GARDEN_EAST = new THREE.Vector2(5.6, -4.9);
 const TO_GARAGE = [new THREE.Vector2(8.5, -3.2), new THREE.Vector2(11, 2.3), new THREE.Vector2(17.6, 2.6), new THREE.Vector2(19.0, 4.95)];
 
-export function createF40Game({ character, car, voice = null, playerHead = null }) {
+export function createF40Game({ character, car, voice = null, playerHead = null, isNight = () => false }) {
   const body = character.body;
   let state = 'off';        // off / waitStand / toCar / getIn / ride / getOut
   let path = [];
@@ -138,7 +138,7 @@ export function createF40Game({ character, car, voice = null, playerHead = null 
     const onLoop = car.state.s >= LOOP_OFS;
     for (const k of Object.keys(cool)) cool[k] -= dt;
     if (!said.out && Math.hypot(p.x - F40_PARK.x, p.z - F40_PARK.z) > 8) { said.out = true; say('f40Start'); return; }
-    if (!said.hwy && onLoop) { said.hwy = true; say('f40Highway'); body.smile(2, 1); return; }
+    if (!said.hwy && onLoop) { said.hwy = true; say(isNight() ? 'f40Night' : 'f40Highway'); body.smile(2, 1); return; }
     if (v > 200 && !(cool.vfast > 0)) { cool.vfast = 40; say('f40VeryFast'); return; }
     if (v > 120 && !(cool.fast > 0)) { cool.fast = 60; say('f40Fast'); body.smile(2, 1); return; }
     if (onLoop && !said.sea && p.z < -200) { said.sea = true; say('f40Sea'); return; }

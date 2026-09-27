@@ -133,7 +133,12 @@ export function createWorld(renderer, scene, {
     if (fireworks) fireworks.active = key === 'night';
     // 夜は沖の灯台が光る
     park?.hill?.setNight(key === 'night');
+    // 高速道路の街灯（夕方から灯す）と、F40 のヘッドライト（夜）
+    road?.setNight(key === 'night' ? 1 : key === 'sunset' ? 0.5 : 0);
+    updateHeadlights?.();
   }
+  let road = null;
+  let updateHeadlights = null;
   const furniture = createFurniture(scene, tex, (key) => applyTheme(key));
 
   lighting = createLighting(renderer, scene, {
@@ -289,10 +294,25 @@ export function createWorld(renderer, scene, {
   const gt3 = createGT3({ park: GT3_PARK });
   scene.add(gt3.group);
   // 高速道路と、家の東の芝生の東の端のガレージ。F40 ふうの車（運転は GT3 と同じ。道の上だけを走る）
-  const road = createRoad();
+  road = createRoad();
   scene.add(road.group);
+  road.setNight(themeKey === 'night' ? 1 : themeKey === 'sunset' ? 0.5 : 0);
   const f40 = createGT3({ park: F40_PARK, color: 0xc8161d, style: 'f40', track: road.track, name: 'f40' });
   scene.add(f40.group);
+  // ヘッドライト（本物の光源 2 つ。影は付けない）。夜に乗っているあいだだけ灯す
+  const headlights = [-1, 1].map((side) => {
+    const l = new THREE.SpotLight(0xfff1d6, 0, 80, 0.42, 0.55, 1.1);
+    l.position.set(side * 0.66, 0.62, 2.45);   // 車の鼻先より前（後ろに置くと自分の車を照らす）
+    l.target.position.set(side * 0.9, 0, 24);
+    f40.model.root.add(l, l.target);
+    l.visible = false;
+    return l;
+  });
+  updateHeadlights = () => {
+    const on = f40Ridden && (themeKey === 'night' || themeKey === 'sunset');
+    for (const l of headlights) { l.visible = on; l.intensity = themeKey === 'night' ? 90 : 45; }
+    f40.model.headMat.emissiveIntensity = on ? 3 : 0.8;
+  };
   let f40Ridden = false;
   let f40Wait = 0;
   const f40AtHome = () => Math.hypot(f40.group.position.x - F40_PARK.x, f40.group.position.z - F40_PARK.z) < 3 && Math.abs(f40.speed) < 1;
@@ -430,7 +450,7 @@ export function createWorld(renderer, scene, {
     };
   }
   // F40：プレイヤーが運転席に座ると、女の子が助手席に来る
-  const f40Game = camera ? createF40Game({ character, car: f40, voice, playerHead: (out) => camera.getWorldPosition(out) }) : null;
+  const f40Game = camera ? createF40Game({ character, car: f40, voice, playerHead: (out) => camera.getWorldPosition(out), isNight: () => themeKey === 'night' }) : null;
   if (f40Game) {
     f40Game.onFinish = () => {
       character.watch(furniture.ball);
@@ -1266,6 +1286,7 @@ export function createWorld(renderer, scene, {
         if (ferrisGame) ferrisGame.playerRiding = true;
       } else if (v === f40) {
         f40Ridden = true;
+        updateHeadlights();
         if (f40Game) f40Game.playerRiding = true;
       } else if (v === cessna) {
         cessnaRidden = true;
@@ -1308,6 +1329,7 @@ export function createWorld(renderer, scene, {
         const midway = !f40AtHome();
         if (midway) blackout();
         f40Ridden = false;
+        updateHeadlights();
         f40.locked = false;
         f40.parkAtHome();
         if (f40Game) {

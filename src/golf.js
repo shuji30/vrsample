@@ -382,8 +382,11 @@ export function createGolf() {
         event = 'lip';
       }
     }
+    // 止まる：遅くて、坂の力が芝の抵抗より弱い（自分では動き出せない）とき。
+    // （以前は「坂がほぼ平ら（傾き 0.03 未満）」を条件にしていたので、6 番ホールの上り坂の途中の、
+    // 球が動かないのに傾きは 0.03 を超える所で止まると、転がり中のまま順番が進まなかった）
     const [gx, gz] = gradient(b.x, b.z);
-    if (Math.hypot(b.vx, b.vz) < 0.04 && Math.hypot(gx, gz) < 0.03) { b.vx = b.vz = 0; b.moving = false; return 'stop'; }
+    if (Math.hypot(b.vx, b.vz) < 0.04 && GRAV * Math.hypot(gx, gz) < DECEL * 0.95) { b.vx = b.vz = 0; b.moving = false; return 'stop'; }
     return event;
   }
 
@@ -469,6 +472,8 @@ export function createGolf() {
       });
     },
     hideBalls() { balls.forEach((b) => { b.mesh.visible = false; }); },
+    /** 転がっている球を、その場で止める（転がり中のまま進まないときの保険。golfgame.js） */
+    stopAll() { balls.forEach((b) => { if (b.moving) { b.moving = false; b.vx = b.vz = 0; placeMesh(b); } }); },
     /** 打つ（速さ vx, vz） */
     strike(i, vx, vz) {
       const b = balls[i];

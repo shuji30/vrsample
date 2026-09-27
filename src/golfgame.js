@@ -336,6 +336,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     pt.visible = true;
   }
   let throughFor = 0;
+  let rollingFor = 0;
   function pcTurn(dt) {
     const b = P();
     if (!pcTurnSet) { pcBehindBall(); pcTurnSet = true; charge = 0; charging = false; }
@@ -411,6 +412,9 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     else if (!(turn === 'player' && phase === 'aim')) golf.playerPutter.visible = false;
     throughFor = Math.max(0, throughFor - dt);
     events.forEach((ev, i) => { if (ev) onBallEvent(i, ev); });
+    // 保険：転がり始めて 30 秒たっても止まらないときは、その場で止めて次の番へ
+    rollingFor = phase === 'rolling' ? rollingFor + dt : 0;
+    if (rollingFor > 30) golf.stopAll();
     if (phase === 'rolling' && !P().moving && !Gb().moving) nextTurn();
     if (phase === 'holeDone') {
       timer += dt;

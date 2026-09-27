@@ -43,6 +43,11 @@ const COOLDOWN = 0.9;
 const GRAVITY = -9.8;
 const OUTSIDE_Z = ROOM.minZ - ROOM.wall - 0.25;   // これより外なら庭にいる
 const INSIDE_Z = ROOM.minZ + 0.1;
+/**
+ * 部屋の中か。以前は「z が INSIDE_Z より大きい」で見ていたので、家の南（ジェットコースター・ゴルフ・南の公園）や
+ * 東西の芝生も「部屋の中」になり、そこで馬から降りると（遊びから戻ると）女の子が家へ帰ってしまった
+ */
+const inRoom = (p) => p.x > ROOM.minX - 0.3 && p.x < ROOM.maxX + 0.3 && p.z > INSIDE_Z && p.z < ROOM.maxZ + 0.3;
 
 /** 待つ場所を選ぶ範囲。家の壁と庭の縁から離して、投げ合う余裕を残す */
 const PLAY_AREA = { minX: -5.4, maxX: 5.4, minZ: -12.4, maxZ: OUTSIDE_Z - 0.35 };
@@ -496,7 +501,15 @@ export function createCatchGame({ character, ball, camera, scene, voice = null }
     // 近くて、まっすぐ寄れる（柵や障害物をよけなくてよい）なら、相手を向いたまま寄る。
     // 背を向けて歩いて行って振り返るのは大げさ。柵の向こうへ横歩きで寄ろうと
     // すると柵に押し戻され続けるので、そのときは道順を引いて歩く
-    const route = gardenPath(new THREE.Vector2(body.position.x, body.position.z), spot);
+    // 家の南や東西の芝生にいるときは、家の横を回って庭へ（まっすぐ行くと家を突き抜ける）
+    const here = new THREE.Vector2(body.position.x, body.position.z);
+    const around = [];
+    if (here.y > OUTSIDE_Z && !inRoom(body.position)) {
+      const sideX = here.x < 0 ? ROOM.minX - 2.2 : ROOM.maxX + 2.2;
+      if (Math.abs(here.x) < ROOM.maxX + 1.5) around.push(new THREE.Vector2(sideX, here.y));
+      around.push(new THREE.Vector2(THREE.MathUtils.clamp(here.x, -6, 6), OUTSIDE_Z - 1.2));
+    }
+    const route = around.length ? [...around, ...gardenPath(around[around.length - 1], spot)] : gardenPath(here, spot);
     if (route.length === 1 && Math.hypot(spot.x - body.position.x, spot.y - body.position.z) < ADJUST_RANGE) {
       path = [];
       timer = 0;
@@ -701,7 +714,8 @@ export function createCatchGame({ character, ball, camera, scene, voice = null }
     if (state !== 'suspended') return;
     lastBall.copy(ball.position);
     readPlayer();
-    if (body.position.z < OUTSIDE_Z) {
+    // 部屋の外（庭のほか、家の南や東西・公園・厩）にいれば、庭へ行って構える。部屋にいれば部屋のうろうろ
+    if (!inRoom(body.position)) {
       body.drive(driver);
       body.setAttend(true);
       spot = null;
@@ -723,7 +737,7 @@ export function createCatchGame({ character, ball, camera, scene, voice = null }
     spotRetry = Math.max(0, spotRetry - dt);
 
     const playerOutside = player.z < OUTSIDE_Z;
-    const playerInside = player.z > INSIDE_Z;
+    const playerInside = inRoom(player);
     outsideFor = playerOutside ? outsideFor + dt : 0;
     insideFor = playerInside ? insideFor + dt : 0;
 

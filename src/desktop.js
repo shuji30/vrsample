@@ -202,12 +202,37 @@ export function createDesktopControls(renderer, camera, world) {
     if (heldBall === object) heldBall = null;
   }
 
-  function throwBall() {
+  // ブーメラン：F（パッドの A）を押しているあいだ強さをため（1 秒で最大）、離すと投げる。
+  // F で左へ曲がる。Shift を押しながら離すか、G（パッドの B）でためて離すと右へ
+  let boomCharge = null;     // ためている秒（ためていなければ null）
+  let boomKey = null;        // ためているキー（KeyF / KeyG）
+  const BOOM_FULL = 1.0;
+  const gauge = typeof document !== 'undefined' ? document.createElement('div') : null;
+  if (gauge) {
+    gauge.style.cssText = 'position:fixed;left:50%;bottom:64px;transform:translateX(-50%);width:220px;height:12px;border-radius:6px;background:rgba(10,16,34,.6);border:1px solid rgba(255,255,255,.35);overflow:hidden;display:none;z-index:15;pointer-events:none';
+    gauge.innerHTML = '<div style="height:100%;width:0;background:linear-gradient(90deg,#8ef0ff,#ffd24a)"></div>';
+    document.body.appendChild(gauge);
+  }
+  const isBoomerang = (object) => Boolean(object?.userData.boomerang);
+  function showGauge(k) {
+    if (!gauge) return;
+    gauge.style.display = k === null ? 'none' : '';
+    if (k !== null) gauge.firstChild.style.width = `${Math.round(Math.min(1, k) * 100)}%`;
+  }
+
+  function throwBall({ power = 0.3, right = false } = {}) {
     const object = heldBall;
     camera.getWorldPosition(eye);
     camera.getWorldDirection(look);
     release(object);
     object.position.copy(camera.localToWorld(holdSlot().clone()));
+    if (isBoomerang(object)) {
+      // 見ている向きへ、6〜16 m/s（ためた長さ）。揚力で浮くので、上向きは少しだけ
+      object.userData.velocity.copy(look).multiplyScalar(6 + 10 * power).add(new THREE.Vector3(0, 1.2, 0));
+      object.userData.turnSign = right ? -1 : 1;
+      object.userData.spin.set(0, 0, 0);
+      return;
+    }
     // 見ている向きへ山なりに。水平を見て投げると 5m 先で胸の高さに届く
     object.userData.velocity.copy(look).multiplyScalar(7.0).add(new THREE.Vector3(0, 2.2, 0));
     // 女の子のほうを見て投げたら、届く球筋に直す（マウスでは強さを加減できない）
@@ -260,6 +285,10 @@ export function createDesktopControls(renderer, camera, world) {
     if (event.code === 'KeyF' && !event.repeat && !driving && !heldBall && !swing?.holding && onUse?.()) return;
     // 乗り物に乗っているあいだは、拾う・投げる・振るをしない（足もとの球を拾ってしまうので）
     if (renderer.xr.isPresenting || driving) return;
+    if ((event.code === 'KeyF' || (event.code === 'KeyG' && !swing?.holding)) && isBoomerang(heldBall)) {
+      if (!event.repeat && boomCharge === null) { boomCharge = 0; boomKey = event.code; showGauge(0); }
+      return;
+    }
     if (event.code === 'KeyF') {
       if (heldBall) { throwBall(); return; }
       // 足もとの球より、かごを先に見る（かごのそばで F を押したら、かごから出す）
@@ -281,10 +310,22 @@ export function createDesktopControls(renderer, camera, world) {
   });
   window.addEventListener('keyup', (event) => {
     if (event.code === 'Space' && swing?.holding) swing.forward();
+    if (boomCharge !== null && event.code === boomKey) {
+      const power = Math.min(1, boomCharge / BOOM_FULL);
+      const right = boomKey === 'KeyG' || event.shiftKey;
+      boomCharge = null;
+      boomKey = null;
+      showGauge(null);
+      if (isBoomerang(heldBall) && heldBall.userData.heldBy === 'desktop') throwBall({ power, right });
+    }
   });
 
   function updateBall(dt) {
     swing?.update(dt);
+    if (boomCharge !== null) {
+      if (!isBoomerang(heldBall)) { boomCharge = null; boomKey = null; showGauge(null); }
+      else { boomCharge += dt; showGauge(boomCharge / BOOM_FULL); }
+    }
     if (heldBall) {
       if (heldBall.userData.heldBy !== 'desktop') { heldBall = null; return; }
       heldBall.position.copy(camera.localToWorld(holdSlot().clone()));

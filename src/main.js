@@ -7,6 +7,7 @@ import { createKartDrive } from './kartdrive.js';
 import { createDebugPanel } from './debug.js';
 import { createMusic } from './music.js';
 import { givenGirlName, givenGirlNameYomi, setGirlName, girlNameSpoken } from './girlname.js';
+import { createTouchControls, isTouchDevice } from './touch.js';
 
 const statusEl = document.getElementById('status');
 
@@ -111,6 +112,9 @@ window.addEventListener('unhandledrejection', (event) => {
 // `?safe` は原因の切り分け用。影を切り、テクスチャを最小にし、
 // XR の解像度も落として「重すぎて開けない」のかどうかを見る。
 const safeMode = params.has('safe');
+// スマホ・タブレット（指で触る端末）：タッチ操作を出し、画質の既定を下げる（URL で指定したら、そちらが優先）
+const touchMode = isTouchDevice(params);
+if (touchMode) document.body.classList.add('touch');
 
 /** GPU の名前。Chrome が伏せている場合もあるので、取れなければそう言う。 */
 function describeGpu(gl) {
@@ -126,7 +130,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'hi
 // 描画コストはピクセル数にほぼ比例する。4K ディスプレイを 200% 表示で使っていると
 // devicePixelRatio が 2 になり、同じウィンドウでも塗る量が 4 倍になる。
 // GPU が上の PC のほうが重い、という現象はたいていこれ。?dpr=1 で抑えられる。
-const dprLimit = Number(params.get('dpr')) || 2;
+const dprLimit = Number(params.get('dpr')) || (touchMode ? 1.5 : 2);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprLimit));
 renderer.setSize(window.innerWidth, window.innerHeight);
 // r180 台で PCFSoftShadowMap は削除され、PCF に一本化された。
@@ -223,7 +227,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-window.__vrsample = { renderer, scene, camera, THREE, safeMode };
+window.__vrsample = { renderer, scene, camera, THREE, safeMode, touchMode };
 
 async function start() {
   // テクスチャを CPU で焼くあいだ画面が止まるので、先に一度描画させる
@@ -232,8 +236,8 @@ async function start() {
 
   const started = performance.now();
   const world = createWorld(renderer, scene, {
-    textureQuality: Number(params.get('quality')) || (safeMode ? 0.25 : 1),
-    shadowMapSize: Number(params.get('shadow')) || 2048,
+    textureQuality: Number(params.get('quality')) || (safeMode ? 0.25 : touchMode ? 0.5 : 1),
+    shadowMapSize: Number(params.get('shadow')) || (touchMode ? 1024 : 2048),
     environment: !safeMode,
     // キャラクターの視線に追わせる。?vrm= で別の VRM に差し替えられる
     camera,
@@ -263,6 +267,7 @@ async function start() {
     muted: params.has('mute'),
   });
   const desktop = createDesktopControls(renderer, camera, world);
+  const touch = touchMode ? createTouchControls({ isXR: () => renderer.xr.isPresenting }) : null;
   // カートの運転（乗り降り・操作・ハンコン・FFB）
   const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.coaster, world.cruiser, world.jetski, world.cessna, world.gt3, world.f40, ...(world.seats?.list ?? [])].filter(Boolean) });
 // パットゴルフ：VR は右手のパター、PC は視点を球の後ろへ
@@ -421,6 +426,7 @@ const talkEye = new THREE.Vector3();
 
       player.update(dt);
       desktop.update(dt);
+      touch?.update();
       kartDrive.update(dt);
       world.update(dt);
       // 女の子がしゃべっているあいだは BGM を下げる
@@ -497,7 +503,7 @@ const talkEye = new THREE.Vector3();
     desktop.controls.target.set(p.x + fx * 3, g + 1.2, p.z + fz * 3);
     desktop.controls.update();
   }
-  Object.assign(window.__vrsample, { world, player, desktop, debugPanel, music, kartDrive, resetView });
+  Object.assign(window.__vrsample, { world, player, desktop, touch, debugPanel, music, kartDrive, resetView });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する
   const voiceStatusEl = document.getElementById('voice-status');

@@ -189,7 +189,7 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
   }
 
   /**
-   * @param {'racket' | 'bounce' | 'net'} kind
+   * @param {'racket' | 'bounce' | 'net' | 'ballHit' | 'cushion' | 'pocket' | 'cue'} kind
    * @param {number} strength 0〜1
    */
   function play(kind, strength = 1) {
@@ -206,6 +206,24 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
     } else if (kind === 'bounce') {
       tone(now, 210 * vary, 0.3 * s, 0.07);
       noise(now, 900 * vary, 1.0, 0.25 * s, 0.03);
+    } else if (kind === 'ballHit') {
+      // ビリヤードの球どうし：硬くて高い「カチッ」（フェノール樹脂の球）
+      tone(now, 2900 * vary, 0.28 * s, 0.035);
+      tone(now, 4700 * vary, 0.1 * s, 0.02);
+      noise(now, 5200 * vary, 2.5, 0.35 * s, 0.015);
+    } else if (kind === 'cushion') {
+      // クッション（ゴムと羅紗）：にぶい「トン」
+      tone(now, 150 * vary, 0.3 * s, 0.06);
+      noise(now, 600 * vary, 1.2, 0.18 * s, 0.03);
+    } else if (kind === 'pocket') {
+      // ポケットへ落ちる：「コトッ」と、奥で転がる「ゴロゴロ」
+      tone(now, 330 * vary, 0.3 * s, 0.05, 'triangle');
+      tone(now + 0.06, 180 * vary, 0.22 * s, 0.12);
+      noise(now + 0.05, 380 * vary, 0.8, 0.2 * s, 0.25);
+    } else if (kind === 'cue') {
+      // キューの先（タップ）で手球を突く：短い「コッ」
+      tone(now, 1100 * vary, 0.22 * s, 0.03, 'triangle');
+      noise(now, 2600 * vary, 1.5, 0.3 * s, 0.02);
     } else {
       noise(now, 700 * vary, 0.6, 0.3 * s, 0.12);
     }

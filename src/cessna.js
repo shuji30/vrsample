@@ -27,10 +27,10 @@ export const APRON = { minX: -415, maxX: -345, minZ: 226, maxZ: 250 };
 /** 止めておく所（滑走路の西の端、東向き） */
 const PARK = { x: -388, z: RUNWAY.z, yaw: Math.PI / 2 };
 /** 看板で着く所（駐機場） */
-export const HILL_RETURN = { x: -2.6, z: 8.2 };
+export const HILL_RETURN = { x: -1.6, z: 5.6 };
 export const AIRFIELD_ARRIVAL = { x: -372, z: 234 };
 /** 丘の上の看板（家の南の芝生、コースターの駅の西） */
-const HILL_SIGN = { x: -2.6, z: 9.4 };
+const HILL_SIGN = { x: -3.0, z: 7.0 };
 const SEAT_TOP = 1.35;
 const FLOOR = 0.92;
 const ROTATE = 24;        // 浮き上がる速さ（m/s）

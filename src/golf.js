@@ -483,6 +483,13 @@ export function createGolf() {
     set current(i) { current = i; },
     get hole() { return hole(); },
     laneY(x, z) { return LANE_Y + laneH(x, z); },
+    /** 立っている所の足元の高さ：どれかのホールのレーンの中ならレーンの面（こぶ・坂も）、外なら地面（0） */
+    groundY(x, z) {
+      for (const h of holes) {
+        for (const r of h.rects) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) return LANE_Y + h.h(x, z);
+      }
+      return 0;
+    },
     /** 球をティーに置く */
     resetBalls() {
       const [tx, tz] = hole().tee;

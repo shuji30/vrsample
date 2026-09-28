@@ -166,12 +166,27 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     girlSpeed = golf.speedFor(want, Math.max(dh, hump)) * (0.94 + Math.random() * 0.2);
     if (golf.hole.windmill && b.z < 21) girlSpeed = Math.max(girlSpeed, golf.speedFor(d + 0.6));
   }
-  /** 立つ所：球の横（右打ち。狙う向きが体の左） */
+  /** 点から、いまのホールの縁（線分）までのいちばん近い距離 */
+  function railDist(x, z) {
+    let best = Infinity;
+    for (const [x0, z0, x1, z1] of golf.hole.walls) {
+      const dx = x1 - x0;
+      const dz = z1 - z0;
+      const t = Math.max(0, Math.min(1, ((x - x0) * dx + (z - z0) * dz) / (dx * dx + dz * dz || 1)));
+      best = Math.min(best, Math.hypot(x - (x0 + dx * t), z - (z0 + dz * t)));
+    }
+    return best;
+  }
+  /** 立つ所：球の横（右打ち。狙う向きが体の左）。
+   *  縁（幅 6cm・高さ 9cm〜、6 番の坂の上では 25cm）の上には立たない：縁から 12cm 以内なら、球から離れる向きへ
+   *  5cm ずつずらして縁の外へ（以前は縁の上に立ち、足が縁と坂のレーンに埋まった） */
   function stance(out) {
     const b = Gb();
     const fx = -girlAim.y;
     const fz = girlAim.x;
-    return out.set(b.x - fx * 0.42, 0, b.z - fz * 0.42);
+    out.set(b.x - fx * 0.42, 0, b.z - fz * 0.42);
+    for (let k = 0; k < 8 && railDist(out.x, out.z) < 0.12; k++) { out.x -= fx * 0.05; out.z -= fz * 0.05; }
+    return out;
   }
   function placeGirlPutter(back) {
     const b = Gb();
@@ -482,8 +497,12 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
         character.watch(gaze);
         if (followPath(dt)) state = 'play';
         break;
-      case 'play':
-        body.position.y = 0;
+      case 'play': {
+        // 足元の高さ：女の子は球の横 0.42m に立つので、たいていレーンの中（幅 1.1m）。
+        // 以前は 0（地面）にしていたので、レーンの面・こぶ・6 番の上り坂（最大 0.16m）のぶん足が埋まった。
+        // 段差でがくっとしないよう、なめらかに合わせる
+        const gy = golf.groundY(body.position.x, body.position.z);
+        body.position.y += (gy - body.position.y) * Math.min(1, dt * 12);
         if (turn === 'girl' && phase === 'aim') girlTurn(dt);
         else if (phase === 'rolling' && turn === 'girl') {
           body.stand(dt);
@@ -494,12 +513,14 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
           watchPoint(b.x, golf.laneY(b.x, b.z), b.z);
         } else spectate(dt);
         break;
+      }
       default:
         break;
     }
   }
 
   function finish() {
+    body.position.y = 0;      // レーンの上に立っていた高さを戻す（このあと庭へ歩いて帰るので）
     body.reachHands(null);
     body.reach(null);
     body.setGrip(0);

@@ -774,7 +774,12 @@ export function createVoice({ character, scene, camera, muted = false, clips: cl
    * @param {keyof typeof LINES} kind
    * @param {{ n?: number|string, spoken?: number|string, chance?: number }} [options]
    */
-  function say(kind, { n, spoken, chance = 1 } = {}) {
+  function say(kind, opts) {
+    // 声は遊びに要らないので、声の中の例外（端末の音声合成・音の再生など）は外へ出さない。
+    // 外へ出すと、呼んだ側（ゲームの 1 フレーム）がそこで止まった
+    try { return sayLine(kind, opts); } catch (e) { console.warn('[voice]', kind, e); return false; }
+  }
+  function sayLine(kind, { n, spoken, chance = 1 } = {}) {
     const lines = LINES[kind];
     if (!lines || Math.random() > chance) return false;
     const wait = COOLDOWN[kind] ?? COOLDOWN.default;

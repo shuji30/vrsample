@@ -181,7 +181,9 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     const grip = tmp.set(body.position.x + fx * 0.28, 0.78, body.position.z + fz * 0.28);
     const headAt = tmp2.set(b.x - girlAim.x * (0.05 + back), golf.laneY(b.x, b.z), b.z - girlAim.y * (0.05 + back));
     const shaft = grip.clone().sub(headAt).normalize();
-    const side = new THREE.Vector3(girlAim.x, 0, girlAim.y);
+    // ヘッドの長い辺（ローカル x）は狙いと直角、打つ面（ローカル z）は狙いの向き。
+    // 以前は side に狙いの向きそのものを入れていたので、長い辺が狙いの向きに伸び、トンカチのように見えた
+    const side = new THREE.Vector3(-girlAim.y, 0, girlAim.x);
     const zAxis = new THREE.Vector3().crossVectors(side, shaft).normalize();
     const xAxis = new THREE.Vector3().crossVectors(shaft, zAxis).normalize();
     m4.makeBasis(xAxis, shaft, zAxis);
@@ -426,9 +428,9 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     else if (!(turn === 'player' && phase === 'aim')) golf.playerPutter.visible = false;
     throughFor = Math.max(0, throughFor - dt);
     events.forEach((ev, i) => { if (ev) onBallEvent(i, ev); });
-    // 保険：転がり始めて 30 秒たっても止まらないときは、その場で止めて次の番へ
+    // 保険：転がり始めて 15 秒たっても止まらないときは、その場で止めて次の番へ（30 秒は待ちきれなかった）
     rollingFor = phase === 'rolling' ? rollingFor + dt : 0;
-    if (rollingFor > 30) golf.stopAll();
+    if (rollingFor > 15) golf.stopAll();
     if (phase === 'rolling' && !P().moving && !Gb().moving) nextTurn();
     if (phase === 'holeDone') {
       timer += dt;

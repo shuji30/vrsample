@@ -409,6 +409,26 @@ const talkEye = new THREE.Vector3();
 
   const timer = new THREE.Timer();
   timer.connect(document); // タブが非表示の間は時間を進めない
+  let loopErrors = 0;
+  let loopErrorsInARow = 0;
+  let loopErrorEl = null;
+  let loopErrorHide = 0;
+  /** 描画ループの例外を、画面の上に 8 秒だけ小さく出す */
+  function showLoopError(error) {
+    if (!loopErrorEl) {
+      loopErrorEl = document.createElement('div');
+      loopErrorEl.id = 'loop-error';
+      loopErrorEl.style.cssText = 'position:fixed;left:50%;top:12px;transform:translateX(-50%);max-width:min(560px,calc(100vw - 32px));padding:6px 12px;border-radius:8px;background:rgba(120,20,20,.85);color:#fff;font:12px/1.4 sans-serif;z-index:30;pointer-events:none;white-space:pre-wrap';
+      document.body.appendChild(loopErrorEl);
+    }
+    const where = String(error?.stack ?? '').split('\n').find((l) => /src\//.test(l))?.trim().replace(/^at /, '') ?? '';
+    loopErrorEl.textContent = `エラーが起きました（続けます）：${error?.name ? `${error.name}: ` : ''}${error?.message ?? error}${where ? `\n${where}` : ''}`;
+    loopErrorEl.style.display = '';
+    clearTimeout(loopErrorHide);
+    loopErrorHide = setTimeout(() => { loopErrorEl.style.display = 'none'; }, 8000);
+  }
+  // 検証用
+  window.__vrsample.loopErrors = () => loopErrors;
 
   renderer.setAnimationLoop((timestamp) => {
     try {
@@ -447,9 +467,18 @@ const talkEye = new THREE.Vector3();
         else car.hideMirror();
       }
       renderer.render(scene, camera);
+      loopErrorsInARow = 0;
     } catch (error) {
-      renderer.setAnimationLoop(null);
-      fail('描画ループ', error);
+      // 1 フレームで例外が起きても、ループは止めない。以前は setAnimationLoop(null) で止めていたので、
+      // 一度の例外（スマホの音声合成など）で画面がそのまま固まり、ゲームが先へ進まなくなった。
+      // 内容は画面の上に小さく出す（説明画面を閉じていても見えるように）。同じ例外が続くときは 10 秒に 1 回だけ
+      loopErrors++;
+      loopErrorsInARow++;
+      if (loopErrors === 1 || loopErrorsInARow % 600 === 1) {
+        console.error('[vrsample] 描画ループ', error);
+        showLoopError(error);
+      }
+      try { renderer.render(scene, camera); } catch { /* 描けなくても、次のフレームでもう一度 */ }
     }
   });
 

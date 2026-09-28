@@ -34,6 +34,8 @@ const CUE_LEN = 1.45;
 const L = TABLE.halfL;
 const Wd = TABLE.halfW;
 const RAIL_OUT = TABLE.rail + 0.3;
+const STAND_SIDE = 0.17;
+const STAND_OUT = 0.17;
 const inAnnex = (x, z) => x > ANNEX.minX && x < ANNEX.maxX && z > ANNEX.minZ && z < ANNEX.maxZ;
 
 function makeCue() {
@@ -337,14 +339,25 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
   /** 手球から狙いと反対へたどって、台の外（木枠から 0.3m）の立つ所（ワールド）。壁から 0.35m は空ける */
   function standFor(dirX, dirZ) {
     const cue = B.cue;
-    const ox = L + RAIL_OUT;
-    const oz = Wd + RAIL_OUT;
+    // 台の縁から 17cm（太ももが縁に触れるくらい）。30cm だと、手球が奥にあるとき左手（腕は 0.38m）が
+    // ブリッジの所へ届かなかった
+    const ox = L + TABLE.rail + STAND_OUT;
+    const oz = Wd + TABLE.rail + STAND_OUT;
     // 手球から -dir へ、台の外の矩形を出る所まで
     const tx = Math.abs(dirX) > 1e-6 ? (ox - Math.sign(-dirX) * cue.x) / Math.abs(dirX) : Infinity;
     const tz = Math.abs(dirZ) > 1e-6 ? (oz - Math.sign(-dirZ) * cue.z) / Math.abs(dirZ) : Infinity;
     const t = Math.min(tx, tz);
     let sx = TABLE.x + cue.x - dirX * t;
     let sz = TABLE.z + cue.z - dirZ * t;
+    // 体はキューの線の左（17cm）に置く。キューはあごの下から右の脇・腰の横を通る。線の真上に立つと、
+    // 前にかがんだ胸の高さがキュー（台の高さ）と同じになって、キューが胸に刺さっていた
+    sx += dirZ * STAND_SIDE;
+    sz -= dirX * STAND_SIDE;
+    // ずらして台の外の矩形に入ったら、-dir へ出るまで下がる
+    for (let k = 0; k < 20 && Math.abs(sx - TABLE.x) < ox && Math.abs(sz - TABLE.z) < oz; k++) {
+      sx -= dirX * 0.02;
+      sz -= dirZ * 0.02;
+    }
     const m = 0.4;
     sx = THREE.MathUtils.clamp(sx, ANNEX.minX + m, ANNEX.maxX - m);
     sz = THREE.MathUtils.clamp(sz, ANNEX.minZ + m, ANNEX.maxZ - m);
@@ -417,22 +430,56 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
 
   // --- 女の子の番 ---------------------------------------------------------------
   /** 女の子のキューと手：手球の back だけ後ろにキューの先。左手はブリッジ、右手はキューの後ろ */
+  const _sh = new THREE.Vector3();
+  const _br = new THREE.Vector3();
+  const _side = new THREE.Vector3();
   function poseGirlCue(back) {
     const cue = B.cue;
     const s = girlShot;
     const ball = tableToWorld(cue.x, cue.z, tmp);
     const dir = tmp2.set(s.dirX, 0, s.dirZ);
-    // キューはほんの少し先を下げる
-    const axis = new THREE.Vector3(dir.x, -0.08, dir.z).normalize();
+    // 左手（ブリッジ）：キューの線の上で、手球の 22cm 後ろから、左の肩から届く所まで下がった点。開いた手のひらを下にして
+    // 羅紗の上に置く（そこが台の外なら縁の上）。以前は 24cm に決めていたので、手球が遠いと肩から 0.85m 先になり
+    // （腕は 0.38m）、手が届かずにキューの上の宙に浮いていた。握りこぶしだったのも直す
+    const humanoid = character.vrm?.humanoid;
+    const shoulder = humanoid?.getNormalizedBoneNode('leftUpperArm');
+    const reach = (humanoid?.getNormalizedBoneNode('leftLowerArm')?.position.length() ?? 0.2)
+      + (humanoid?.getNormalizedBoneNode('leftHand')?.position.length() ?? 0.18);
+    if (shoulder) shoulder.getWorldPosition(_sh); else _sh.copy(body.position).setY(1.1);
+    const clothY = (x, z) => (Math.abs(x - TABLE.x) < TABLE.halfL - 0.02 && Math.abs(z - TABLE.z) < TABLE.halfW - 0.02 ? TABLE.height + 0.012 : TABLE.height + 0.05);
+    // 手は、キューを親指と人差し指の間に載せるため、小指の側（左）へ 2.8cm ずらして置く
+    _side.set(dir.z, 0, -dir.x).multiplyScalar(0.028);
+    // 構えている間に決めて、素振りから突くまでは動かさない（肩は毎フレーム少し動くので、決め直すとブリッジが跳ねる）
+    const search = girlStep === 'address' || s.bridgeT === undefined;
+    let t = search ? 0.22 : s.bridgeT;
+    for (; search && t < 0.75; t += 0.02) {
+      _br.copy(ball).addScaledVector(dir, -t).add(_side);
+      const wy = clothY(_br.x, _br.z);
+      // 手首は手のひらの中心から 7cm 手前
+      if (Math.hypot(_br.x - dir.x * 0.07 - _sh.x, wy - _sh.y, _br.z - dir.z * 0.07 - _sh.z) < reach * 0.95) break;
+    }
+    s.bridgeT = t;
+    const bridge = ball.clone().addScaledVector(dir, -t);
+    bridge.y = clothY(bridge.x, bridge.z);
+    // キュー：先（手球の後ろ、球の中心の高さ）とブリッジの手の上を通す。載せるのは親指と人差し指の付け根の間
+    // （手のひらの中心より親指の側へ 2.8cm、指の付け根の骨から 2cm 上）
+    const rest = bridge.clone();
+    rest.y += 0.024;
+    const handAt = bridge.clone().add(_side);
+    const tip0 = ball.clone().addScaledVector(dir, -(BALL_R + 0.012));
+    const axis = new THREE.Vector3().subVectors(tip0, rest).normalize();
     const tipAt = ball.clone().addScaledVector(axis, -(BALL_R + 0.012 + back));
     girlCue.visible = true;
     girlCue.position.copy(tipAt);
     girlCue.quaternion.setFromUnitVectors(up, axis);
-    const bridge = ball.clone().addScaledVector(dir, -0.24);
-    bridge.y = TABLE.height + 0.035;
-    const grip = tipAt.clone().addScaledVector(axis, -0.95);
-    body.reachHands({ left: { target: bridge, amount: 1 }, right: { target: grip, amount: 1 } });
-    body.setGrip(0.8);
+    // 右手：キューの後ろを、キューが拳の中を通るように握る（親指の側が先の向き）。ブリッジから 55cm 以上後ろ
+    // （腰の横。肘から下が真下に垂れる）。先から 0.95m に決めていたときは、手球が遠いとブリッジのすぐ後ろ・あごの前を握っていた
+    // 握る所はキューの上で決まった所（引く・突くときはキューといっしょに動く）
+    const gripAlong = THREE.MathUtils.clamp(t + BALL_R + 0.012 + 0.6, 0.95, 1.3);
+    const grip = tipAt.clone().addScaledVector(axis, -gripAlong);
+    body.reachHands({ left: { target: handAt, amount: 1, flat: dir }, right: { target: grip, amount: 1, grip: axis } });
+    body.setGrip(0, 'left');
+    body.setGrip(1, 'right');
   }
   function watchBall() {
     tableToWorld(B.cue.x, B.cue.z, gaze.position);
@@ -455,7 +502,7 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
         body.position.z += (s.stand.z - body.position.z) * Math.min(1, dt * 4);
         body.turnTowards(Math.atan2(s.dirX, s.dirZ), dt * 2.5);
         body.stand(dt);
-        body.setBend(0.55);
+        body.setBend(1.0);   // 深く前かがみに（0.55・0.75 では、ブリッジの左手が台まで届かなかった）
         poseGirlCue(0.05);
         watchBall();
         if (timer > 1.3) { girlStep = 'stroke'; timer = 0; }

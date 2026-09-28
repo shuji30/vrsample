@@ -64,7 +64,8 @@ function holeDefs() {
   });
   // 6：上り坂の上のカップ（西へ打つ）
   H.push({
-    name: '上り坂', par: 3, rects: [R(-27.5, -18.5, 28, 29.1)], tee: [-19.1, 28.55], cup: [-26.6, 28.55],
+    // 旗はカップの北、縁の外に立てる（カップに立てると、東西に長いレーンでは旗が打つ線の上にかぶった）
+    name: '上り坂', par: 3, rects: [R(-27.5, -18.5, 28, 29.1)], tee: [-19.1, 28.55], cup: [-26.6, 28.55], flagAt: [-26.6, 29.28],
     h: (x) => 0.13 * THREE.MathUtils.smoothstep(-x, 21.5, 23.5),
   });
   for (const hole of H) {
@@ -145,11 +146,15 @@ function makeHoleMesh(hole, mats, index) {
   cup.rotation.x = -Math.PI / 2;
   cup.position.set(hole.cup[0], cupY + 0.003, hole.cup[1]);
   g.add(cup);
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.8, 6), mats.pole);
-  pole.position.set(hole.cup[0], cupY + 0.4, hole.cup[1]);
+  // 旗：ふつうはカップに立てる。flagAt があれば、そこ（コースの外）の地面から立てて、高さはカップの旗にそろえる
+  const [fx, fz] = hole.flagAt ?? hole.cup;
+  const poleTop = cupY + 0.8;
+  const poleBottom = hole.flagAt ? 0 : cupY;
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, poleTop - poleBottom, 6), mats.pole);
+  pole.position.set(fx, (poleTop + poleBottom) / 2, fz);
   g.add(pole);
   const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.14), mats.flag);
-  flag.position.set(hole.cup[0] + 0.11, cupY + 0.72, hole.cup[1]);
+  flag.position.set(fx + 0.11, cupY + 0.72, fz);
   g.add(flag);
   // 番号の札
   const c = document.createElement('canvas');

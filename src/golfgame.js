@@ -428,9 +428,9 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     else if (!(turn === 'player' && phase === 'aim')) golf.playerPutter.visible = false;
     throughFor = Math.max(0, throughFor - dt);
     events.forEach((ev, i) => { if (ev) onBallEvent(i, ev); });
-    // 保険：転がり始めて 15 秒たっても止まらないときは、その場で止めて次の番へ（30 秒は待ちきれなかった）
+    // 保険：転がり始めて 10 秒たっても止まらないときは、その場で止めて次の番へ（30 秒・15 秒は長かった）
     rollingFor = phase === 'rolling' ? rollingFor + dt : 0;
-    if (rollingFor > 15) golf.stopAll();
+    if (rollingFor > 10) golf.stopAll();
     if (phase === 'rolling' && !P().moving && !Gb().moving) nextTurn();
     if (phase === 'holeDone') {
       timer += dt;

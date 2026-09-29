@@ -132,7 +132,8 @@ function makeDolphin() {
   const { geometry, ringOf } = bodyGeometry();
   g.add(shade(new THREE.Mesh(geometry, skin)));
   // ひれ・目は、背骨の t の所に付けた台（anchor）に載せる。台は背骨といっしょに動いて傾く
-  const spine = createSpine(geometry, ringOf, { rings: RINGS, length: LENGTH, center: BEND_CENTER });
+  // 頭（鼻先から 8%）より後ろを曲げる
+  const spine = createSpine(geometry, ringOf, { rings: RINGS, length: LENGTH, center: BEND_CENTER, headRigid: 0.08 });
   const anchor = (t, gain) => { const a = spine.anchor(t, gain); g.add(a); return a; };
   // 目（おでこの下、口の端の少し後ろ）
   const head = anchor(0.125);
@@ -434,9 +435,10 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
         const vy = j.vy - G * j.t;
         d.y = SEA_LEVEL + j.vy * j.t - 0.5 * G * j.t * j.t;
         d.pitch = -Math.atan2(vy, j.vx);
-        // 弓なり：弧（放物線）の曲がり具合 G·vx / v³ に合わせて背を丸める（見えるように 1.8 倍）。頂上でいちばん丸い
+        // 弓なり：空中ではずっと背を丸め（0.5）、弧（放物線）の曲がり具合 G·vx / v³ に合わせて頂上でいちばん丸く（1.4）。
+        // 弧の曲がりどおり（1.8 倍でも全体で 0.7 rad）では、跳んでもほとんどまっすぐに見えた
         const v = Math.hypot(j.vx, vy);
-        archWant = THREE.MathUtils.clamp((G * j.vx) / (v * v * v) * LENGTH * 1.8, 0, 0.8);
+        archWant = THREE.MathUtils.clamp(0.5 + (G * j.vx) / (v * v * v) * LENGTH * 3.2, 0, 1.4);
         // 尾は、水を蹴って出た直後だけ強く振り、空中ではほとんど止める
         ampWant = j.t < 0.2 ? 0.5 : 0.06;
         if (j.t >= j.dur) {

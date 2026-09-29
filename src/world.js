@@ -51,12 +51,16 @@ import { createCruiserGame } from './cruisergame.js';
 import { createJetski, seaBlocked } from './jetski.js';
 import { createDolphins } from './dolphins.js';
 import { createWhales, WHALE_AREA } from './whales.js';
+import { createReef } from './reef.js';
+import { createReefFish } from './reeffish.js';
+import { createDiving } from './diving.js';
+import { createDiveGame } from './divegame.js';
 import { createSeagulls } from './seagulls.js';
 import { createFlyingFish } from './flyingfish.js';
 import { createJetskiGame } from './jetskigame.js';
 import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
 import { createCessnaGame } from './cessnagame.js';
-import { AIRFIELD_ZONE, SEA_LEVEL } from './hill.js';
+import { AIRFIELD_ZONE, SEA_LEVEL, hillHeight } from './hill.js';
 import { createRoad } from './road.js';
 import { F40_PARK, GARAGE } from './roaddata.js';
 import { createF40Game } from './f40game.js';
@@ -519,6 +523,39 @@ export function createWorld(renderer, scene, {
     whaleWatch(x, y + 2.5, z, 'whaleBlow', 0.8);
   };
   whales.onFluke = (x, z) => whaleWatch(x, SEA_LEVEL + 2, z, 'whaleDive', 0.9);
+  // スキューバダイビング：浜の西の受付から、沖のサンゴ礁（reef.js）へ潜る。熱帯魚（reeffish.js）。女の子もいっしょに（divegame.js）
+  const reef = createReef();
+  scene.add(reef.group);
+  const reefFish = createReefFish({ reef });
+  scene.add(reefFish.group);
+  const diver = createDiving({ scene, renderer, camera, reef, groundAt: (x, z) => hillHeight(x, z), beachGround });
+  let diveRidden = false;
+  const diveEye = new THREE.Vector3();
+  const diveGame = camera ? createDiveGame({ character, diving: diver, reef, fish: reefFish, voice, playerHead: (out) => camera.getWorldPosition(out) }) : null;
+  if (diveGame) {
+    diveGame.onFinish = () => {
+      if (beachGame?.active) beachGame.resume();
+      else {
+        character.watch(furniture.ball);
+        catchGame?.resume();
+      }
+    };
+  }
+  // 水の中の見え方：霧を青緑に濃く（見通し 30m）、空も同じ色に。出たら、いまの時間の見え方へ戻す
+  const WATER = 0x1d6f8c;
+  let savedBackground = null;
+  diver.onUnderwater = (on) => {
+    reefFish.group.visible = on;
+    if (!on) { scene.background = savedBackground; lighting?.setTheme(themeKey); return; }
+    // 背景も水の色に（何も描かれない所が黒く見えないように）
+    savedBackground = scene.background;
+    scene.background = new THREE.Color(WATER);
+    if (scene.fog) { scene.fog.color.setHex(WATER); scene.fog.near = 1; scene.fog.far = 32; }
+    const u = park.skyUniforms;
+    for (const k of ['topColor', 'bottomColor', 'horizonColor']) u[k]?.value.setHex(WATER);
+  };
+  // 息の音：吸う（シューッ）と、吐いた泡（ぶくぶく）
+  diver.onBreath = (kind) => impact.play(kind === 'in' ? 'regIn' : 'bubbles', 0.55);
   whales.onBreach = (x, y, z) => whaleWatch(x, y, z, 'whaleJump', 1);
   // 跳んだクジラが水に落ちる「ザバーン」（遠くまで聞こえる）
   whales.onSplash = (x, y, z, strength) => soundAt(whaleSeenAt.set(x, y, z), 'whaleSplash', Math.min(1, strength), 40);
@@ -1100,6 +1137,15 @@ export function createWorld(renderer, scene, {
         cruiserGame.start();
       }
     }
+    // スキューバ：潜ったら、していた遊びをやめていっしょに（画面が暗くなるあいだに水の中へ）
+    if (diveGame?.wanted && !diveGame.active && !jetskiGame?.active && !cruiserGame?.active && !seatGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active
+      && (!beachGame?.active || beachGame.state === 'play')) {
+      if (tennisGame?.active) tennisGame.stop();
+      else {
+        catchGame?.suspend();
+        diveGame.start();
+      }
+    }
     if (jetskiGame?.wanted && !jetskiGame.active && !cruiserGame?.active && !seatGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active
       && (!beachGame?.active || beachGame.state === 'play')) {
       if (tennisGame?.active) tennisGame.stop();
@@ -1158,6 +1204,7 @@ export function createWorld(renderer, scene, {
     if (seatGame?.active) seatGame.update(dt);
     else if (f40Game?.active) f40Game.update(dt);
     else if (cessnaGame?.active) cessnaGame.update(dt);
+    else if (diveGame?.active) diveGame.update(dt);
     else if (cruiserGame?.active) cruiserGame.update(dt);
     else if (jetskiGame?.active) jetskiGame.update(dt);
     else if (beachGame?.active) beachGame.update(dt);
@@ -1221,6 +1268,13 @@ export function createWorld(renderer, scene, {
     seagulls.update(dt, camera ? camera.getWorldPosition(gullEar) : null, boatNow);
     flyingFish.update(dt, boatNow);
     whales.update(dt, boatNow, camera ? camera.getWorldPosition(whaleEar) : null);
+    // 水の中：泡・マリンスノー・サンゴの揺れ・熱帯魚。影はダイバーのまわりに
+    if (diver.active && camera) {
+      camera.getWorldPosition(diveEye);
+      diver.tick(dt, diveEye);
+      reefFish.update(dt, diveGame?.active ? [diveEye, diveGame.position] : [diveEye]);
+      lighting.setShadowFocus(diveEye.x, diveEye.z, reef.groundAt(diveEye.x, diveEye.z));
+    }
     // はじめてクジラを見つけた（女の子が乗った船から 90m 以内）。クジラのいる所から離れたら、また見つけられる
     if (boatNow) {
       const wn = whales.nearest(boatNow.x, boatNow.z);
@@ -1403,6 +1457,10 @@ export function createWorld(renderer, scene, {
     seagulls,
     flyingFish,
     whales,
+    diver,
+    reef,
+    reefFish,
+    diveGame,
     grabbables,
     boomerang,
     interactables,
@@ -1440,6 +1498,12 @@ export function createWorld(renderer, scene, {
         cessnaRidden = true;
         cessna.board();
         if (cessnaGame) cessnaGame.playerRiding = true;
+      } else if (v === diver) {
+        // 暗くして、サンゴ礁の上の水の中へ（女の子も道具をつけて）
+        blackout();
+        diveRidden = true;
+        diver.begin();
+        if (diveGame) diveGame.playerRiding = true;
       } else if (v === jetski) {
         jetskiRidden = true;
         jetski.board();
@@ -1494,6 +1558,12 @@ export function createWorld(renderer, scene, {
           cessnaGame.playerRiding = false;
           if (midway) cessnaGame.dropAtPlane();
         }
+      } else if (v === diver) {
+        // 暗くして、浜の受付の前へ（女の子は道具を外して横に）
+        blackout();
+        diveRidden = false;
+        diver.end();
+        if (diveGame) diveGame.playerRiding = false;
       } else if (v === jetski) {
         // 桟橋のそばならそのまま降りる。沖にいれば暗くして桟橋へ（女の子も）
         const midway = !jetski.atDock;

@@ -589,6 +589,11 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
    *   left: {forward, lift}, right: {forward, lift} }
    */
   let throwPose = null;
+  // 泳ぐ（スキューバ）：うつ伏せになって、脚でばた足。swimWant 0..1、swimPhase はばた足の位相
+  let swimWant = 0;
+  let swimAmount = 0;
+  let swimPhase = 0;
+  let swimKick = 1;
   /** 片手ずつの目標。投球中は両手で 1 点ではなく、左右が別々に動く */
   const hands = {
     left: { target: new THREE.Vector3(), amount: 0, pole: null, axis: null, flat: null },
@@ -1533,8 +1538,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
 
       shadow.position.set(
         group.position.x + lateral * cos + forward * sin,
-        // ラグ（y = 0.006）と同じ高さに置くと Z ファイティングで消える
-        0.014,
+        // ラグ（y = 0.006）と同じ高さに置くと Z ファイティングで消える。足元（体の根元）の高さに置く
+        // （以前は 0.014 のままで、砂浜では宙に浮いていた）
+        group.position.y + 0.014,
         group.position.z - lateral * sin + forward * cos,
       );
 
@@ -1542,7 +1548,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       const height = clamp01(lift / 0.12);
       const scale = 0.60 * (1 + height * 0.6);
       shadow.scale.set(scale, scale, 1);
-      shadow.material.opacity = (1 - height * 0.75) * (1 - sitAmount);
+      shadow.material.opacity = (1 - height * 0.75) * (1 - sitAmount) * (1 - swimAmount);
       shadow.visible = shadow.material.opacity > 0.02;
     });
   }
@@ -1631,6 +1637,44 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
         forward: (foot.forward - p.hipShift) * c,
         lift: foot.lift,
       });
+    }
+  }
+
+  /**
+   * 泳ぐ（スキューバ）：腰を前へ 90° 倒してうつ伏せに（頭が前、顔が下）。首と頭を起こして前を見る。
+   * 腕は体に沿わせ、脚は左右交互にばた足（膝を少し曲げ、つま先を伸ばす）。体の根元の位置と向きは呼ぶ側が決める
+   * （腰の高さ = 根元 + hipsHeight）。正規化ボーンは休止姿勢（T ポーズ）で回転 0：
+   * 腰の x 回転 +π/2 で頭が +Z（前）へ、下腿の +x で膝が曲がり、足の +x でつま先が下がる
+   */
+  function applySwim(dt) {
+    swimAmount += (swimWant - swimAmount) * Math.min(1, dt * 3);
+    if (swimAmount < 0.002 || !bones.hips) return;
+    const w = swimAmount;
+    const lerpTo = (node, axis, value) => { if (node) node.rotation[axis] += (value - node.rotation[axis]) * w; };
+    bones.hips.rotation.x += (Math.PI / 2) * w;
+    bones.hips.rotation.z += Math.sin(swimPhase * 0.5) * 0.04 * w;
+    if (bones.spine) bones.spine.rotation.x -= 0.08 * w;
+    if (bones.chest) bones.chest.rotation.x -= 0.08 * w;
+    if (bones.neck) bones.neck.rotation.x -= 0.55 * w;
+    if (bones.head) bones.head.rotation.x -= 0.45 * w;
+    // 腕：体に沿って足のほうへ（肘を少し曲げる）
+    lerpTo(bones.leftUpperArm, 'z', -1.2);
+    lerpTo(bones.rightUpperArm, 'z', 1.2);
+    lerpTo(bones.leftUpperArm, 'x', 0.15);
+    lerpTo(bones.rightUpperArm, 'x', 0.15);
+    lerpTo(bones.leftUpperArm, 'y', 0);
+    lerpTo(bones.rightUpperArm, 'y', 0);
+    lerpTo(bones.leftLowerArm, 'y', 0.35);
+    lerpTo(bones.rightLowerArm, 'y', -0.35);
+    // 脚：ばた足
+    for (const [side, off] of [['left', 0], ['right', Math.PI]]) {
+      const k = Math.sin(swimPhase + off) * swimKick;
+      const upper = bones[`${side}UpperLeg`];
+      const lower = bones[`${side}LowerLeg`];
+      const foot = bones[`${side}Foot`];
+      if (upper) { upper.rotation.set(upper.rotation.x + (0.32 * k - upper.rotation.x) * w, upper.rotation.y * (1 - w), upper.rotation.z * (1 - w)); }
+      lerpTo(lower, 'x', 0.18 + 0.28 * Math.max(0, Math.sin(swimPhase + off + 0.9)) * swimKick);
+      lerpTo(foot, 'x', 1.35);        // つま先を脚の向きへ伸ばす（フィンが脚の先へまっすぐ続くように）
     }
   }
 
@@ -2100,6 +2144,13 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     /** 投球の体幹・脚の姿勢。null で解除 */
     setThrowPose(pose) { throwPose = pose; },
     /**
+     * 泳ぐ（スキューバ）。on で、うつ伏せのばた足へ（0.3 秒ほどで移る）。phase はばた足の位相、kick は脚の振れ（0..1）
+     */
+    setSwim(on, phase = swimPhase, kick = 1) { swimWant = on ? 1 : 0; swimPhase = phase; swimKick = kick; },
+    get swimming() { return swimAmount > 0.5; },
+    /** 腰のボーンの、足元（体の根元）からの高さ */
+    get hipsHeight() { return hipsRestY; },
+    /**
      * 外から座らせる（カートの座席など。drive しているときだけ効く）。amount は座りの
      * 混ざり具合、style は 'kart'（カートの座席）か 'lounge'（背もたれに預けて脚を伸ばす）。
      * skirt: true で、スカートを腿に沿わせる（向かいに人が座るとき。カートの座席はいつも）。
@@ -2186,6 +2237,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     applyThrow();
     applyFootFloor();
     applyArms(dt);
+    applySwim(dt);
     applyFingers(dt);
     onPosed?.();
     updateFootShadows();

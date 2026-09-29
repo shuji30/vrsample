@@ -189,7 +189,7 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
   }
 
   /**
-   * @param {'racket' | 'bounce' | 'net' | 'ballHit' | 'cushion' | 'pocket' | 'cue' | 'whaleBlow' | 'whaleSplash'} kind
+   * @param {'racket' | 'bounce' | 'net' | 'ballHit' | 'cushion' | 'pocket' | 'cue' | 'whaleBlow' | 'whaleSplash' | 'regIn' | 'bubbles'} kind
    * @param {number} strength 0〜1
    */
   function play(kind, strength = 1) {
@@ -243,6 +243,29 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
       source.start(now);
       source.stop(now + 1.7);
       tone(now, 70 * vary, 0.25 * s, 0.6);
+    } else if (kind === 'regIn') {
+      // レギュレーターで吸う：「シューッ」（高めの息の音が 1.3 秒）
+      const source = context.createBufferSource();
+      source.buffer = noiseBuffer;
+      source.loop = true;
+      const filter = context.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 2600 * vary;
+      filter.Q.value = 0.9;
+      const envelope = context.createGain();
+      envelope.gain.setValueAtTime(0.0001, now);
+      envelope.gain.exponentialRampToValueAtTime(0.18 * s, now + 0.35);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, now + 1.3);
+      source.connect(filter).connect(envelope).connect(master);
+      source.start(now);
+      source.stop(now + 1.4);
+    } else if (kind === 'bubbles') {
+      // 吐いた泡：「ぼこぼこ」（低い短い音がいくつも、少しずつ高く）
+      for (let k = 0; k < 9; k++) {
+        const t = now + k * (0.07 + Math.random() * 0.06);
+        tone(t, (240 + Math.random() * 420) * vary, (0.1 + Math.random() * 0.08) * s, 0.06, 'sine');
+      }
+      noise(now, 500 * vary, 0.7, 0.12 * s, 0.6);
     } else if (kind === 'whaleSplash') {
       // 大きな体が水に落ちる：「ザバーン」。低いどーんと、長く続く水の音
       const source = context.createBufferSource();

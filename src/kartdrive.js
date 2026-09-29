@@ -441,6 +441,12 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       rig.position.set(eye.x - tmp.x, eye.y - headLocal.y, eye.z - tmp.z);
       return;
     }
+    // 自分で見る向きを決める乗り物（スキューバ：上下も見る）
+    if (view === 'first' && vehicle.firstView) {
+      vehicle.firstView(camera);
+      camera.updateMatrixWorld(true);
+      return;
+    }
     if (view === 'first') {
       // lookYawOffset：PC の運転席視点だけ、見る向きをずらす（観覧車は、向かいの女の子と窓の外が両方入るように）
       const ly = yaw + (vehicle.lookYawOffset ?? 0);

@@ -5,7 +5,7 @@ import { createSpine } from './spine.js';
 /**
  * ホエールウォッチング：沖のマッコウクジラ（親 18m と子 11m。クルーザーは 12.7m）。
  *
- * いる所は、島巡りの道のいちばん沖（島の南西の外、WHALE_AREA。周遊の道から 40〜80m）。
+ * いる所は、灯台の南の沖（WHALE_AREA。桟橋から 195m、島巡りの道のすぐ内側）。
  * クルーザー・ジェットスキーで近くへ行くと見られる。1 頭ずつ、次をくり返す（本物は 1 時間近く潜るが、縮めてある）：
  *   1. 浮かぶ（rise、4 秒）：深い所から斜めに上がってきて、頭が水面に出たところで大きく潮を吹く。
  *      2 回に 1 回くらいは、深い所からそのまま跳ぶ（ブリーチング）
@@ -15,7 +15,7 @@ import { createSpine } from './spine.js';
  *      頭から水に落ちる。跳び出す所・落ちる所に大きなしぶきと泡の輪
  *   4. 潜る（dive、12 秒）：頭を下げて背を丸め、尾の付け根を支点に起き上がるように尾びれを水の上へ高く上げて、
  *      少し止まり（尾びれの下のふちから水が滝のようにしたたる）、そのまま真下へ沈む（フルークアップ）
- *   5. 深く潜る（deep、30〜45 秒）：見えない。次に浮かぶ所を、いる所の中から選ぶ（船から 40m 以上離れた所）
+ *   5. 深く潜る（deep、15〜25 秒）：見えない。次に浮かぶ所を、いる所の中から選ぶ（船から 40m 以上離れた所）
  * 子は親の横（16m）について泳ぎ、親が潜ると 2.5 秒あとに潜り、親が浮かぶと 1.5 秒あとに浮かぶ。
  * 走っている船が 20m（親は 28m）以内へ来たら、驚いて早めに潜る（船とぶつからない）。
  *
@@ -23,7 +23,9 @@ import { createSpine } from './spine.js';
  * 頭は体の 1/3 の、縦に長く横に細い頭（断面は角の丸い縦長）、頭の後ろの小さなくびれ、細い下あご、
  * 低いこぶの背びれと、その後ろのでこぼこ（ナックル）、しわのある濡れた皮膚（頂点の色のむら、つや）、幅 5.5m の厚い尾びれ。前は +Z
  */
-export const WHALE_AREA = { x: -318, z: -698, r: 45 };
+// 灯台の南の沖（桟橋から 195m、島巡りの道の最初の曲がり角から 35m）。以前の島の南西の外（桟橋から 830m）は、
+// 遠くて、そこまで行かないと会えなかった
+export const WHALE_AREA = { x: 80, z: -300, r: 40 };
 const LENGTH = 13;
 const RINGS = 80;
 const SEG = 28;
@@ -491,12 +493,15 @@ export function createWhales({ blocked = () => false } = {}) {
   /**
    * 跳ぶ（ブリーチング）：深く潜って勢いをつけ、頭を上げて水から跳び出す。弧（放物線）に沿って向きを変え、
    * 背を弓なりに丸めて（頂上でいちばん丸い）、頭から水に落ちる。跳び出す所・落ちる所に大きなしぶき。
-   * 前 6 m/s、上 14〜16 m/s（体の中心が水面の上 4〜5m まで）。落ちる所が浅瀬なら跳ばない
+   * 前 6 m/s、上 14〜16 m/s（体の中心が水面の上 4〜5m まで）。落ちる所が浅瀬なら跳ばない。
+   * 2 回に 1 回くらいは「背中から」：ほぼ真上へ跳び出し（体の 2/3 が水の上）、頂上から後ろへ倒れながら
+   * 体をひねって仰向けになり、背中から水に落ちる（大きなしぶき）
    */
-  function startBreach(w) {
-    const vx = 6;
-    const apex = SEA_LEVEL + 4.5 * Math.sqrt(w.scale);
-    const pitch0 = 1.1;
+  function startBreach(w, type = Math.random() < 0.5 ? 'back' : 'front') {
+    const back = type === 'back';
+    const vx = back ? 2 : 6;
+    const apex = SEA_LEVEL + (back ? 6 : 4.5) * Math.sqrt(w.scale);
+    const pitch0 = back ? 1.35 : 1.1;
     // 頭の先が水面のすぐ下にある深さから跳び出す
     const yStart = SEA_LEVEL - (LENGTH / 2) * w.scale * Math.sin(pitch0) - 0.4;
     const vy = Math.sqrt(2 * G * (apex - yStart));
@@ -504,7 +509,7 @@ export function createWhales({ blocked = () => false } = {}) {
     if (blocked(w.x + Math.sin(w.yaw) * dist, w.z + Math.cos(w.yaw) * dist)) return false;
     w.state = 'breach';
     w.t = 0;
-    w.breach = { phase: 'sink', y0: w.y, p0: w.pitch, yStart, vx, vy, pitch0: Math.atan2(vy, vx), out: false, down: false, apex: false };
+    w.breach = { phase: 'sink', type, y0: w.y, p0: w.pitch, yStart, vx, vy, pitch0: Math.atan2(vy, vx), out: false, down: false, apex: false };
     return true;
   }
   function pickSpot(w, boat) {
@@ -607,7 +612,7 @@ export function createWhales({ blocked = () => false } = {}) {
         w.hinge.x += Math.sin(w.yaw) * fwd * dt;
         w.hinge.z += Math.cos(w.yaw) * fwd * dt;
         if (!w.fluked && k > 0.5) { w.fluked = true; onFluke?.(w.hinge.x, w.hinge.z, w); }
-        if (k >= 1) { w.state = 'deep'; w.t = 0; w.g.visible = false; w.deepFor = w.leader ? Infinity : rand(30, 45); }
+        if (k >= 1) { w.state = 'deep'; w.t = 0; w.g.visible = false; w.deepFor = w.leader ? Infinity : rand(15, 25); }
       } else if (w.state === 'deep') {
         if (!w.leader && w.t > w.deepFor) {
           pickSpot(w, boat);
@@ -649,16 +654,27 @@ export function createWhales({ blocked = () => false } = {}) {
           const t = w.t;
           const vy = b.vy - G * t;
           w.y = b.yStart + b.vy * t - 0.5 * G * t * t;
-          w.pitch = -Math.atan2(vy, b.vx);
           w.x += Math.sin(w.yaw) * b.vx * dt;
           w.z += Math.cos(w.yaw) * b.vx * dt;
-          const v = Math.hypot(b.vx, vy);
-          w.arch = THREE.MathUtils.clamp((G * b.vx) / (v * v * v) * LENGTH * w.scale * 1.2, 0, 0.6);
+          if (b.type === 'back') {
+            // 背中から：頂上の少し前から、後ろへ倒れていき（頭が上 → 後ろ → 下）、仰向けで落ちる。
+            // 倒れながら体を半分ひねる（背中が下を向くまで）。背はほとんど丸めない
+            const T = (2 * b.vy) / G;
+            const k = THREE.MathUtils.smoothstep(t / T, 0.3, 0.8);
+            w.pitch = -b.pitch0 + (-(Math.PI - 0.25) + b.pitch0) * k;
+            w.roll = Math.sin(Math.PI * k) * 0.6;
+            w.arch = 0.15;
+          } else {
+            w.pitch = -Math.atan2(vy, b.vx);
+            const v = Math.hypot(b.vx, vy);
+            w.arch = THREE.MathUtils.clamp((G * b.vx) / (v * v * v) * LENGTH * w.scale * 1.2, 0, 0.6);
+          }
           archWant = w.arch;
           ampWant = t < 0.4 ? 0.4 : 0.03;
           if (!b.out && w.y > SEA_LEVEL - 1.5 * w.scale) { b.out = true; splashAt(w.x, w.z, 2 * w.scale, 0.8 * w.scale); }
           if (!b.apex && vy < 0) { b.apex = true; onBreach?.(w.x, w.y, w.z, w); }
-          if (!b.down && vy < 0 && w.y < SEA_LEVEL) { b.down = true; splashAt(w.x, w.z, 3 * w.scale, 1.3 * w.scale); }
+          // 背中から落ちると、体ぜんぶが水面をたたくので、しぶきがもっと大きい
+          if (!b.down && vy < 0 && w.y < SEA_LEVEL + (b.type === 'back' ? 1 : 0)) { b.down = true; splashAt(w.x, w.z, (b.type === 'back' ? 4.5 : 3) * w.scale, (b.type === 'back' ? 1.9 : 1.3) * w.scale); }
           if (vy < 0 && w.y <= b.yStart) {
             // 水の中から、また浮かんでくる（すぐには潮を吹かない）
             w.state = 'rise';
@@ -683,7 +699,9 @@ export function createWhales({ blocked = () => false } = {}) {
       w.arch += (archWant - w.arch) * Math.min(1, dt * 2);
       w.amp += (ampWant - w.amp) * Math.min(1, dt * 1.5);
       if (!viewer || w.state === 'dive' || Math.hypot(viewer.x - w.x, viewer.z - w.z) < 500) w.spine.bend(w.arch, w.amp, w.phase);
-      w.g.rotation.set(w.pitch, w.yaw, 0, 'YXZ');
+      // 背中から落ちたあとは、水の中でひねりを戻す
+      if (w.state !== 'breach') w.roll = (w.roll ?? 0) * Math.max(0, 1 - dt * 1.5);
+      w.g.rotation.set(w.pitch, w.yaw, w.roll ?? 0, 'YXZ');
       if (w.state === 'dive') {
         // 支点がそこへ来るように、体の位置を決める
         w.spine.pointAt(HINGE_T, _p).multiplyScalar(w.scale).applyEuler(_e.set(w.pitch, w.yaw, 0, 'YXZ'));
@@ -745,7 +763,7 @@ export function createWhales({ blocked = () => false } = {}) {
     /** 検証用 */
     debugBlow(i = 0) { const w = list[i]; if (w?.g.visible) blow(w, 1); },
     debugDive(i = 0) { const w = list[i]; if (w) startDive(w); },
-    debugBreach(i = 0) { const w = list[i]; return Boolean(w && w.state === 'surface' && startBreach(w)); },
+    debugBreach(i = 0, type) { const w = list[i]; return Boolean(w && w.state === 'surface' && startBreach(w, type)); },
     debugPlace(x, z, yaw = 0) {
       for (const w of list) {
         w.x = x + w.i * 16 * Math.cos(yaw); w.z = z - w.i * 16 * Math.sin(yaw); w.yaw = yaw;

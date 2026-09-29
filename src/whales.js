@@ -8,7 +8,7 @@ import { createSpine } from './spine.js';
  * いる所は、島巡りの道のいちばん沖（島の南西の外、WHALE_AREA。周遊の道から 40〜80m）。
  * クルーザー・ジェットスキーで近くへ行くと見られる。1 頭ずつ、次をくり返す（本物は 1 時間近く潜るが、縮めてある）：
  *   1. 浮かぶ（rise、4 秒）：深い所から斜めに上がってきて、頭が水面に出たところで大きく潮を吹く。
- *      3 回に 1 回くらいは、深い所からそのまま跳ぶ（ブリーチング）
+ *      2 回に 1 回くらいは、深い所からそのまま跳ぶ（ブリーチング）
  *   2. 水面で休む（surface、約 60 秒）：背と頭のてっぺんを水面に出して、ゆっくり（1.1 m/s）泳ぐ。
  *      9〜13 秒ごとに潮を真上へ吹く（5〜7 回）。ときどき、息をしたあとに潜って跳ぶ
  *   3. 跳ぶ（breach）：深く潜って勢いをつけ、頭を上げて水から跳び出す。弧に沿って向きを変え、背を弓なりに丸めて、
@@ -20,7 +20,7 @@ import { createSpine } from './spine.js';
  * 走っている船が 20m（親は 28m）以内へ来たら、驚いて早めに潜る（船とぶつからない）。
  *
  * 体は背骨に沿って曲げる（spine.js）。形は長さ 13m で作って、大きさ（scale）で伸ばす。
- * 頭は体の 1/3 の大きな箱（前はほぼ平ら、てっぺんも平ら、断面は丸い四角）、頭の後ろの小さなくびれ、細い下あご、
+ * 頭は体の 1/3 の、縦に長く横に細い頭（断面は角の丸い縦長）、頭の後ろの小さなくびれ、細い下あご、
  * 低いこぶの背びれと、その後ろのでこぼこ（ナックル）、しわのある濡れた皮膚（頂点の色のむら、つや）、幅 5.5m の厚い尾びれ。前は +Z
  */
 export const WHALE_AREA = { x: -318, z: -698, r: 45 };
@@ -30,15 +30,16 @@ const SEG = 28;
 const G = 9.8;
 
 // 体の形（鼻先 t=0 → 尾の付け根 t=1）。上・下の半径、横の半幅、中心の高さ（m）、断面の角ばり（2 = 楕円、大きいほど四角）
-// 頭は体の 1/3 の大きな箱（前はほぼ平らな面、てっぺんは平ら、下あごの上がえぐれる）。頭の後ろで少しくびれ、
+// 頭は体の 1/3 の、縦に長く横に細い大きな頭（断面は角の丸い縦長。前は丸く、てっぺんは平ら）。頭の後ろで少しくびれ、
+// 四角い箱にすると角ばりすぎて見えたので、角ばり（n）は 2.3〜2.8、横幅は高さの 6 割くらいにした。
 // 胴（胸びれの後ろ）がいちばん太く、そこから尾の付け根へ細くなる（尾の付け根は縦長）
 const PROFILE = {
   t:     [0,    0.03, 0.1,  0.2,  0.3,  0.34, 0.42, 0.52, 0.6,  0.68, 0.76, 0.84, 0.91, 0.96, 1],
-  top:   [1.0,  1.2,  1.28, 1.3,  1.25, 1.12, 1.18, 1.1,  0.98, 0.84, 0.7,  0.58, 0.48, 0.38, 0.26],
-  bot:   [0.55, 0.8,  1.05, 1.25, 1.38, 1.42, 1.45, 1.35, 1.15, 0.94, 0.76, 0.62, 0.52, 0.42, 0.3],
-  halfW: [0.75, 0.95, 1.02, 1.05, 1.08, 1.12, 1.22, 1.15, 1.0,  0.8,  0.6,  0.44, 0.33, 0.27, 0.22],
+  top:   [0.72, 1.02, 1.22, 1.3,  1.25, 1.12, 1.18, 1.1,  0.98, 0.84, 0.7,  0.58, 0.48, 0.38, 0.26],
+  bot:   [0.35, 0.62, 0.95, 1.25, 1.38, 1.42, 1.45, 1.35, 1.15, 0.94, 0.76, 0.62, 0.52, 0.42, 0.3],
+  halfW: [0.36, 0.56, 0.7,  0.78, 0.88, 1.0,  1.18, 1.15, 1.0,  0.8,  0.6,  0.44, 0.33, 0.27, 0.22],
   cy:    [0.32, 0.32, 0.28, 0.2,  0.1,  0.05, 0,    0,    0.02, 0.05, 0.08, 0.12, 0.14, 0.15, 0.15],
-  n:     [4.5,  4.5,  4.0,  3.4,  2.8,  2.5,  2.2,  2.1,  2.0,  2.0,  2.1,  2.3,  2.4,  2.2,  2.0],
+  n:     [2.8,  2.8,  2.6,  2.45, 2.3,  2.2,  2.1,  2.1,  2.0,  2.0,  2.1,  2.3,  2.4,  2.2,  2.0],
 };
 const BACK = new THREE.Color(0x4c4f55);
 const BELLY = new THREE.Color(0x707278);
@@ -103,7 +104,7 @@ function bodyGeometry() {
   const cap = (r, flip) => {
     const t = r / RINGS;
     const center = pos.length / 3;
-    pos.push(0, profileAt('cy', t), LENGTH / 2 - t * LENGTH + (r === 0 ? 0.22 : 0));
+    pos.push(0, profileAt('cy', t), LENGTH / 2 - t * LENGTH + (r === 0 ? 0.32 : 0));
     ringOf.push(r);
     const base = r * row;
     col.push(col[base * 3], col[base * 3 + 1], col[base * 3 + 2]);
@@ -536,8 +537,8 @@ export function createWhales({ blocked = () => false } = {}) {
     w.g.visible = true;
     w.y = w.riseFrom = surfaceY(w.scale) - 7 * w.scale;
     w.pitch = -0.28;
-    // 3 回に 1 回くらいは、深い所からそのまま跳ぶ
-    if (Math.random() < 0.35 && startBreach(w)) { w.blows = w.leader ? 4 : 6; return; }
+    // 2 回に 1 回くらいは、深い所からそのまま跳ぶ
+    if (Math.random() < 0.45 && startBreach(w)) { w.blows = w.leader ? 4 : 6; return; }
     w.blows = w.leader ? 4 + Math.floor(Math.random() * 2) : 5 + Math.floor(Math.random() * 3);
   }
 
@@ -561,12 +562,13 @@ export function createWhales({ blocked = () => false } = {}) {
           const tx = L.x + Math.cos(L.yaw) * 16;
           const tz = L.z - Math.sin(L.yaw) * 16;
           want = Math.atan2(tx - w.x + Math.sin(L.yaw) * 8, tz - w.z + Math.cos(L.yaw) * 8);
-        } else if (Math.hypot(w.x - A.x, w.z - A.z) > A.r * 0.8) {
+        } else if (Math.hypot(w.x - A.x, w.z - A.z) > A.r * 0.55) {
+          // いる所の外へ出そうなら中へ（跳ぶ・潜るたびに前へ進むので、早めに向きを変える）
           want = Math.atan2(A.x - w.x, A.z - w.z);
         }
         if (blocked(w.x + Math.sin(w.yaw) * 15, w.z + Math.cos(w.yaw) * 15)) want = w.yaw + 1.5;
         const turn = Math.atan2(Math.sin(want - w.yaw), Math.cos(want - w.yaw));
-        w.yawRate += (THREE.MathUtils.clamp(turn * 0.3, -0.07, 0.07) - w.yawRate) * Math.min(1, dt * 1.5);
+        w.yawRate += (THREE.MathUtils.clamp(turn * 0.4, -0.15, 0.15) - w.yawRate) * Math.min(1, dt * 1.5);
         w.yaw += w.yawRate * dt;
         w.speed += (1.1 - w.speed) * Math.min(1, dt * 0.5);
         w.x += Math.sin(w.yaw) * w.speed * dt;
@@ -580,7 +582,7 @@ export function createWhales({ blocked = () => false } = {}) {
           w.blows--;
           w.nextBlow = rand(9, 13);
           // ときどき、息をしたあとに潜って跳ぶ（1 回の浮上で 4 割くらい）
-          if (w.t > 12 && w.blows > 0 && Math.random() < 0.12) { w.nextBlow = 99; w.breachIn = 2.5; }
+          if (w.t > 12 && w.blows > 0 && Math.random() < 0.16) { w.nextBlow = 99; w.breachIn = 2.5; }
         }
         if (w.breachIn !== undefined) { w.breachIn -= dt; if (w.breachIn < 0) { w.breachIn = undefined; w.nextBlow = rand(6, 10); if (startBreach(w)) continue; } }
         // 吹き終わって少ししたら潜る（子は親が潜ったら）。走っている船が 20m 以内に来たら早めに潜る
@@ -633,6 +635,11 @@ export function createWhales({ blocked = () => false } = {}) {
             w.pitch = -b.pitch0 * e;
           }
           w.speed += (4 - w.speed) * Math.min(1, dt);
+          // 潜っているあいだに、いる所のまん中の方へ向き直る（跳ぶと 30m ほど前へ進むので）
+          if (Math.hypot(w.x - A.x, w.z - A.z) > A.r * 0.3) {
+            const want = Math.atan2(A.x - w.x, A.z - w.z);
+            w.yaw += THREE.MathUtils.clamp(Math.atan2(Math.sin(want - w.yaw), Math.cos(want - w.yaw)), -0.5 * dt, 0.5 * dt);
+          }
           w.x += Math.sin(w.yaw) * w.speed * dt;
           w.z += Math.cos(w.yaw) * w.speed * dt;
           ampWant = 0.35;

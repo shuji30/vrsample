@@ -50,12 +50,13 @@ import { createCruiser, onPier, pierDeckY, PIER } from './cruiser.js';
 import { createCruiserGame } from './cruisergame.js';
 import { createJetski, seaBlocked } from './jetski.js';
 import { createDolphins } from './dolphins.js';
+import { createWhales, WHALE_AREA } from './whales.js';
 import { createSeagulls } from './seagulls.js';
 import { createFlyingFish } from './flyingfish.js';
 import { createJetskiGame } from './jetskigame.js';
 import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
 import { createCessnaGame } from './cessnagame.js';
-import { AIRFIELD_ZONE } from './hill.js';
+import { AIRFIELD_ZONE, SEA_LEVEL } from './hill.js';
 import { createRoad } from './road.js';
 import { F40_PARK, GARAGE } from './roaddata.js';
 import { createF40Game } from './f40game.js';
@@ -489,10 +490,38 @@ export function createWorld(renderer, scene, {
   const seagulls = createSeagulls({ sound: Boolean(camera) });
   scene.add(seagulls.group);
   const gullEar = new THREE.Vector3();
+  const whaleEar = new THREE.Vector3();
   // トビウオ：船で沖を走っていると、前や横から群れで飛び出して滑空する。女の子が乗っていたら声をあげる
   const flyingFish = createFlyingFish({ blocked: (x, z) => seaBlocked(x, z) || road.pierBlocked(x, z), pier: { x: PIER.x, z: PIER.headZ } });
   scene.add(flyingFish.group);
   flyingFish.onLaunch = () => { if (cruiserGame?.active || jetskiGame?.active) voice?.say('flyingFish', { chance: 0.6 }); };
+  // ホエールウォッチング：島巡りの道のいちばん沖に、マッコウクジラの親子。潮を吹く・尾びれを上げて潜る。
+  // 女の子が船（クルーザー・ジェットスキー）に乗っていて、近く（160m 以内）なら、声をあげてそっちを見る
+  const whales = createWhales({ blocked: (x, z) => seaBlocked(x, z) || road.pierBlocked(x, z) });
+  scene.add(whales.group);
+  const whaleSeenAt = new THREE.Vector3();
+  let whaleFound = false;
+  const girlBoat = () => {
+    if (cruiserRidden && cruiserGame?.seated) return cruiser.boat.position;
+    if (jetskiRidden && jetskiGame?.seated) return jetski.position;
+    return null;
+  };
+  const whaleWatch = (x, y, z, line, chance) => {
+    const b = girlBoat();
+    if (!b || Math.hypot(x - b.x, z - b.z) > 160) return;
+    voice?.say(whaleFound ? line : 'whaleFound', { chance: whaleFound ? chance : 1 });
+    whaleFound = true;
+    cruiserGame?.look(whaleSeenAt.set(x, y, z), 3.5);
+  };
+  whales.onBlow = (x, y, z, strong) => {
+    // 潮吹きの音（プシューッ）。遠くまで聞こえる（30m で半分）
+    soundAt(whaleSeenAt.set(x, y, z), 'whaleBlow', Math.min(1, strong), 30);
+    whaleWatch(x, y + 2.5, z, 'whaleBlow', 0.8);
+  };
+  whales.onFluke = (x, z) => whaleWatch(x, SEA_LEVEL + 2, z, 'whaleDive', 0.9);
+  whales.onBreach = (x, y, z) => whaleWatch(x, y, z, 'whaleJump', 1);
+  // 跳んだクジラが水に落ちる「ザバーン」（遠くまで聞こえる）
+  whales.onSplash = (x, y, z, strength) => soundAt(whaleSeenAt.set(x, y, z), 'whaleSplash', Math.min(1, strength), 40);
   let jetskiRidden = false;
   let jetskiWait = 0;
   const jetskiGame = camera ? createJetskiGame({ character, jetski, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;
@@ -887,10 +916,11 @@ export function createWorld(renderer, scene, {
   const impact = createImpactSound();
   const hearing = new THREE.Vector3();
   const billiardSoundPos = new THREE.Vector3();
-  function soundAt(position, kind, strength) {
+  /** position で鳴った音。聞く位置から reach（m）離れると半分の大きさ */
+  function soundAt(position, kind, strength, reach = 3) {
     if (!camera) return;
     camera.getWorldPosition(hearing);
-    const falloff = 1 / (1 + hearing.distanceTo(position) / 3);
+    const falloff = 1 / (1 + hearing.distanceTo(position) / reach);
     impact.play(kind, strength * falloff);
   }
   const rackets = grabbables.filter((prop) => prop.userData.racket);
@@ -1190,6 +1220,13 @@ export function createWorld(renderer, scene, {
     dolphins.update(dt, boatNow);
     seagulls.update(dt, camera ? camera.getWorldPosition(gullEar) : null, boatNow);
     flyingFish.update(dt, boatNow);
+    whales.update(dt, boatNow, camera ? camera.getWorldPosition(whaleEar) : null);
+    // はじめてクジラを見つけた（女の子が乗った船から 90m 以内）。クジラのいる所から離れたら、また見つけられる
+    if (boatNow) {
+      const wn = whales.nearest(boatNow.x, boatNow.z);
+      if (!whaleFound && wn.distance < 90) whaleWatch(wn.point.x, wn.point.y, wn.point.z, 'whaleFound', 1);
+      if (Math.hypot(boatNow.x - WHALE_AREA.x, boatNow.z - WHALE_AREA.z) > 350) whaleFound = false;
+    }
     // セスナ：乗ったのに女の子がいない（飛行場に来ていない）ときは、3 秒で動けるようにする
     cessnaWait = cessnaRidden && cessna.hold && !cessnaGame?.active ? cessnaWait + dt : 0;
     if (cessnaWait > 3) cessna.hold = false;
@@ -1365,6 +1402,7 @@ export function createWorld(renderer, scene, {
     dolphins,
     seagulls,
     flyingFish,
+    whales,
     grabbables,
     boomerang,
     interactables,

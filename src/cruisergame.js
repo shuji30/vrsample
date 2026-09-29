@@ -140,6 +140,7 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
   // イルカ（world.js が setDolphins で渡す）。見つけた・跳んだで声をあげ、しばらくそっちを見る
   let dolphins = null;
   let saidDolphin = false;
+  let saidWhaleHint = false;
   let dolphinJumpCool = 0;
   let dolphinLook = 0;
   const dolphinAt = new THREE.Vector3();
@@ -205,6 +206,8 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
         return;
       }
     }
+    // 沖へ出はじめたら（桟橋から 60m）、クジラのいる所を教える（1 回の船旅に 1 回）
+    if (!saidWhaleHint && far > 60) { saidWhaleHint = true; voice?.say('cruiseWhaleHint'); talkIn = Math.max(talkIn, 14); return; }
     if (!saidLighthouse && cruiser.nearLighthouse) { saidLighthouse = true; voice?.say('cruiseLighthouse'); talkIn = Math.max(talkIn, 12); return; }
     if (!saidIsland && cruiser.nearIsland) { saidIsland = true; voice?.say('cruiseIsland'); body.smile(2, 1); talkIn = Math.max(talkIn, 12); return; }
     // 沖へ出て（150m より遠く）から戻ってきた：桟橋が近い・着いた
@@ -213,7 +216,7 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
     if (wentFar && saidBack && cruiser.atDock) {
       voice?.say('cruiseEnd');
       body.smile(2.5, 1);
-      saidLighthouse = saidIsland = saidBack = wentFar = saidDolphin = false;
+      saidLighthouse = saidIsland = saidBack = wentFar = saidDolphin = saidWhaleHint = false;
       talkIn = 20;
       return;
     }
@@ -355,6 +358,15 @@ export function createCruiserGame({ character, cruiser, beach = null, voice = nu
 
   return {
     setDolphins,
+    /** しばらく point（ワールド）を見る（クジラの潮吹きなど）。乗っていないときは何もしない */
+    look(point, seconds = 3) {
+      if (state !== 'ride') return false;
+      dolphinAt.copy(point);
+      dolphinLook = seconds;
+      body.smile(2.5, 1);
+      talkIn = Math.max(talkIn, 8);
+      return true;
+    },
     update,
     start,
     dropAtPier,

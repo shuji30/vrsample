@@ -189,7 +189,7 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
   }
 
   /**
-   * @param {'racket' | 'bounce' | 'net' | 'ballHit' | 'cushion' | 'pocket' | 'cue'} kind
+   * @param {'racket' | 'bounce' | 'net' | 'ballHit' | 'cushion' | 'pocket' | 'cue' | 'whaleBlow' | 'whaleSplash'} kind
    * @param {number} strength 0〜1
    */
   function play(kind, strength = 1) {
@@ -224,6 +224,43 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
       // キューの先（タップ）で手球を突く：短い「コッ」
       tone(now, 1100 * vary, 0.22 * s, 0.03, 'triangle');
       noise(now, 2600 * vary, 1.5, 0.3 * s, 0.02);
+    } else if (kind === 'whaleBlow') {
+      // クジラの潮吹き：「プシューッ」。息の音が 1.6 秒、はじめ強く、だんだん低く細く。胸にひびく低い音も少し
+      const source = context.createBufferSource();
+      source.buffer = noiseBuffer;
+      source.loop = true;
+      const filter = context.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.Q.value = 0.7;
+      filter.frequency.setValueAtTime(1150 * vary, now);
+      filter.frequency.exponentialRampToValueAtTime(380 * vary, now + 1.5);
+      const envelope = context.createGain();
+      envelope.gain.setValueAtTime(0.0001, now);
+      envelope.gain.exponentialRampToValueAtTime(0.9 * s, now + 0.06);
+      envelope.gain.exponentialRampToValueAtTime(0.35 * s, now + 0.5);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, now + 1.6);
+      source.connect(filter).connect(envelope).connect(master);
+      source.start(now);
+      source.stop(now + 1.7);
+      tone(now, 70 * vary, 0.25 * s, 0.6);
+    } else if (kind === 'whaleSplash') {
+      // 大きな体が水に落ちる：「ザバーン」。低いどーんと、長く続く水の音
+      const source = context.createBufferSource();
+      source.buffer = noiseBuffer;
+      source.loop = true;
+      const filter = context.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2400 * vary, now);
+      filter.frequency.exponentialRampToValueAtTime(500 * vary, now + 1.8);
+      const envelope = context.createGain();
+      envelope.gain.setValueAtTime(0.0001, now);
+      envelope.gain.exponentialRampToValueAtTime(1.0 * s, now + 0.03);
+      envelope.gain.exponentialRampToValueAtTime(0.25 * s, now + 0.6);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, now + 2.0);
+      source.connect(filter).connect(envelope).connect(master);
+      source.start(now);
+      source.stop(now + 2.1);
+      tone(now, 55 * vary, 0.5 * s, 0.9);
     } else {
       noise(now, 700 * vary, 0.6, 0.3 * s, 0.12);
     }

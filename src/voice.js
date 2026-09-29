@@ -146,6 +146,11 @@ export const LINES = {
   cruiseDolphin: ['あっ、イルカだ！みてみて！', 'イルカさんがいっしょにおよいでる！'],
   flyingFish: ['あっ、トビウオ！', 'みてみて、さかながとんでる！', 'トビウオだ！すごーい、とおくまでとぶね！'],
   cruiseDolphinJump: ['ジャンプしたー！すごーい！', 'わあ、たかーい！'],
+  cruiseWhaleHint: ['しまのむこうのおきで、クジラがみられるんだって！いってみよ！', 'とおくのおきに、マッコウクジラがいるんだって！'],
+  whaleFound: ['あっ、クジラ！おおきーい！', 'みてみて、クジラがいる！', 'マッコウクジラだ！ほんとにいたね！'],
+  whaleBlow: ['しお、ふいた！', 'わあ、しおふきだー！', 'プシューって！すごーい！', 'しおふき、ななめにでるんだね！'],
+  whaleJump: ['ジャンプしたー！おおきーい！', 'わあっ、クジラがとんだ！', 'すっごいしぶき！'],
+  whaleDive: ['しっぽ！しっぽがでたよ！', 'もぐっちゃった…またでてくるかな？', 'バイバーイ、またあとでね！'],
   cruiseBump: ['きゃっ！ぶつかったー！', 'わわっ、きをつけてー！'],
   jetInvite: ['ジェットスキー！うしろにのせて！', 'まってまってー、いまいく！'],
   jetReady: ['よいしょ…しっかりつかまってるね', 'おじゃましまーす！'],
@@ -564,7 +569,7 @@ function createClips(url, onLoad) {
 /** 1 拍の長さ（秒）。日本語の会話は 1 秒に 7〜8 拍 */
 const MORA = 0.13;
 /** 同じ場面の台詞を続けて言わない間（秒） */
-const COOLDOWN = { default: 3, corgiPet: 6, corgiZoom: 30, corgiFetch: 12, flyingFish: 25, girlNamed: 2, corgiBring: 12, gt3Pass: 6, gt3Overtaken: 6, carouselFun: 10, ferrisFun: 12, beachHit: 4, beachRally: 1, beachWait: 10, beachShell: 3, beachServe: 2, horseLeadTalk: 8, horseTrot: 6, horseCanter: 6, horseHalt: 8, horseCheer: 12, fishingBite: 4, fishingEscaped: 6, fishingChat: 20, fireworksBurst: 7, burankoHigh: 12, burankoPump: 10, seesawDown: 5, seesawUp: 5, seesawHigh: 9, seesawKick: 8, bikeLap: 1, bikeBest: 1, racePass: 6, raceOvertaken: 6, raceGrid: 20, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
+const COOLDOWN = { default: 3, cruiseWhaleHint: 120, whaleFound: 60, whaleBlow: 10, whaleDive: 20, whaleJump: 12, corgiPet: 6, corgiZoom: 30, corgiFetch: 12, flyingFish: 25, girlNamed: 2, corgiBring: 12, gt3Pass: 6, gt3Overtaken: 6, carouselFun: 10, ferrisFun: 12, beachHit: 4, beachRally: 1, beachWait: 10, beachShell: 3, beachServe: 2, horseLeadTalk: 8, horseTrot: 6, horseCanter: 6, horseHalt: 8, horseCheer: 12, fishingBite: 4, fishingEscaped: 6, fishingChat: 20, fireworksBurst: 7, burankoHigh: 12, burankoPump: 10, seesawDown: 5, seesawUp: 5, seesawHigh: 9, seesawKick: 8, bikeLap: 1, bikeBest: 1, racePass: 6, raceOvertaken: 6, raceGrid: 20, greet: 25, herCatch: 6, rally: 1, tennisHit: 8, tennisRally: 1, tennisNice: 5 };
 
 /**
  * 声の選び方。名前に含まれる語で点をつける。

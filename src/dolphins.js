@@ -104,8 +104,9 @@ function bodyGeometry() {
       else idx.push(center, base + k, base + k + 1);
     }
   };
-  cap(0, true);
-  cap(RINGS, false);
+  // 鼻先は +Z、尾の先は -Z を表に（逆だと、表が内を向いて裏が消され、前から見ると穴が開いて見えた）
+  cap(0, false);
+  cap(RINGS, true);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));

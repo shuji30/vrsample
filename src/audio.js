@@ -189,7 +189,7 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
   }
 
   /**
-   * @param {'racket' | 'bounce' | 'net' | 'ballHit' | 'cushion' | 'pocket' | 'cue' | 'whaleBlow'} kind
+   * @param {'racket' | 'bounce' | 'net' | 'ballHit' | 'cushion' | 'pocket' | 'cue' | 'whaleBlow' | 'whaleSplash'} kind
    * @param {number} strength 0〜1
    */
   function play(kind, strength = 1) {
@@ -243,6 +243,24 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
       source.start(now);
       source.stop(now + 1.7);
       tone(now, 70 * vary, 0.25 * s, 0.6);
+    } else if (kind === 'whaleSplash') {
+      // 大きな体が水に落ちる：「ザバーン」。低いどーんと、長く続く水の音
+      const source = context.createBufferSource();
+      source.buffer = noiseBuffer;
+      source.loop = true;
+      const filter = context.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2400 * vary, now);
+      filter.frequency.exponentialRampToValueAtTime(500 * vary, now + 1.8);
+      const envelope = context.createGain();
+      envelope.gain.setValueAtTime(0.0001, now);
+      envelope.gain.exponentialRampToValueAtTime(1.0 * s, now + 0.03);
+      envelope.gain.exponentialRampToValueAtTime(0.25 * s, now + 0.6);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, now + 2.0);
+      source.connect(filter).connect(envelope).connect(master);
+      source.start(now);
+      source.stop(now + 2.1);
+      tone(now, 55 * vary, 0.5 * s, 0.9);
     } else {
       noise(now, 700 * vary, 0.6, 0.3 * s, 0.12);
     }

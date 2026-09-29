@@ -519,6 +519,9 @@ export function createWorld(renderer, scene, {
     whaleWatch(x, y + 2.5, z, 'whaleBlow', 0.8);
   };
   whales.onFluke = (x, z) => whaleWatch(x, SEA_LEVEL + 2, z, 'whaleDive', 0.9);
+  whales.onBreach = (x, y, z) => whaleWatch(x, y, z, 'whaleJump', 1);
+  // 跳んだクジラが水に落ちる「ザバーン」（遠くまで聞こえる）
+  whales.onSplash = (x, y, z, strength) => soundAt(whaleSeenAt.set(x, y, z), 'whaleSplash', Math.min(1, strength), 40);
   let jetskiRidden = false;
   let jetskiWait = 0;
   const jetskiGame = camera ? createJetskiGame({ character, jetski, beach, voice, scene, playerHead: (out) => camera.getWorldPosition(out) }) : null;

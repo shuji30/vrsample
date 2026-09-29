@@ -3,21 +3,25 @@ import { SEA_LEVEL } from './hill.js';
 import { createSpine } from './spine.js';
 
 /**
- * ホエールウォッチング：沖のマッコウクジラ（親 13m と子 9m）。
+ * ホエールウォッチング：沖のマッコウクジラ（親 18m と子 11m。クルーザーは 12.7m）。
  *
  * いる所は、島巡りの道のいちばん沖（島の南西の外、WHALE_AREA。周遊の道から 40〜80m）。
  * クルーザー・ジェットスキーで近くへ行くと見られる。1 頭ずつ、次をくり返す（本物は 1 時間近く潜るが、縮めてある）：
- *   1. 浮かぶ（rise、4 秒）：深い所から斜めに上がってきて、頭が水面に出たところで大きく潮を吹く
+ *   1. 浮かぶ（rise、4 秒）：深い所から斜めに上がってきて、頭が水面に出たところで大きく潮を吹く。
+ *      3 回に 1 回くらいは、深い所からそのまま跳ぶ（ブリーチング）
  *   2. 水面で休む（surface、約 60 秒）：背と頭のてっぺんを水面に出して、ゆっくり（1.1 m/s）泳ぐ。
- *      9〜13 秒ごとに潮を吹く（5〜7 回）。潮は頭の前の左の噴気孔から、斜め前・左へ（マッコウクジラだけの形）
- *   3. 潜る（dive、10 秒）：頭を下げて背を丸め、尾の付け根を支点に起き上がるように尾びれを水の上へ高く上げて、
- *      そのまま真下へ沈む（フルークアップ）
- *   4. 深く潜る（deep、30〜45 秒）：見えない。次に浮かぶ所を、いる所の中から選ぶ（船から 40m 以上離れた所）
- * 子は親の横（12m）について泳ぎ、親が潜ると 2.5 秒あとに潜り、親が浮かぶと 1.5 秒あとに浮かぶ。
- * 走っている船が 20m 以内へ来たら、驚いて早めに潜る（船とぶつからない）。
+ *      9〜13 秒ごとに潮を真上へ吹く（5〜7 回）。ときどき、息をしたあとに潜って跳ぶ
+ *   3. 跳ぶ（breach）：深く潜って勢いをつけ、頭を上げて水から跳び出す。弧に沿って向きを変え、背を弓なりに丸めて、
+ *      頭から水に落ちる。跳び出す所・落ちる所に大きなしぶきと泡の輪
+ *   4. 潜る（dive、12 秒）：頭を下げて背を丸め、尾の付け根を支点に起き上がるように尾びれを水の上へ高く上げて、
+ *      少し止まり（尾びれの下のふちから水が滝のようにしたたる）、そのまま真下へ沈む（フルークアップ）
+ *   5. 深く潜る（deep、30〜45 秒）：見えない。次に浮かぶ所を、いる所の中から選ぶ（船から 40m 以上離れた所）
+ * 子は親の横（16m）について泳ぎ、親が潜ると 2.5 秒あとに潜り、親が浮かぶと 1.5 秒あとに浮かぶ。
+ * 走っている船が 20m（親は 28m）以内へ来たら、驚いて早めに潜る（船とぶつからない）。
  *
- * 体は背骨に沿って曲げる（spine.js）。頭は体の 1/3 の四角い箱（断面を丸い四角に）、細い下あご、
- * 低いこぶの背びれと、その後ろのでこぼこ（ナックル）、しわのある皮膚（頂点の色のむら）、幅 4m の尾びれ。前は +Z
+ * 体は背骨に沿って曲げる（spine.js）。形は長さ 13m で作って、大きさ（scale）で伸ばす。
+ * 頭は体の 1/3 の大きな箱（前はほぼ平ら、てっぺんも平ら、断面は丸い四角）、頭の後ろの小さなくびれ、細い下あご、
+ * 低いこぶの背びれと、その後ろのでこぼこ（ナックル）、しわのある濡れた皮膚（頂点の色のむら、つや）、幅 5.5m の厚い尾びれ。前は +Z
  */
 export const WHALE_AREA = { x: -318, z: -698, r: 45 };
 const LENGTH = 13;
@@ -26,16 +30,18 @@ const SEG = 28;
 const G = 9.8;
 
 // 体の形（鼻先 t=0 → 尾の付け根 t=1）。上・下の半径、横の半幅、中心の高さ（m）、断面の角ばり（2 = 楕円、大きいほど四角）
+// 頭は体の 1/3 の大きな箱（前はほぼ平らな面、てっぺんは平ら、下あごの上がえぐれる）。頭の後ろで少しくびれ、
+// 胴（胸びれの後ろ）がいちばん太く、そこから尾の付け根へ細くなる（尾の付け根は縦長）
 const PROFILE = {
-  t:     [0,    0.015, 0.05, 0.12, 0.22, 0.30, 0.36, 0.45, 0.55, 0.62, 0.70, 0.80, 0.88, 0.95, 1],
-  top:   [0.5,  0.95,  1.15, 1.22, 1.2,  1.1,  1.05, 1.05, 0.95, 0.85, 0.65, 0.45, 0.32, 0.22, 0.16],
-  bot:   [0.35, 0.75,  1.0,  1.18, 1.28, 1.34, 1.35, 1.3,  1.15, 0.95, 0.7,  0.45, 0.32, 0.22, 0.16],
-  halfW: [0.4,  0.72,  0.9,  1.0,  1.04, 1.05, 1.12, 1.2,  1.1,  0.95, 0.7,  0.42, 0.22, 0.14, 0.11],
-  cy:    [0.25, 0.25,  0.22, 0.18, 0.12, 0.06, 0.03, 0,    0,    0.02, 0.05, 0.1,  0.12, 0.12, 0.12],
-  n:     [3.6,  3.8,   3.6,  3.3,  2.9,  2.5,  2.2,  2.1,  2.0,  2.0,  2.0,  2.2,  2.4,  2.2,  2.0],
+  t:     [0,    0.03, 0.1,  0.2,  0.3,  0.34, 0.42, 0.52, 0.6,  0.68, 0.76, 0.84, 0.91, 0.96, 1],
+  top:   [1.0,  1.2,  1.28, 1.3,  1.25, 1.12, 1.18, 1.1,  0.98, 0.84, 0.7,  0.58, 0.48, 0.38, 0.26],
+  bot:   [0.55, 0.8,  1.05, 1.25, 1.38, 1.42, 1.45, 1.35, 1.15, 0.94, 0.76, 0.62, 0.52, 0.42, 0.3],
+  halfW: [0.75, 0.95, 1.02, 1.05, 1.08, 1.12, 1.22, 1.15, 1.0,  0.8,  0.6,  0.44, 0.33, 0.27, 0.22],
+  cy:    [0.32, 0.32, 0.28, 0.2,  0.1,  0.05, 0,    0,    0.02, 0.05, 0.08, 0.12, 0.14, 0.15, 0.15],
+  n:     [4.5,  4.5,  4.0,  3.4,  2.8,  2.5,  2.2,  2.1,  2.0,  2.0,  2.1,  2.3,  2.4,  2.2,  2.0],
 };
-const BACK = new THREE.Color(0x4b4744);
-const BELLY = new THREE.Color(0x67625e);
+const BACK = new THREE.Color(0x4c4f55);
+const BELLY = new THREE.Color(0x707278);
 
 function profileAt(key, t) {
   const T = PROFILE.t;
@@ -97,7 +103,7 @@ function bodyGeometry() {
   const cap = (r, flip) => {
     const t = r / RINGS;
     const center = pos.length / 3;
-    pos.push(0, profileAt('cy', t), LENGTH / 2 - t * LENGTH + (r === 0 ? 0.06 : 0));
+    pos.push(0, profileAt('cy', t), LENGTH / 2 - t * LENGTH + (r === 0 ? 0.22 : 0));
     ringOf.push(r);
     const base = r * row;
     col.push(col[base * 3], col[base * 3 + 1], col[base * 3 + 2]);
@@ -106,8 +112,9 @@ function bodyGeometry() {
       else idx.push(center, base + k, base + k + 1);
     }
   };
-  cap(0, true);
-  cap(RINGS, false);
+  // 鼻先は +Z、尾の先は -Z を表に（逆だと、表が内を向いて裏が消され、前から見ると穴が開いて見えた）
+  cap(0, false);
+  cap(RINGS, true);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
@@ -116,22 +123,63 @@ function bodyGeometry() {
   return { geometry: g, ringOf: Int16Array.from(ringOf) };
 }
 
+/** 下あご：t 0.045〜0.33 の頭の下に沿う、下が丸い細長い形（anchorT の所から見た位置） */
+function jawGeometry(anchorT) {
+  const pos = [];
+  const idx = [];
+  const N = 18;          // 前後
+  const M = 10;          // 断面（半分の輪）
+  const z0 = LENGTH / 2 - anchorT * LENGTH;
+  for (let i = 0; i <= N; i++) {
+    const u = i / N;
+    const t = 0.045 + u * (0.33 - 0.045);
+    const z = LENGTH / 2 - t * LENGTH - z0;
+    // 頭の下の面（下あごの上は頭の中へ 12cm 埋める）
+    const top = profileAt('cy', t) - profileAt('bot', t) * 0.97 + 0.12;
+    // 先は細く・薄く、付け根へ広く・厚く。いちばん後ろは喉へ溶け込むように薄く
+    const k = Math.sin(Math.PI * Math.min(1, u / 0.9) * 0.5);
+    const tail = 1 - THREE.MathUtils.smoothstep(u, 0.8, 1);
+    const hw = (0.12 + 0.2 * k) * (0.4 + 0.6 * tail);
+    const d = (0.14 + 0.18 * k) * tail + 0.12;
+    for (let j = 0; j <= M; j++) {
+      const ph = (j / M) * Math.PI;
+      pos.push(Math.cos(ph) * hw, top - Math.sin(ph) * d, z);
+    }
+  }
+  const row = M + 1;
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < M; j++) {
+      const a = i * row + j;
+      const b = a + row;
+      idx.push(a, a + 1, b, a + 1, b + 1, b);
+    }
+  }
+  // 先をふさぐ
+  const tip = pos.length / 3;
+  const zt = LENGTH / 2 - 0.035 * LENGTH - z0;
+  pos.push(0, profileAt('cy', 0.045) - profileAt('bot', 0.045) * 0.97 + 0.05, zt);
+  for (let j = 0; j < M; j++) idx.push(tip, j + 1, j);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 function makeWhale() {
   const g = new THREE.Group();
-  const skin = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.02 });
-  const dark = new THREE.MeshStandardMaterial({ color: BACK, roughness: 0.55 });
+  // 濡れてつやのある肌（日の光が白く光る）
+  const skin = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.08 });
+  const dark = new THREE.MeshStandardMaterial({ color: BACK, roughness: 0.3, metalness: 0.12 });
   const shade = (m) => { m.castShadow = true; return m; };
   const { geometry, ringOf } = bodyGeometry();
   g.add(shade(new THREE.Mesh(geometry, skin)));
   const spine = createSpine(geometry, ringOf, { rings: RINGS, length: LENGTH, center: 0.4, headRigid: 0.3, waveStart: 0.45, waveK: 3.5 });
   const anchor = (t, gain) => { const a = spine.anchor(t, gain); g.add(a); return a; };
-  // 下あご：頭の下の細い棒（先は頭の前より少し後ろ）。口のふちは白っぽい
+  // 下あご：頭の下にはめ込んだ細長いあご（先は細く低く、付け根は広い）。頭の下の面に沿って、上半分は頭の中に埋める。
+  // 口のふちは白っぽい。以前は丸い棒を頭の下に付けていて、棒が突き出して見えた
   const jawAt = anchor(0.17);
-  const jaw = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 3.3, 4, 10), new THREE.MeshStandardMaterial({ color: 0x8c8781, roughness: 0.6 }));
-  jaw.rotation.x = Math.PI / 2;
-  jaw.scale.set(1.2, 1, 0.75);
-  jaw.position.set(0, profileAt('cy', 0.17) - profileAt('bot', 0.17) + 0.08, 0.1);
-  jawAt.add(jaw);
+  jawAt.add(new THREE.Mesh(jawGeometry(0.17), new THREE.MeshStandardMaterial({ color: 0xcbc4bb, roughness: 0.6 })));
   // 目：頭の後ろの低い所（あごの付け根の上）
   const eyeAt = anchor(0.3);
   for (const side of [-1, 1]) {
@@ -150,19 +198,26 @@ function makeWhale() {
     f.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), new THREE.Vector3(side * 0.62, -0.5, -0.6).normalize());
     flipAt.add(f);
   }
-  // 尾びれ：幅 4m の三角、まん中に切れ込み。平らな面を水平に
+  // 尾びれ：幅の広い三角の左右の葉（幅 5.5m）。前のふちはふくらみ、先は丸く、後ろのふちのまん中に深い切れ込み。
+  // 付け根は厚く（25cm）、先へ薄く。平らな面を水平に
   const half = new THREE.Shape();
-  half.moveTo(0, 0.15);
-  half.quadraticCurveTo(0.9, 0.2, 2.0, -0.75);
-  half.quadraticCurveTo(1.6, -0.97, 1.1, -0.92);
-  half.quadraticCurveTo(0.45, -0.86, 0, -0.6);
-  half.lineTo(0, 0.15);
-  const flukeGeo = new THREE.ExtrudeGeometry(half, { depth: 0.1, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.05, bevelSegments: 2, curveSegments: 12 });
-  flukeGeo.translate(0, 0, -0.05);
+  half.moveTo(0, 0.38);
+  half.quadraticCurveTo(1.25, 0.34, 2.3, -0.32);
+  half.quadraticCurveTo(2.55, -0.58, 2.2, -0.76);
+  half.quadraticCurveTo(1.25, -1.0, 0.22, -0.98);
+  half.quadraticCurveTo(0.08, -0.9, 0, -0.72);
+  half.lineTo(0, 0.38);
+  const flukeGeo = new THREE.ExtrudeGeometry(half, { depth: 0.12, bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.08, bevelSegments: 3, curveSegments: 16 });
+  flukeGeo.translate(0, 0, -0.06);
+  {
+    const fp = flukeGeo.attributes.position;
+    for (let i = 0; i < fp.count; i++) fp.setZ(i, fp.getZ(i) * (1 - 0.65 * Math.min(1, Math.abs(fp.getX(i)) / 2.4)));
+    flukeGeo.computeVertexNormals();
+  }
   const flukeAt = anchor(1, 1.25);
   for (const side of [-1, 1]) {
     const f = shade(new THREE.Mesh(flukeGeo, dark));
-    f.scale.x = side;
+    f.scale.set(side * 1.15, 1.15, 1);
     f.rotation.x = Math.PI / 2;          // 形の -Y を体の後ろ（-Z）へ
     f.position.set(0, profileAt('cy', 1), 0.1);
     flukeAt.add(f);
@@ -175,9 +230,9 @@ function makeWhale() {
   return { group: g, spine, blowhole: blowhole.children[0], fluke: flukeAt };
 }
 
-/** 潮：霧の粒（大きさと濃さを粒ごとに変える点。霧（フォグ）もかかる） */
+/** 潮としぶき：霧・水の粒（大きさと濃さを粒ごとに変える点。霧（フォグ）もかかる）。粒ごとに重さと抵抗が違う */
 function makeSpout() {
-  const N = 2400;
+  const N = 5000;
   const pos = new Float32Array(N * 3);
   const vel = new Float32Array(N * 3);
   const age = new Float32Array(N).fill(99);
@@ -185,6 +240,9 @@ function makeSpout() {
   const size0 = new Float32Array(N);
   const size = new Float32Array(N);
   const alpha = new Float32Array(N);
+  const grav = new Float32Array(N);
+  const dragK = new Float32Array(N);
+  const alpha0 = new Float32Array(N);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
@@ -229,13 +287,17 @@ function makeSpout() {
   };
   let next = 0;
   let alive = 0;
+  /** 潮：噴気孔から (dx, dy, dz) へ。軽い霧（重さ 1.1、抵抗 1.7） */
   function emit(x, y, z, dx, dy, dz, n, strength) {
     for (let k = 0; k < n; k++) {
       const i = next;
       next = (next + 1) % N;
+      grav[i] = 1.1;
+      dragK[i] = 1.7;
+      alpha0[i] = 0.2;
       // 速さはばらばら（速い芯と、遅くて横へ広がる霧）。先ほど横へ散る
       const sp = (5 + Math.random() ** 0.6 * 9) * strength;
-      const spread = 0.6 + Math.random() * 2.4;
+      const spread = 0.6 + Math.random() * 1.6;
       pos[i * 3] = x + (Math.random() - 0.5) * 0.25;
       pos[i * 3 + 1] = y;
       pos[i * 3 + 2] = z + (Math.random() - 0.5) * 0.25;
@@ -248,28 +310,70 @@ function makeSpout() {
     }
     alive = 4;
   }
+  /** しぶき：(x, z) のまわり半径 r から、上と外へ飛び散る水（重い。水面より下へ落ちたら消える） */
+  function splash(x, z, r, n, strength) {
+    for (let k = 0; k < n; k++) {
+      const i = next;
+      next = (next + 1) % N;
+      grav[i] = 9.8;
+      dragK[i] = 0.35;
+      alpha0[i] = 0.6;
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.sqrt(Math.random()) * r;
+      const out = (1.5 + Math.random() * 5) * strength;
+      pos[i * 3] = x + Math.cos(a) * rr;
+      pos[i * 3 + 1] = SEA_LEVEL + 0.1;
+      pos[i * 3 + 2] = z + Math.sin(a) * rr;
+      vel[i * 3] = Math.cos(a) * out;
+      vel[i * 3 + 1] = (4 + Math.random() ** 0.7 * 9) * strength;
+      vel[i * 3 + 2] = Math.sin(a) * out;
+      age[i] = 0;
+      life[i] = 1.1 + Math.random() * 1.1;
+      size0[i] = 0.22 + Math.random() * 0.4;
+    }
+    alive = 4;
+  }
+  /** したたる水：(x, y, z) から、ほぼ真下へ落ちる細かい粒（尾びれのふちから） */
+  function drip(x, y, z, a = 0.65) {
+    const i = next;
+    next = (next + 1) % N;
+    grav[i] = 9.8;
+    dragK[i] = 0.2;
+    alpha0[i] = a;
+    pos[i * 3] = x;
+    pos[i * 3 + 1] = y;
+    pos[i * 3 + 2] = z;
+    vel[i * 3] = (Math.random() - 0.5) * 0.5;
+    vel[i * 3 + 1] = -Math.random() * 0.8;
+    vel[i * 3 + 2] = (Math.random() - 0.5) * 0.5;
+    age[i] = 0;
+    life[i] = 1.6;
+    size0[i] = 0.06 + Math.random() * 0.12;
+    alive = 4;
+  }
   function update(dt) {
     if (alive <= 0) return;
     alive -= dt;
-    const drag = Math.exp(-1.7 * dt);
     for (let i = 0; i < N; i++) {
       if (age[i] >= life[i]) { alpha[i] = 0; size[i] = 0; continue; }
       age[i] += dt;
+      const drag = Math.exp(-dragK[i] * dt);
       vel[i * 3] *= drag;
-      vel[i * 3 + 1] = vel[i * 3 + 1] * drag - 1.1 * dt;
+      vel[i * 3 + 1] = vel[i * 3 + 1] * drag - grav[i] * dt;
       vel[i * 3 + 2] *= drag;
       pos[i * 3] += (vel[i * 3] + 0.7) * dt;        // 風で少し流れる
       pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
       pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+      if (pos[i * 3 + 1] < SEA_LEVEL - 0.2) { age[i] = life[i]; alpha[i] = 0; size[i] = 0; continue; }
       const k = age[i] / life[i];
       size[i] = size0[i] * (1 + age[i] * 1.8);
-      alpha[i] = 0.2 * Math.min(1, age[i] / 0.06) * (1 - k) ** 1.8;
+      alpha[i] = alpha0[i] * Math.min(1, age[i] / 0.06) * (1 - k) ** 1.8;
     }
     geo.attributes.position.needsUpdate = true;
     geo.attributes.aSize.needsUpdate = true;
     geo.attributes.aAlpha.needsUpdate = true;
   }
-  return { points, emit, update };
+  return { points, emit, splash, drip, update };
 }
 
 /**
@@ -283,23 +387,24 @@ export function createWhales({ blocked = () => false } = {}) {
   const rand = (a, b) => a + Math.random() * (b - a);
   const A = WHALE_AREA;
 
-  // 水面で休むときの高さ：背（頭の後ろ〜こぶ）の上が水面から 35cm 出る
-  const surfaceY = (scale) => SEA_LEVEL - (topAt(0.4) + profileAt('cy', 0.4)) * scale + 0.35;
+  // 水面で休むときの高さ：背（胸びれの後ろのいちばん太い所）の上が水面から 55cm 出る
+  const surfaceY = (scale) => SEA_LEVEL - (topAt(0.42) + profileAt('cy', 0.42)) * scale + 0.55;
   const HINGE_T = 0.78;       // 潜るときの支点（尾の付け根の少し前）
 
   const list = [];
-  for (const [i, scale] of [1, 0.7].entries()) {
+  // 親 18m、子 11m（クルーザーは 12.7m）
+  for (const [i, scale] of [18 / LENGTH, 11 / LENGTH].entries()) {
     const m = makeWhale();
     m.group.scale.setScalar(scale);
     group.add(m.group);
     const a = rand(0, Math.PI * 2);
     list.push({
       ...m, g: m.group, scale, leader: null, i,
-      x: A.x + Math.cos(a) * A.r * 0.4 + i * 12, z: A.z + Math.sin(a) * A.r * 0.4, yaw: rand(0, Math.PI * 2),
+      x: A.x + Math.cos(a) * A.r * 0.4 + i * 16, z: A.z + Math.sin(a) * A.r * 0.4, yaw: rand(0, Math.PI * 2),
       y: surfaceY(scale), pitch: 0, speed: 1.1, yawRate: 0,
       state: 'surface', t: 0, blows: 0, nextBlow: rand(1, 4) + i * 2.5, blowT: 9, blowStrong: 1,
       arch: 0, amp: 0.06, phase: rand(0, 6), delay: -1, fluked: false,
-      hinge: new THREE.Vector3(), dive0Y: 0,
+      hinge: new THREE.Vector3(), dive0Y: 0, riseFrom: 0, breach: null,
     });
   }
   list[1].leader = list[0];
@@ -308,11 +413,61 @@ export function createWhales({ blocked = () => false } = {}) {
 
   let onBlow = null;
   let onFluke = null;
+  let onBreach = null;
+  let onSplash = null;
+  // しぶきの泡の輪（広がって消える）
+  const ringGeo = new THREE.RingGeometry(0.7, 1, 40);
+  ringGeo.rotateX(-Math.PI / 2);
+  const rings = [];
+  for (let k = 0; k < 6; k++) {
+    const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+    m.visible = false;
+    group.add(m);
+    rings.push({ m, t: 1, r: 1 });
+  }
+  let ringNext = 0;
+  function splashAt(x, z, r, strength) {
+    spout.splash(x, z, r, Math.round(900 * strength), 0.8 + 0.4 * strength);
+    const ring = rings[ringNext];
+    ringNext = (ringNext + 1) % rings.length;
+    ring.t = 0;
+    ring.r = r;
+    ring.m.position.set(x, SEA_LEVEL + 0.05, z);
+    ring.m.visible = true;
+    onSplash?.(x, SEA_LEVEL, z, strength);
+  }
   const _p = new THREE.Vector3();
   const _d = new THREE.Vector3();
   const _q = new THREE.Quaternion();
   const _e = new THREE.Euler();
 
+  /**
+   * 尾びれから水がしたたる：尾びれが水面より上にあるあいだ、下になる前のふち（付け根から先まで）と面の上の点から
+   * 細かい粒を落とす。尾びれが水から出る・入るときは、小さなしぶき
+   */
+  const _fp = new THREE.Vector3();
+  function drips(w, dt, k) {
+    w.fluke.updateMatrixWorld(true);
+    w.fluke.localToWorld(_fp.set(0, profileAt('cy', 1), 0.1 - 0.6));
+    const above = _fp.y > SEA_LEVEL + 0.3;
+    if (above !== Boolean(w.flukeOut)) {
+      w.flukeOut = above;
+      w.fluke.localToWorld(_fp.set(0, 0, 0));
+      splashAt(_fp.x, _fp.z, 1.2 * w.scale, 0.35 * w.scale);
+    }
+    if (!above) return;
+    const n = Math.round(1800 * dt * w.scale + Math.random());
+    for (let j = 0; j < n; j++) {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const sx = 0.2 + Math.random() * 2.1;
+      const edge = Math.random() < 0.94;
+      // 前のふち（頭を下にして尾びれを立てると、前のふちが下になる。付け根は 0.38、先へ -0.32）か、面の上のどこか。
+      // 後ろのふちから落とすと、上から面をつたって白い点々に見えた
+      const sy = edge ? 0.38 - 0.7 * (sx / 2.3) ** 2 : -0.9 + Math.random() * (0.2 + 0.9 * (1 - sx / 2.4));
+      w.fluke.localToWorld(_fp.set(side * sx * 1.15, profileAt('cy', 1), 0.1 + sy * 1.15));
+      if (_fp.y > SEA_LEVEL + 0.1) spout.drip(_fp.x, _fp.y, _fp.z, edge ? 0.65 : 0.25);
+    }
+  }
   function blow(w, strong = 1) {
     w.blowT = 0;
     w.blowStrong = strong;
@@ -332,14 +487,33 @@ export function createWhales({ blocked = () => false } = {}) {
     w.dive0Y = w.hinge.y;
     for (const o of list) if (o.leader === w && o.state === 'surface') o.delay = 2.5;
   }
+  /**
+   * 跳ぶ（ブリーチング）：深く潜って勢いをつけ、頭を上げて水から跳び出す。弧（放物線）に沿って向きを変え、
+   * 背を弓なりに丸めて（頂上でいちばん丸い）、頭から水に落ちる。跳び出す所・落ちる所に大きなしぶき。
+   * 前 6 m/s、上 14〜16 m/s（体の中心が水面の上 4〜5m まで）。落ちる所が浅瀬なら跳ばない
+   */
+  function startBreach(w) {
+    const vx = 6;
+    const apex = SEA_LEVEL + 4.5 * Math.sqrt(w.scale);
+    const pitch0 = 1.1;
+    // 頭の先が水面のすぐ下にある深さから跳び出す
+    const yStart = SEA_LEVEL - (LENGTH / 2) * w.scale * Math.sin(pitch0) - 0.4;
+    const vy = Math.sqrt(2 * G * (apex - yStart));
+    const dist = vx * (2 * vy) / G + 10 * w.scale;
+    if (blocked(w.x + Math.sin(w.yaw) * dist, w.z + Math.cos(w.yaw) * dist)) return false;
+    w.state = 'breach';
+    w.t = 0;
+    w.breach = { phase: 'sink', y0: w.y, p0: w.pitch, yStart, vx, vy, pitch0: Math.atan2(vy, vx), out: false, down: false, apex: false };
+    return true;
+  }
   function pickSpot(w, boat) {
     if (w.leader) {
       // 子：親の横
       const L = w.leader;
       const rx = Math.cos(L.yaw);
       const rz = -Math.sin(L.yaw);
-      w.x = L.x + rx * 12 - Math.sin(L.yaw) * 4;
-      w.z = L.z + rz * 12 - Math.cos(L.yaw) * 4;
+      w.x = L.x + rx * 16 - Math.sin(L.yaw) * 4;
+      w.z = L.z + rz * 16 - Math.cos(L.yaw) * 4;
       w.yaw = L.yaw;
       return;
     }
@@ -360,6 +534,10 @@ export function createWhales({ blocked = () => false } = {}) {
     w.state = 'rise';
     w.t = 0;
     w.g.visible = true;
+    w.y = w.riseFrom = surfaceY(w.scale) - 7 * w.scale;
+    w.pitch = -0.28;
+    // 3 回に 1 回くらいは、深い所からそのまま跳ぶ
+    if (Math.random() < 0.35 && startBreach(w)) { w.blows = w.leader ? 4 : 6; return; }
     w.blows = w.leader ? 4 + Math.floor(Math.random() * 2) : 5 + Math.floor(Math.random() * 3);
   }
 
@@ -380,8 +558,8 @@ export function createWhales({ blocked = () => false } = {}) {
         let want = w.yaw + Math.sin(w.t * 0.07 + w.i * 2) * 0.3;
         if (w.leader && w.leader.state === 'surface') {
           const L = w.leader;
-          const tx = L.x + Math.cos(L.yaw) * 12;
-          const tz = L.z - Math.sin(L.yaw) * 12;
+          const tx = L.x + Math.cos(L.yaw) * 16;
+          const tz = L.z - Math.sin(L.yaw) * 16;
           want = Math.atan2(tx - w.x + Math.sin(L.yaw) * 8, tz - w.z + Math.cos(L.yaw) * 8);
         } else if (Math.hypot(w.x - A.x, w.z - A.z) > A.r * 0.8) {
           want = Math.atan2(A.x - w.x, A.z - w.z);
@@ -397,25 +575,36 @@ export function createWhales({ blocked = () => false } = {}) {
         w.pitch += (Math.sin(w.t * 0.3 + w.i) * 0.012 - w.pitch) * Math.min(1, dt * 1.5);
         // 潮を吹く
         w.nextBlow -= dt;
-        if (w.nextBlow <= 0 && w.blows > 0) { blow(w, 1); w.blows--; w.nextBlow = rand(9, 13); }
+        if (w.nextBlow <= 0 && w.blows > 0) {
+          blow(w, 1);
+          w.blows--;
+          w.nextBlow = rand(9, 13);
+          // ときどき、息をしたあとに潜って跳ぶ（1 回の浮上で 4 割くらい）
+          if (w.t > 12 && w.blows > 0 && Math.random() < 0.12) { w.nextBlow = 99; w.breachIn = 2.5; }
+        }
+        if (w.breachIn !== undefined) { w.breachIn -= dt; if (w.breachIn < 0) { w.breachIn = undefined; w.nextBlow = rand(6, 10); if (startBreach(w)) continue; } }
         // 吹き終わって少ししたら潜る（子は親が潜ったら）。走っている船が 20m 以内に来たら早めに潜る
         const near = boat && Math.abs(boat.speed) > 0.8 && Math.hypot(boat.x - w.x, boat.z - w.z) < 20 * Math.max(1, w.scale);
         if (w.delay >= 0) { w.delay -= dt; if (w.delay < 0) startDive(w); }
         else if (near || (!w.leader && w.blows <= 0 && w.nextBlow < 13 - 6)) startDive(w);
       } else if (w.state === 'dive') {
         // 潜る：頭を下げて背を丸め、支点（尾の付け根の少し前）で起き上がるように尾びれを水の上へ上げて、真下へ沈む
-        const k = Math.min(1, w.t / 10);
-        w.pitch = 1.35 * THREE.MathUtils.smoothstep(k, 0.08, 0.7);
-        archWant = 0.55 * Math.sin(Math.PI * Math.min(1, k / 0.62));
+        // 尾びれを高く上げたところ（k 0.5〜0.68）で少し止まる。尾びれの下のふちから水がしたたり落ちる
+        const k = Math.min(1, w.t / 12);
+        w.pitch = 1.38 * THREE.MathUtils.smoothstep(k, 0.08, 0.6);
+        archWant = 0.55 * Math.sin(Math.PI * Math.min(1, k / 0.55));
         ampWant = 0.02;
-        const top = SEA_LEVEL + 0.15 * w.scale;
-        w.hinge.y = k < 0.55
-          ? w.dive0Y + (top - w.dive0Y) * THREE.MathUtils.smoothstep(k, 0.1, 0.55)
-          : top - 10 * w.scale * ((k - 0.55) / 0.45) ** 2;
+        // 支点は水面の少し下（尾の付け根は短く見え、尾びれの下のふちが水面の 1〜2m 上）
+        const top = SEA_LEVEL - 0.9 * w.scale;
+        w.hinge.y = k < 0.5
+          ? w.dive0Y + (top - w.dive0Y) * THREE.MathUtils.smoothstep(k, 0.1, 0.5)
+          : k < 0.68 ? top - 0.4 * w.scale * ((k - 0.5) / 0.18)
+            : top - 0.4 * w.scale - 10 * w.scale * ((k - 0.68) / 0.32) ** 2;
+        drips(w, dt, k);
         const fwd = 1.1 * (1 - k);
         w.hinge.x += Math.sin(w.yaw) * fwd * dt;
         w.hinge.z += Math.cos(w.yaw) * fwd * dt;
-        if (!w.fluked && k > 0.55) { w.fluked = true; onFluke?.(w.hinge.x, w.hinge.z, w); }
+        if (!w.fluked && k > 0.5) { w.fluked = true; onFluke?.(w.hinge.x, w.hinge.z, w); }
         if (k >= 1) { w.state = 'deep'; w.t = 0; w.g.visible = false; w.deepFor = w.leader ? Infinity : rand(30, 45); }
       } else if (w.state === 'deep') {
         if (!w.leader && w.t > w.deepFor) {
@@ -427,16 +616,61 @@ export function createWhales({ blocked = () => false } = {}) {
           w.riseIn -= dt;
           if (w.riseIn < 0) { pickSpot(w, boat); startRise(w); w.riseIn = undefined; }
         }
+      } else if (w.state === 'breach') {
+        const b = w.breach;
+        if (b.phase === 'sink') {
+          // 潜って勢いをつける：頭を下げて深く潜り、終わりに頭を上へ向けて跳び出す深さへ
+          const SINK = 4;
+          const k = Math.min(1, w.t / SINK);
+          const low = b.yStart - 2.5 * w.scale;
+          if (k < 0.6) {
+            const e = THREE.MathUtils.smoothstep(k, 0, 0.6);
+            w.y = b.y0 + (low - b.y0) * e;
+            w.pitch = b.p0 + (0.45 * Math.sin(Math.PI * Math.min(1, k / 0.6)) - b.p0) * Math.min(1, k * 5);
+          } else {
+            const e = THREE.MathUtils.smoothstep(k, 0.6, 1);
+            w.y = low + (b.yStart - low) * e;
+            w.pitch = -b.pitch0 * e;
+          }
+          w.speed += (4 - w.speed) * Math.min(1, dt);
+          w.x += Math.sin(w.yaw) * w.speed * dt;
+          w.z += Math.cos(w.yaw) * w.speed * dt;
+          ampWant = 0.35;
+          if (k >= 1) { b.phase = 'leap'; w.t = 0; }
+        } else {
+          // 空へ：弧に沿って向きを変え、弧の曲がり具合 G·vx / v³ に合わせて背を丸める
+          const t = w.t;
+          const vy = b.vy - G * t;
+          w.y = b.yStart + b.vy * t - 0.5 * G * t * t;
+          w.pitch = -Math.atan2(vy, b.vx);
+          w.x += Math.sin(w.yaw) * b.vx * dt;
+          w.z += Math.cos(w.yaw) * b.vx * dt;
+          const v = Math.hypot(b.vx, vy);
+          w.arch = THREE.MathUtils.clamp((G * b.vx) / (v * v * v) * LENGTH * w.scale * 1.2, 0, 0.6);
+          archWant = w.arch;
+          ampWant = t < 0.4 ? 0.4 : 0.03;
+          if (!b.out && w.y > SEA_LEVEL - 1.5 * w.scale) { b.out = true; splashAt(w.x, w.z, 2 * w.scale, 0.8 * w.scale); }
+          if (!b.apex && vy < 0) { b.apex = true; onBreach?.(w.x, w.y, w.z, w); }
+          if (!b.down && vy < 0 && w.y < SEA_LEVEL) { b.down = true; splashAt(w.x, w.z, 3 * w.scale, 1.3 * w.scale); }
+          if (vy < 0 && w.y <= b.yStart) {
+            // 水の中から、また浮かんでくる（すぐには潮を吹かない）
+            w.state = 'rise';
+            w.t = 0;
+            w.riseFrom = w.y;
+            w.risenBlow = true;
+            w.arch = 0;
+          }
+        }
       } else if (w.state === 'rise') {
         // 浮かぶ：深い所から斜めに上がってくる。頭が水面に出たところで、大きく潮を吹く
         const k = Math.min(1, w.t / 4);
-        w.y = surfaceY(w.scale) - 7 * w.scale * (1 - THREE.MathUtils.smoothstep(k, 0, 1));
-        w.pitch = -0.28 * (1 - THREE.MathUtils.smoothstep(k, 0.4, 1));
+        w.y = w.riseFrom + (surfaceY(w.scale) - w.riseFrom) * THREE.MathUtils.smoothstep(k, 0, 1);
+        w.pitch += (-0.28 * (1 - THREE.MathUtils.smoothstep(k, 0.4, 1)) - w.pitch) * Math.min(1, dt * 2.5);
         w.x += Math.sin(w.yaw) * 1.5 * dt;
         w.z += Math.cos(w.yaw) * 1.5 * dt;
         ampWant = 0.12;
         if (k >= 0.72 && w.blowT > 5 && w.state === 'rise' && !w.risenBlow) { w.risenBlow = true; blow(w, 1.2); w.blows--; }
-        if (k >= 1) { w.state = 'surface'; w.t = 0; w.risenBlow = false; w.nextBlow = rand(8, 12); w.delay = -1; }
+        if (k >= 1) { w.state = 'surface'; w.t = 0; w.nextBlow = w.risenBlow ? rand(3, 6) : rand(8, 12); w.risenBlow = false; w.delay = -1; }
       }
       if (!w.g.visible) continue;
       w.arch += (archWant - w.arch) * Math.min(1, dt * 2);
@@ -458,7 +692,8 @@ export function createWhales({ blocked = () => false } = {}) {
         w.g.updateMatrixWorld(true);
         w.blowhole.getWorldPosition(_p);
         w.g.getWorldQuaternion(_q);
-        _d.set(0.36, 0.82, 0.45).normalize().applyQuaternion(_q);
+        // 真上へ（体が傾いていても、潮は上へ）。ほんの少し前へ
+        _d.set(Math.sin(w.yaw) * 0.08, 1, Math.cos(w.yaw) * 0.08).normalize();
         const n = Math.round((650 * dt) / 0.9 * w.blowStrong * w.scale + Math.random());
         spout.emit(_p.x, Math.max(_p.y, SEA_LEVEL + 0.1), _p.z, _d.x, _d.y, _d.z, n, (0.75 + 0.25 * w.scale) * w.blowStrong * (1 - w.blowT * 0.35));
       } else {
@@ -466,6 +701,14 @@ export function createWhales({ blocked = () => false } = {}) {
       }
     }
     spout.update(dt);
+    for (const r of rings) {
+      if (!r.m.visible) continue;
+      r.t += dt / 1.6;
+      const k = r.r * (1 + r.t * 2.5);
+      r.m.scale.set(k, 1, k);
+      r.m.material.opacity = Math.max(0, 0.8 * (1 - r.t));
+      if (r.t >= 1) r.m.visible = false;
+    }
   }
 
   return {
@@ -475,6 +718,10 @@ export function createWhales({ blocked = () => false } = {}) {
     set onBlow(fn) { onBlow = fn; },
     /** 尾びれを上げて潜ったとき（x, z、そのクジラ） */
     set onFluke(fn) { onFluke = fn; },
+    /** 跳んだとき（いちばん高い所で。x, y, z、そのクジラ） */
+    set onBreach(fn) { onBreach = fn; },
+    /** 大きなしぶき（x, y, z、強さ） */
+    set onSplash(fn) { onSplash = fn; },
     get list() { return list; },
     /** (x, z) からいちばん近い、見えているクジラまでの距離と位置 */
     nearest(x, z, out = new THREE.Vector3()) {
@@ -491,9 +738,10 @@ export function createWhales({ blocked = () => false } = {}) {
     /** 検証用 */
     debugBlow(i = 0) { const w = list[i]; if (w?.g.visible) blow(w, 1); },
     debugDive(i = 0) { const w = list[i]; if (w) startDive(w); },
+    debugBreach(i = 0) { const w = list[i]; return Boolean(w && w.state === 'surface' && startBreach(w)); },
     debugPlace(x, z, yaw = 0) {
       for (const w of list) {
-        w.x = x + w.i * 12 * Math.cos(yaw); w.z = z - w.i * 12 * Math.sin(yaw); w.yaw = yaw;
+        w.x = x + w.i * 16 * Math.cos(yaw); w.z = z - w.i * 16 * Math.sin(yaw); w.yaw = yaw;
         w.state = 'surface'; w.t = 0; w.g.visible = true; w.y = surfaceY(w.scale); w.delay = -1; w.blows = 6; w.nextBlow = 99;
       }
     },

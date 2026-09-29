@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from './hill.js';
 import { routeCurve, PIER } from './cruiser.js';
+import { createSpine } from './spine.js';
 
 /**
  * 海のイルカの群れ（4 頭）。クルーザーで周遊していると会える。
@@ -18,7 +19,7 @@ import { routeCurve, PIER } from './cruiser.js';
  *
  * 体は鼻先から尾まで断面を変えて作る（口先・おでこ・太い胴・細い尾の付け根。背は濃く腹は白い）。
  * 背びれ・胸びれ・尾びれを付ける（長さ 2.5m）。前は +Z。
- * 体は 1 本の背骨に沿って毎フレーム曲げる（makeDolphin の bend）：泳ぐときは尾へ向かって大きくなる波が頭から尾へ伝わり、
+ * 体は 1 本の背骨に沿って毎フレーム曲げる（spine.js）：泳ぐときは尾へ向かって大きくなる波が頭から尾へ伝わり、
  * 跳ぶ・息をするときは背を丸める。以前は尾の付け根の 1 か所だけで硬い尾を振っていて、尾がまっすぐすぎた
  */
 const G = 9.8;
@@ -127,22 +128,11 @@ function makeDolphin() {
   const skin = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.32, metalness: 0.05 });
   const fins = new THREE.MeshStandardMaterial({ color: BACK_COLOR, roughness: 0.35, metalness: 0.05 });
   const shade = (m) => { m.castShadow = true; return m; };
-  const zAt = (t) => LENGTH / 2 - t * LENGTH;
   const { geometry, ringOf } = bodyGeometry();
-  const rest = geometry.attributes.position.array.slice();
-  // 曲げても外に出ないくらいの球（毎フレーム計り直さない）
-  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), LENGTH * 0.75);
   g.add(shade(new THREE.Mesh(geometry, skin)));
   // ひれ・目は、背骨の t の所に付けた台（anchor）に載せる。台は背骨といっしょに動いて傾く
-  const anchors = [];
-  const anchor = (t) => {
-    const a = new THREE.Group();
-    a.position.z = zAt(t);
-    a.userData.t = t;
-    g.add(a);
-    anchors.push(a);
-    return a;
-  };
+  const spine = createSpine(geometry, ringOf, { rings: RINGS, length: LENGTH, center: BEND_CENTER });
+  const anchor = (t, gain) => { const a = spine.anchor(t, gain); g.add(a); return a; };
   // 目（おでこの下、口の端の少し後ろ）
   const head = anchor(0.125);
   for (const side of [-1, 1]) {
@@ -169,7 +159,7 @@ function makeDolphin() {
     chest.add(pec);
   }
   // 尾びれ：切れ込みのある三日月（幅 0.64m）。平らな面を水平に。尾の先の台に載せて、背骨の曲げより少し強く反らせる
-  const flukeBase = anchor(1);
+  const flukeBase = anchor(1, 1.35);
   const fluke = shade(new THREE.Mesh(finGeometry([[0, 0.03], [0.14, 0.02], [0.32, -0.2], [0.18, -0.14], [0.05, -0.12], [0, -0.08], [0, -0.08]], 0.03), fins));
   const flukeL = fluke.clone();
   flukeL.scale.x = -1;
@@ -179,64 +169,8 @@ function makeDolphin() {
     flukeBase.add(f);
   }
 
-  // 背骨の角度（輪ごと）と位置。角度は、後ろへ向かう向きが下へ傾くほど +（尾が下がる）
-  const th = new Float32Array(RINGS + 1);
-  const py = new Float32Array(RINGS + 1);
-  const pz = new Float32Array(RINGS + 1);
-  const ds = LENGTH / RINGS;
-  const rc = Math.round(BEND_CENTER * RINGS);
-  const posArr = geometry.attributes.position.array;
-  /**
-   * 曲げる。
-   * @param {number} arch 弓なり（鼻先から尾までで向きが変わる角度。+ で背を上へ丸める ∩）
-   * @param {number} amp 泳ぐ波（尾の先の振れの角度）。尾へ向かうほど大きく、頭から尾へ伝わる
-   * @param {number} phase 波の位相
-   */
-  function bend(arch, amp, phase) {
-    for (let r = 0; r <= RINGS; r++) {
-      const t = r / RINGS;
-      // 弓なり：頭（鼻先から 12%）は曲げず、そこから尾まで同じ曲がり具合
-      let a = (arch * (Math.max(t, 0.12) - BEND_CENTER)) / 0.88;
-      // 泳ぐ波：胴の前はほとんど動かず、尾の付け根から先が大きく振れる
-      const w = THREE.MathUtils.smoothstep(t, 0.3, 1);
-      a += amp * w * w * Math.sin(phase - (t - 0.3) * 4.5);
-      th[r] = a;
-    }
-    py[rc] = 0;
-    pz[rc] = zAt(rc / RINGS);
-    for (let r = rc + 1; r <= RINGS; r++) {
-      const m = (th[r - 1] + th[r]) / 2;
-      py[r] = py[r - 1] - Math.sin(m) * ds;
-      pz[r] = pz[r - 1] - Math.cos(m) * ds;
-    }
-    for (let r = rc - 1; r >= 0; r--) {
-      const m = (th[r] + th[r + 1]) / 2;
-      py[r] = py[r + 1] + Math.sin(m) * ds;
-      pz[r] = pz[r + 1] + Math.cos(m) * ds;
-    }
-    // 頂点：背骨の点から、背骨に直角な上の向き（cos θ, -sin θ）へ高さ分
-    for (let i = 0, n = ringOf.length; i < n; i++) {
-      const r = ringOf[i];
-      const yo = rest[i * 3 + 1];
-      const c = Math.cos(th[r]);
-      const s = Math.sin(th[r]);
-      posArr[i * 3] = rest[i * 3];
-      posArr[i * 3 + 1] = py[r] + yo * c;
-      posArr[i * 3 + 2] = pz[r] - yo * s;
-    }
-    geometry.attributes.position.needsUpdate = true;
-    geometry.computeVertexNormals();
-    for (const an of anchors) {
-      const k = an.userData.t * RINGS;
-      const r0 = Math.min(RINGS - 1, Math.floor(k));
-      const f = k - r0;
-      an.position.set(0, py[r0] + (py[r0 + 1] - py[r0]) * f, pz[r0] + (pz[r0 + 1] - pz[r0]) * f);
-      const ang = th[r0] + (th[r0 + 1] - th[r0]) * f;
-      an.rotation.x = -(an === flukeBase ? ang * 1.35 : ang);
-    }
-  }
-  bend(0, 0, 0);
-  return { group: g, bend, tailAngle: () => th[RINGS] };
+  spine.bend(0, 0, 0);
+  return { group: g, bend: spine.bend };
 }
 
 /** しぶき：広がる輪と、飛び散る水玉（まとめて使い回す） */

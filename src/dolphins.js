@@ -7,8 +7,8 @@ import { routeCurve, PIER } from './cruiser.js';
  *
  * - ふだんは、周遊の道（cruiser.js の routeCurve。船体の四隅が浅瀬にかからない深い所を通る）に沿って、
  *   ゆっくり（4m/s）群れで泳ぐ。ときどき水面に背を出して息をする（背びれが見える）
- * - ときどき水から跳び上がる（5〜14 秒ごと。高さ 2〜3.5m。となりの 1 頭がつられて跳ぶこともある）。
- *   跳び出す所と落ちる所に、しぶきの輪と水しぶき
+ * - ときどき水から跳び上がる（5〜14 秒ごと。高さ 1.6〜2.6m、8〜12m 先へ。となりの 1 頭がつられて跳ぶこともある）。
+ *   体は弧に沿って向きを変え（頭を上げて出て、頭から入る）、背を弓なりに丸める。跳び出す所と落ちる所に、しぶき
  * - 群れがいるのは、桟橋から 160m より遠い沖（島巡りの道の遠い所）だけ。道が桟橋へ近づく所は、次の沖まで飛ばす
  *   （そのときは 1 頭ずつも持ち場へ移す。桟橋の近くでは見えない）
  * - 船（クルーザー・ジェットスキー）が 90m 以内で走っていると、寄ってきて船の横に並んで泳ぐ（跳ぶのも 3〜8 秒ごとに）。
@@ -17,7 +17,9 @@ import { routeCurve, PIER } from './cruiser.js';
  * - 浅瀬・岩場・島・桟橋・橋脚（blocked）へは入らない（手前で向きを変える）
  *
  * 体は鼻先から尾まで断面を変えて作る（口先・おでこ・太い胴・細い尾の付け根。背は濃く腹は白い）。
- * 背びれ・胸びれ・尾びれを付ける（長さ 2.5m）。前は +Z
+ * 背びれ・胸びれ・尾びれを付ける（長さ 2.5m）。前は +Z。
+ * 体は 1 本の背骨に沿って毎フレーム曲げる（makeDolphin の bend）：泳ぐときは尾へ向かって大きくなる波が頭から尾へ伝わり、
+ * 跳ぶ・息をするときは背を丸める。以前は尾の付け根の 1 か所だけで硬い尾を振っていて、尾がまっすぐすぎた
  */
 const G = 9.8;
 const LENGTH = 2.5;
@@ -33,7 +35,10 @@ const PROFILE = {
   halfW: [0.028, 0.048, 0.056, 0.11,  0.17,  0.23, 0.26, 0.24, 0.17, 0.085, 0.045, 0.03, 0.025],
   cy:    [-0.085, -0.085, -0.075, -0.045, -0.015, 0, 0, 0, 0.01, 0.02, 0.025, 0.025, 0.025],
 };
-const TAIL_T = 0.64;        // ここで尾を曲げる（前と後ろの 2 つに分ける）
+// 背骨の曲げ：体を輪切り RINGS 本で作り、毎フレーム背骨に沿って曲げる（上下の曲げ。横は曲げない）
+const RINGS = 44;
+const SEG = 22;
+const BEND_CENTER = 0.42;   // 曲げの中心（胴のいちばん太い所の少し後ろ）。ここは動かない
 const BACK_COLOR = new THREE.Color(0x55697c);
 const CAPE_COLOR = new THREE.Color(0x44576a);
 const BELLY_COLOR = new THREE.Color(0xe2e6ea);
@@ -48,23 +53,28 @@ function profileAt(key, t) {
   return v[k - 1] + (v[k] - v[k - 1]) * e;
 }
 
-/** t0〜t1 の区間の体（z は zOrigin から見た位置）。背は濃く、腹は白く（頂点の色） */
-function bodyPart(t0, t1, zOrigin, rings = 26, seg = 22, { capStart = true, capEnd = true, scale = 1 } = {}) {
+/**
+ * 体（鼻先 t=0 → 尾の付け根 t=1）を 1 つの形で。背は濃く、腹は白く（頂点の色）。
+ * 曲げるために、頂点ごとに何本目の輪か（ringOf）を持つ。位置の y は背骨（y=0）からの高さ
+ */
+function bodyGeometry() {
   const pos = [];
   const col = [];
   const idx = [];
+  const ringOf = [];
   const c = new THREE.Color();
-  for (let r = 0; r <= rings; r++) {
-    const t = t0 + (t1 - t0) * (r / rings);
-    const top = profileAt('top', t) * scale;
-    const bot = profileAt('bot', t) * scale;
-    const hw = profileAt('halfW', t) * scale;
+  for (let r = 0; r <= RINGS; r++) {
+    const t = r / RINGS;
+    const top = profileAt('top', t);
+    const bot = profileAt('bot', t);
+    const hw = profileAt('halfW', t);
     const cy = profileAt('cy', t);
-    const z = LENGTH / 2 - t * LENGTH - zOrigin;
-    for (let k = 0; k <= seg; k++) {
-      const a = (k / seg) * Math.PI * 2;
+    const z = LENGTH / 2 - t * LENGTH;
+    for (let k = 0; k <= SEG; k++) {
+      const a = (k / SEG) * Math.PI * 2;
       const sa = Math.sin(a);
       pos.push(Math.cos(a) * hw, cy + sa * (sa > 0 ? top : bot), z);
+      ringOf.push(r);
       // 背と腹の境目は、わき腹の少し下。背のまん中はもう一段濃く（ケープ）
       const m = THREE.MathUtils.smoothstep(sa, -0.45, 0.05);
       c.copy(BELLY_COLOR).lerp(BACK_COLOR, m);
@@ -72,34 +82,35 @@ function bodyPart(t0, t1, zOrigin, rings = 26, seg = 22, { capStart = true, capE
       col.push(c.r, c.g, c.b);
     }
   }
-  const row = seg + 1;
-  for (let r = 0; r < rings; r++) {
-    for (let k = 0; k < seg; k++) {
+  const row = SEG + 1;
+  for (let r = 0; r < RINGS; r++) {
+    for (let k = 0; k < SEG; k++) {
       const a = r * row + k;
       const b = a + row;
       idx.push(a, b, a + 1, a + 1, b, b + 1);
     }
   }
-  // 両端をふさぐ（鼻先と、後ろの区間の尾の先）
+  // 両端をふさぐ（鼻先と尾の先）
   const cap = (r, flip) => {
-    const t = t0 + (t1 - t0) * (r / rings);
+    const t = r / RINGS;
     const center = pos.length / 3;
-    pos.push(0, profileAt('cy', t), LENGTH / 2 - t * LENGTH - zOrigin);
+    pos.push(0, profileAt('cy', t), LENGTH / 2 - t * LENGTH);
+    ringOf.push(r);
     const base = r * row;
     col.push(col[base * 3], col[base * 3 + 1], col[base * 3 + 2]);
-    for (let k = 0; k < seg; k++) {
+    for (let k = 0; k < SEG; k++) {
       if (flip) idx.push(center, base + k + 1, base + k);
       else idx.push(center, base + k, base + k + 1);
     }
   };
-  if (capStart) cap(0, true);
-  if (capEnd) cap(rings, false);
+  cap(0, true);
+  cap(RINGS, false);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
-  return g;
+  return { geometry: g, ringOf: Int16Array.from(ringOf) };
 }
 
 function finGeometry(points, depth) {
@@ -117,50 +128,115 @@ function makeDolphin() {
   const fins = new THREE.MeshStandardMaterial({ color: BACK_COLOR, roughness: 0.35, metalness: 0.05 });
   const shade = (m) => { m.castShadow = true; return m; };
   const zAt = (t) => LENGTH / 2 - t * LENGTH;
-  // 前（鼻先〜尾の付け根の手前）
-  g.add(shade(new THREE.Mesh(bodyPart(0, TAIL_T + 0.015, 0, 30, 22, { capEnd: false }), skin)));
+  const { geometry, ringOf } = bodyGeometry();
+  const rest = geometry.attributes.position.array.slice();
+  // 曲げても外に出ないくらいの球（毎フレーム計り直さない）
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), LENGTH * 0.75);
+  g.add(shade(new THREE.Mesh(geometry, skin)));
+  // ひれ・目は、背骨の t の所に付けた台（anchor）に載せる。台は背骨といっしょに動いて傾く
+  const anchors = [];
+  const anchor = (t) => {
+    const a = new THREE.Group();
+    a.position.z = zAt(t);
+    a.userData.t = t;
+    g.add(a);
+    anchors.push(a);
+    return a;
+  };
   // 目（おでこの下、口の端の少し後ろ）
+  const head = anchor(0.125);
   for (const side of [-1, 1]) {
     const t = 0.125;
     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 6), new THREE.MeshStandardMaterial({ color: 0x0c0f12, roughness: 0.15 }));
-    eye.position.set(side * profileAt('halfW', t) * 0.93, profileAt('cy', t) - 0.01, zAt(t));
-    g.add(eye);
+    eye.position.set(side * profileAt('halfW', t) * 0.93, profileAt('cy', t) - 0.01, 0);
+    head.add(eye);
   }
   // 背びれ：後ろへ反った鎌の形（胴のまん中より少し後ろ）
   const dorsal = shade(new THREE.Mesh(finGeometry([[0.2, 0], [0.02, 0.12], [-0.12, 0.34], [-0.1, 0.16], [-0.2, 0.0], [0, -0.03], [0.2, 0]], 0.035), fins));
   dorsal.rotation.y = -Math.PI / 2;      // 形の +X を体の +Z（前）へ
-  dorsal.position.set(0, profileAt('cy', 0.46) + profileAt('top', 0.46) - 0.03, zAt(0.46));
-  g.add(dorsal);
+  dorsal.position.set(0, profileAt('cy', 0.46) + profileAt('top', 0.46) - 0.03, 0);
+  anchor(0.46).add(dorsal);
   // 胸びれ：葉の形。体のわきの低い所から、後ろ・下・少し外へ（先の向きを setFromUnitVectors で決める）
   const pecGeo = finGeometry([[0, 0.05], [0.18, 0.06], [0.3, -0.04], [0.14, -0.04], [0, -0.04], [-0.02, 0], [0, 0.05]], 0.02);
+  const chest = anchor(0.25);
   for (const side of [-1, 1]) {
     const pec = shade(new THREE.Mesh(pecGeo, fins));
-    pec.position.set(side * profileAt('halfW', 0.25) * 0.8, profileAt('cy', 0.25) - profileAt('bot', 0.25) * 0.6, zAt(0.25));
+    pec.position.set(side * profileAt('halfW', 0.25) * 0.8, profileAt('cy', 0.25) - profileAt('bot', 0.25) * 0.6, 0);
     const dir = new THREE.Vector3(side * 0.55, -0.55, -0.62).normalize();
     pec.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
     // 平らな面を、体の外へ向ける（先の向きのまわりに回す）
     pec.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), side * 1.1));
-    g.add(pec);
+    chest.add(pec);
   }
-  // 尾（付け根で上下に振る）：後ろの体と尾びれ
-  const tail = new THREE.Group();
-  const pivot = zAt(TAIL_T);
-  tail.position.set(0, profileAt('cy', TAIL_T), pivot);
-  g.add(tail);
-  // 後ろは前の中から始める（1.5% 細く、前の後ろ端と後ろの入口はふさがない）。同じ太さで重ねたら、継ぎ目が白い輪になってちらついた
-  const rear = shade(new THREE.Mesh(bodyPart(TAIL_T - 0.02, 1, pivot, 14, 22, { capStart: false, scale: 0.985 }), skin));
-  rear.position.y = -profileAt('cy', TAIL_T);
-  tail.add(rear);
-  // 尾びれ：切れ込みのある三日月（幅 0.64m）。平らな面を水平に
+  // 尾びれ：切れ込みのある三日月（幅 0.64m）。平らな面を水平に。尾の先の台に載せて、背骨の曲げより少し強く反らせる
+  const flukeBase = anchor(1);
   const fluke = shade(new THREE.Mesh(finGeometry([[0, 0.03], [0.14, 0.02], [0.32, -0.2], [0.18, -0.14], [0.05, -0.12], [0, -0.08], [0, -0.08]], 0.03), fins));
   const flukeL = fluke.clone();
   flukeL.scale.x = -1;
   for (const f of [fluke, flukeL]) {
     f.rotation.x = Math.PI / 2;          // 形の -Y を体の後ろ（-Z）へ
-    f.position.set(0, profileAt('cy', 1) - profileAt('cy', TAIL_T), zAt(1) - pivot + 0.04);
-    tail.add(f);
+    f.position.set(0, profileAt('cy', 1), 0.04);
+    flukeBase.add(f);
   }
-  return { group: g, tail };
+
+  // 背骨の角度（輪ごと）と位置。角度は、後ろへ向かう向きが下へ傾くほど +（尾が下がる）
+  const th = new Float32Array(RINGS + 1);
+  const py = new Float32Array(RINGS + 1);
+  const pz = new Float32Array(RINGS + 1);
+  const ds = LENGTH / RINGS;
+  const rc = Math.round(BEND_CENTER * RINGS);
+  const posArr = geometry.attributes.position.array;
+  /**
+   * 曲げる。
+   * @param {number} arch 弓なり（鼻先から尾までで向きが変わる角度。+ で背を上へ丸める ∩）
+   * @param {number} amp 泳ぐ波（尾の先の振れの角度）。尾へ向かうほど大きく、頭から尾へ伝わる
+   * @param {number} phase 波の位相
+   */
+  function bend(arch, amp, phase) {
+    for (let r = 0; r <= RINGS; r++) {
+      const t = r / RINGS;
+      // 弓なり：頭（鼻先から 12%）は曲げず、そこから尾まで同じ曲がり具合
+      let a = (arch * (Math.max(t, 0.12) - BEND_CENTER)) / 0.88;
+      // 泳ぐ波：胴の前はほとんど動かず、尾の付け根から先が大きく振れる
+      const w = THREE.MathUtils.smoothstep(t, 0.3, 1);
+      a += amp * w * w * Math.sin(phase - (t - 0.3) * 4.5);
+      th[r] = a;
+    }
+    py[rc] = 0;
+    pz[rc] = zAt(rc / RINGS);
+    for (let r = rc + 1; r <= RINGS; r++) {
+      const m = (th[r - 1] + th[r]) / 2;
+      py[r] = py[r - 1] - Math.sin(m) * ds;
+      pz[r] = pz[r - 1] - Math.cos(m) * ds;
+    }
+    for (let r = rc - 1; r >= 0; r--) {
+      const m = (th[r] + th[r + 1]) / 2;
+      py[r] = py[r + 1] + Math.sin(m) * ds;
+      pz[r] = pz[r + 1] + Math.cos(m) * ds;
+    }
+    // 頂点：背骨の点から、背骨に直角な上の向き（cos θ, -sin θ）へ高さ分
+    for (let i = 0, n = ringOf.length; i < n; i++) {
+      const r = ringOf[i];
+      const yo = rest[i * 3 + 1];
+      const c = Math.cos(th[r]);
+      const s = Math.sin(th[r]);
+      posArr[i * 3] = rest[i * 3];
+      posArr[i * 3 + 1] = py[r] + yo * c;
+      posArr[i * 3 + 2] = pz[r] - yo * s;
+    }
+    geometry.attributes.position.needsUpdate = true;
+    geometry.computeVertexNormals();
+    for (const an of anchors) {
+      const k = an.userData.t * RINGS;
+      const r0 = Math.min(RINGS - 1, Math.floor(k));
+      const f = k - r0;
+      an.position.set(0, py[r0] + (py[r0 + 1] - py[r0]) * f, pz[r0] + (pz[r0 + 1] - pz[r0]) * f);
+      const ang = th[r0] + (th[r0 + 1] - th[r0]) * f;
+      an.rotation.x = -(an === flukeBase ? ang * 1.35 : ang);
+    }
+  }
+  bend(0, 0, 0);
+  return { group: g, bend, tailAngle: () => th[RINGS] };
 }
 
 /** しぶき：広がる輪と、飛び散る水玉（まとめて使い回す） */
@@ -286,11 +362,11 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
 
   const list = [];
   for (let i = 0; i < count; i++) {
-    const { group: g, tail } = makeDolphin();
+    const { group: g, bend } = makeDolphin();
     group.add(g);
     const [along, side] = SLOTS[i % SLOTS.length];
     const d = {
-      g, tail, along, side,
+      g, bend, along, side, arch: 0, amp: 0.42,
       x: pod.x + Math.sin(pod.yaw) * along + Math.cos(pod.yaw) * side,
       z: pod.z + Math.cos(pod.yaw) * along - Math.sin(pod.yaw) * side,
       yaw: pod.yaw, speed: 4, yawRate: 0,
@@ -321,13 +397,22 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
     return best / ROUTE_N;
   };
 
+  /**
+   * 跳ぶ：前へ 7〜8.5 m/s、上へ 5.6〜7.2 m/s（高さ 1.6〜2.6m、8〜12m 先へ落ちる）。体は弧に沿って向きを変える
+   * （頭を上げて出て、頭から入る）。落ちる所が浅瀬・岩場なら跳ばない（false）
+   */
   function startJump(d, strength = 1) {
-    const vy = rand(6.2, 8.2) * strength;
-    d.jump = { t: 0, vy, dur: (2 * vy) / G };
+    const vy = rand(5.6, 7.2) * strength;
+    const vx = Math.max(d.speed, rand(7, 8.5));
+    const dur = (2 * vy) / G;
+    if (blocked(d.x + Math.sin(d.yaw) * vx * dur, d.z + Math.cos(d.yaw) * vx * dur)) return false;
+    d.jump = { t: 0, vy, vx, dur };
+    d.speed = vx;
     d.y = SEA_LEVEL;
     splashes.burst(d.x, d.z, 0.8);
     lastJump = { x: d.x, z: d.z, time: performance.now() };
     onJump?.(d.x, d.z);
+    return true;
   }
 
   /**
@@ -379,6 +464,9 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
     const s = Math.sin(pod.yaw);
     const c = Math.cos(pod.yaw);
     for (const d of list) {
+      // 体の曲げの目標：ふだんは弓なりなし、尾の波は速いほど少し大きく
+      let archWant = 0;
+      let ampWant = THREE.MathUtils.clamp(0.3 + d.speed * 0.025, 0.3, 0.5);
       d.wobble += dt * 0.4;
       const along = d.along + Math.sin(d.wobble) * 1.2;
       const side = d.side + Math.cos(d.wobble * 1.3) * 0.8;
@@ -410,7 +498,12 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
         j.t += dt;
         const vy = j.vy - G * j.t;
         d.y = SEA_LEVEL + j.vy * j.t - 0.5 * G * j.t * j.t;
-        d.pitch = -Math.atan2(vy, Math.max(2, d.speed));
+        d.pitch = -Math.atan2(vy, j.vx);
+        // 弓なり：弧（放物線）の曲がり具合 G·vx / v³ に合わせて背を丸める（見えるように 1.8 倍）。頂上でいちばん丸い
+        const v = Math.hypot(j.vx, vy);
+        archWant = THREE.MathUtils.clamp((G * j.vx) / (v * v * v) * LENGTH * 1.8, 0, 0.8);
+        // 尾は、水を蹴って出た直後だけ強く振り、空中ではほとんど止める
+        ampWant = j.t < 0.2 ? 0.5 : 0.06;
         if (j.t >= j.dur) {
           d.jump = null;
           d.y = SEA_LEVEL - 0.3;
@@ -419,8 +512,8 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
         }
       } else {
         d.nextJump -= dt;
-        if (d.nextJump <= 0) {
-          startJump(d);
+        if (d.nextJump <= 0 && !startJump(d)) d.nextJump = rand(1, 3);
+        if (d.jump) {
           // となりの 1 頭がつられて跳ぶ
           if (Math.random() < 0.45) {
             const buddy = list.find((o) => o !== d && !o.jump && Math.hypot(o.x - d.x, o.z - d.z) < 7);
@@ -435,6 +528,8 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
         if (d.breathT >= 0) {
           d.breathT += dt / 1.3;
           lift = Math.sin(Math.PI * d.breathT) * 0.75;
+          // 息をするときも、背を丸めて水面を転がるように（頭が出て、背びれ、尾の順に）
+          archWant = Math.sin(Math.PI * d.breathT) * 0.3;
           dlift = Math.cos(Math.PI * d.breathT) * 0.75 * Math.PI / 1.3;
           if (d.breathT >= 1) d.breathT = -1;
         }
@@ -442,7 +537,9 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
         d.pitch += (-Math.atan2(dlift, Math.max(1.5, d.speed)) - d.pitch) * Math.min(1, dt * 6);
       }
       d.phase += dt * (2.6 + d.speed * 0.45);
-      d.tail.rotation.x = Math.sin(d.phase) * (d.jump ? 0.15 : 0.38);
+      d.arch += (archWant - d.arch) * Math.min(1, dt * 8);
+      d.amp += (ampWant - d.amp) * Math.min(1, dt * 6);
+      d.bend(d.arch, d.amp, d.phase);
       d.g.position.set(d.x, d.y, d.z);
       d.g.rotation.set(d.pitch + Math.sin(d.phase) * 0.03, d.yaw, -d.yawRate * 0.35, 'YXZ');
     }
@@ -479,6 +576,6 @@ export function createDolphins({ count = 4, blocked = () => false } = {}) {
       }
     },
     /** 検証用：いますぐ i 番目を跳ばせる */
-    debugJump(i = 0) { const d = list[i]; if (d && !d.jump) startJump(d); },
+    debugJump(i = 0) { const d = list[i]; return !!(d && !d.jump && startJump(d)); },
   };
 }

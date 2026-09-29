@@ -269,7 +269,7 @@ async function start() {
   const desktop = createDesktopControls(renderer, camera, world);
   const touch = touchMode ? createTouchControls({ isXR: () => renderer.xr.isPresenting }) : null;
   // カートの運転（乗り降り・操作・ハンコン・FFB）
-  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.coaster, world.cruiser, world.jetski, world.cessna, world.gt3, world.f40, ...(world.seats?.list ?? [])].filter(Boolean) });
+  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.coaster, world.cruiser, world.jetski, world.cessna, world.gt3, world.f40, world.diver, ...(world.seats?.list ?? [])].filter(Boolean) });
 // パットゴルフ：VR は右手のパター、PC は視点を球の後ろへ
 // セスナ：機内から見ているあいだ（VR・PC の運転席視点）は、機体を水平のまま見せる（酔いにくいように）
 if (world.cessna) world.cessna.firstPerson = () => kartDrive.driving && kartDrive.vehicle === world.cessna && (renderer.xr.isPresenting || kartDrive.view === 'first');

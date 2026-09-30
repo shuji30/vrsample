@@ -432,8 +432,12 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     }
   }
 
+  let orbitOn = false;
   function update(dt) {
     if (!body.loaded) return;
+    // PC の自分の番は、視点が球のまわりを回る（desktop.js。ふだんは目の位置のまま見回す）
+    const wantOrbit = !isXR() && state !== 'off' && turn === 'player' && phase === 'aim';
+    if (wantOrbit !== orbitOn && desktop?.setOrbitAim) { orbitOn = wantOrbit; desktop.setOrbitAim(wantOrbit); }
     awayFor = playerHere ? 0 : awayFor + dt;
     if (state !== 'off' && awayFor > 5) { finish(); return; }
     // 球とパター（女の子が来る前も、プレイヤーは打てる）

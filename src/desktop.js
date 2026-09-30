@@ -378,7 +378,7 @@ export function createDesktopControls(renderer, camera, world) {
     { minX: ROOM.minX, maxX: ROOM.maxX, minZ: ROOM.minZ, maxZ: ROOM.maxZ, maxY: ROOM.height },
     { minX: ANNEX.minX, maxX: ANNEX.maxX, minZ: ANNEX.minZ, maxZ: ANNEX.maxZ, maxY: ANNEX.height },
   ];
-  const WALL_GAP = 0.18;
+  const WALL_GAP = 0.3;   // 歩くときの壁の余白（体の半径 0.25＋0.05）と同じ。ズームで余白の中へ入らない
   const roomOf = (v, m = 0) => ROOMS.find((r) => v.x > r.minX + m && v.x < r.maxX - m && v.z > r.minZ + m && v.z < r.maxZ - m && v.y < r.maxY - m) ?? null;
   const viewFrom = new THREE.Vector3();
   function keepInRoom(from) {

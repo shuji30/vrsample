@@ -1641,6 +1641,12 @@ export function createWorld(renderer, scene, {
     /** main.js から：プレイヤーを (x, y, z) に、look の向きで立たせる */
     set onPlayerTravel(fn) { onPlayerTravel = fn; },
     /** PC の F：砂浜にいるときは、近くのビーチボールを打つ・貝がらを拾う。使ったら true */
+    /** 砂浜で F を押したら何ができるか（'ball' / 'shell' / null。スマホのボタンの名前） */
+    beachCanUse(cam) {
+      if (!beachGame?.wanted) return null;
+      cam.getWorldPosition(beachEye);
+      return beach.canUse(beachEye);
+    },
     beachUse(cam) {
       if (!beachGame?.wanted) return false;
       cam.getWorldPosition(beachEye);

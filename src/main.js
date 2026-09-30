@@ -267,9 +267,10 @@ async function start() {
     muted: params.has('mute'),
   });
   const desktop = createDesktopControls(renderer, camera, world);
-  const touch = touchMode ? createTouchControls({ isXR: () => renderer.xr.isPresenting }) : null;
+  // スマホのボタン：いまできることだけを、そのときの名前で（touch.js）。kartDrive はこのあとで作るので、呼ばれたときに読む
+  const touch = touchMode ? createTouchControls({ isXR: () => renderer.xr.isPresenting, actions: () => touchActions() }) : null;
   // カートの運転（乗り降り・操作・ハンコン・FFB）
-  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.coaster, world.cruiser, world.jetski, world.cessna, world.gt3, world.f40, world.diver, ...(world.seats?.list ?? [])].filter(Boolean) });
+  const kartDrive = createKartDrive({ renderer, camera, player, desktop, world, kart: world.karts.player, bike: world.bike, others: [world.seesaw, world.buranko, world.fishing, world.horse, world.carousel, world.ferris, world.coaster, world.cruiser, world.jetski, world.cessna, world.gt3, world.f40, world.diver, ...(world.seats?.list ?? [])].filter(Boolean), analogSteer: () => touch?.steer ?? null });
 // パットゴルフ：VR は右手のパター、PC は視点を球の後ろへ
 // セスナ：機内から見ているあいだ（VR・PC の運転席視点）は、機体を水平のまま見せる（酔いにくいように）
 if (world.cessna) world.cessna.firstPerson = () => kartDrive.driving && kartDrive.vehicle === world.cessna && (renderer.xr.isPresenting || kartDrive.view === 'first');
@@ -446,7 +447,8 @@ const talkEye = new THREE.Vector3();
 
       player.update(dt);
       desktop.update(dt);
-      touch?.update();
+      touch?.update(dt);
+      updateActionHint(dt);
       kartDrive.update(dt);
       world.update(dt);
       // 女の子がしゃべっているあいだは BGM を下げる
@@ -532,7 +534,120 @@ const talkEye = new THREE.Vector3();
     desktop.controls.target.set(p.x + fx * 3, g + 1.2, p.z + fz * 3);
     desktop.controls.update();
   }
-  Object.assign(window.__vrsample, { world, player, desktop, touch, debugPanel, music, kartDrive, resetView });
+  /**
+   * 操作はスマホも PC も同じ形にそろえる：十字ボタン（PC は W A S D）と、右のボタン（PC はスペース）1 つ。
+   *   - 歩いているとき：スペース（右の大きいボタン）が「いまできること」になる（打つ・投げる・拾う・乗る・座る…）。
+   *     contextAction() がそれを決め、スペースを押すと、その動きのキー（F / E など）に置き換えて送る
+   *   - 乗り物：▲ ▼（W / S）でアクセル・ブレーキ、◀ ▶（A / D）でハンドル。スペースはサイドブレーキ（潜っているときは上へ）
+   * スマホのボタンは touchActions() が決める（{ buttons: 右下, chips: 上の小さいボタン, dpad: 十字ボタン（運転中） }）
+   */
+  const btn = (code, key, label, size = 'big', hint) => ({ code, key, label, size, ...(hint ? { hint } : {}) });
+  const SIT = new Set(['seat', 'ferris', 'carousel', 'coaster']);
+  const LEFT = btn('KeyA', 'a', '◀');
+  const RIGHT = btn('KeyD', 'd', '▶');
+  /** 歩いているときに、スペースでできること（{ code, key, label, hint }。無ければ null） */
+  function contextAction() {
+    if (kartDrive.driving) return null;
+    const g = world.golfGame;
+    if (g?.state === 'play' && g.turn === 'player' && g.phase === 'aim') return btn('Space', ' ', '打つ', 'big', '長押しで強く');
+    const b = world.billiardGame;
+    if (b?.state === 'play' && b.turn === 'player' && b.phase === 'aim' && !desktop.swing?.holding) return btn('Space', ' ', '突く', 'big', '長押しで強く');
+    const held = desktop.heldKind;
+    if (held === 'boomerang') return btn('KeyF', 'f', '投げる', 'big', '長押しで遠く');
+    if (desktop.swing?.holding) return btn('Space', ' ', held === 'tennis' ? 'サーブ' : '振る');
+    if (held) return btn('KeyF', 'f', '投げる');
+    const beach = world.beachCanUse?.(camera);
+    if (beach) return btn('KeyF', 'f', beach === 'ball' ? '打つ' : '拾う');
+    if (desktop.canPick()) return btn('KeyF', 'f', '拾う');
+    const near = kartDrive.nearby();
+    if (near) {
+      const k = near.kind;
+      return btn('KeyE', 'e', k === 'seat' ? '座る' : k === 'diver' ? 'もぐる' : k === 'fishing' ? '釣る' : '乗る');
+    }
+    return null;
+  }
+  function touchActions() {
+    if (kartDrive.driving) {
+      const v = kartDrive.vehicle;
+      const kind = v?.kind ?? 'kart';
+      const view = btn('KeyC', 'c', '視点');
+      const gyro = { code: 'gyro', label: touch.gyro ? 'ジャイロ ON' : 'ジャイロ', on: touch.gyro };
+      if (kind === 'diver') {
+        return { buttons: [btn('Space', ' ', '上へ'), btn('KeyG', 'g', '下へ', 'small')], chips: [btn('KeyE', 'e', '浜へ'), view],
+          dpad: { up: btn('KeyW', 'w', '進む'), down: btn('KeyS', 's', '下がる'), left: LEFT, right: RIGHT } };
+      }
+      if (kind === 'seat') return { buttons: [btn('KeyE', 'e', '立つ')] };
+      if (SIT.has(kind)) return { buttons: [btn('KeyE', 'e', '降りる')], chips: [view] };
+      const out = btn('KeyE', 'e', '降りる');
+      if (kind === 'seesaw') return { chips: [out], dpad: { up: btn('KeyW', 'w', 'ける') } };
+      if (kind === 'buranko') return { chips: [out], dpad: { up: btn('KeyW', 'w', 'こぐ'), down: btn('KeyS', 's', '止める') } };
+      if (kind === 'fishing') return { chips: [out], dpad: { up: btn('KeyW', 'w', '投げる・巻く') } };
+      const dpad = { up: btn('KeyW', 'w', 'アクセル'), down: btn('KeyS', 's', 'ブレーキ'), left: LEFT, right: RIGHT };
+      if (kind === 'horse') return { chips: [out, view, gyro], dpad: { ...dpad, up: btn('KeyW', 'w', '進む'), down: btn('KeyS', 's', '止まる') } };
+      const chips = [out, view, gyro];
+      const buttons = [];
+      if (kind === 'kart' || kind === 'gt3' || kind === 'bike') buttons.push(btn('Space', ' ', 'サイド', 'big', 'ブレーキ'));
+      // GT3・F40：シフトは右の小さいボタン（PC は X / Z）、上に AT / MT
+      if (kind === 'gt3') { buttons.push(btn('KeyX', 'x', 'シフト▲', 'small'), btn('KeyZ', 'z', 'シフト▼', 'small')); chips.push(btn('KeyQ', 'q', 'AT/MT')); }
+      return { buttons, chips, dpad };
+    }
+    // 歩いているとき：右の大きいボタンはスペース（いまできることの名前で）。2 つ目が要るときだけ小さく
+    const a = contextAction();
+    if (!a) return {};
+    const buttons = [{ ...btn('Space', ' ', a.label), ...(a.hint ? { hint: a.hint } : {}) }];
+    if (desktop.heldKind === 'boomerang') buttons.push(btn('KeyG', 'g', '右へ投げる', 'small'));
+    if (desktop.swing?.holding) {
+      if (desktop.canPick()) buttons.push(btn('KeyF', 'f', '拾う', 'small'));
+      buttons.push(btn('KeyG', 'g', 'ラケットを置く', 'small'));
+    }
+    return { buttons };
+  }
+  // スペース：歩いているときは「いまできること」のキーに置き換えて送る（PC・スマホ共通。押しているあいだ押し続ける）
+  let spaceAs = null;
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || e.repeat || e.fromPad || e.spaceMapped || renderer.xr.isPresenting || e.target?.tagName === 'INPUT') return;
+    const a = contextAction();
+    if (!a || a.code === 'Space') return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    spaceAs = a;
+    const ev = new KeyboardEvent('keydown', { code: a.code, key: a.key, bubbles: true });
+    window.dispatchEvent(ev);
+  }, true);
+  window.addEventListener('keyup', (e) => {
+    if (e.code !== 'Space' || !spaceAs) return;
+    e.stopImmediatePropagation();
+    const a = spaceAs;
+    spaceAs = null;
+    window.dispatchEvent(new KeyboardEvent('keyup', { code: a.code, key: a.key, bubbles: true }));
+  }, true);
+  // PC：いまスペースでできることを、画面の下に小さく出す（スマホは右下のボタンの名前で分かる）
+  const actionHint = document.createElement('div');
+  actionHint.id = 'action-hint';
+  document.body.appendChild(actionHint);
+  let hintIn = 0;
+  let hintText = '';
+  function updateActionHint(dt) {
+    if ((hintIn -= dt) > 0) return;
+    hintIn = 0.2;
+    let text = '';
+    if (!touchMode && !renderer.xr.isPresenting) {
+      if (kartDrive.driving) {
+        const k = kartDrive.vehicle?.kind;
+        text = k === 'diver' ? 'W 進む・A D 向き・スペース 上へ・Shift 下へ・E 浜へ'
+          : SIT.has(k) ? 'E 降りる' : k === 'gt3' ? 'W / ↑ アクセル・S / ↓ ブレーキ・A D / ← → ハンドル・＞ ＜ シフト・スペース サイド・E 降りる'
+          : 'W / ↑ アクセル・S / ↓ ブレーキ・A D / ← → ハンドル・スペース サイド・E 降りる';
+      } else {
+        const a = contextAction();
+        if (a) text = `スペース　${a.label}${a.hint ? `（${a.hint}）` : ''}`;
+      }
+    }
+    if (text !== hintText) { hintText = text; actionHint.textContent = text; actionHint.style.display = text ? 'block' : 'none'; }
+  }
+  // VR に入れない端末（スマホのブラウザなど）では、「VR NOT SUPPORTED」のボタンを出さない
+  if (touchMode) navigator.xr?.isSessionSupported?.('immersive-vr').then((ok) => { if (!ok) vrButton.style.display = 'none'; }).catch(() => { vrButton.style.display = 'none'; });
+  if (touchMode && !navigator.xr) vrButton.style.display = 'none';
+  Object.assign(window.__vrsample, { contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する
   const voiceStatusEl = document.getElementById('voice-status');

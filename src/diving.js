@@ -12,7 +12,7 @@ import { REEF } from './reef.js';
  *                R / F 見上げる・見下ろす。C で後ろからの視点
  *   VR        … 右トリガーで、見ている向き（上下も）へ進む。左トリガーで後ろへ。左スティックで向きを変える、
  *                右スティックの上下で上がる・下がる。体は起こしたまま（酔いにくいように）
- *   スマホ     … 左のスティック、「スペース」で上へ、「置く/右へ」（G）で下へ
+ *   スマホ     … 「進む」（W）、十字ボタンの ◀ ▶ で向き・▲ ▼ で上へ・下へ、画面をなぞって見まわす（上下も）、「浜へ」（E）
  *   ゲームパッド … 左スティック、RB で上へ、LB で下へ
  * 水面（の 35cm 下）より上・海の底や根より下へは行かない。サンゴ礁のまわり 30m より外へは出られない。
  *
@@ -182,6 +182,26 @@ export function createDiving({ scene, renderer, camera, reef, groundAt, beachGro
   const _v = new THREE.Vector3();
   let hud = null;
   const touch = () => document.body.classList.contains('touch');
+  // スマホ：潜っているあいだは、画面を指でなぞると見る向き（左右・上下）が変わる（PC の R / F・A / D の代わり）
+  let dragId = null;
+  let dragX = 0;
+  let dragY = 0;
+  renderer.domElement.addEventListener('pointerdown', (e) => {
+    if (!active || renderer.xr.isPresenting || dragId !== null) return;
+    dragId = e.pointerId;
+    dragX = e.clientX;
+    dragY = e.clientY;
+  });
+  renderer.domElement.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== dragId || !active) return;
+    state.yaw -= (e.clientX - dragX) * 0.006;
+    state.pitch = THREE.MathUtils.clamp(state.pitch + (e.clientY - dragY) * 0.006, -1.2, 1.2);
+    dragX = e.clientX;
+    dragY = e.clientY;
+  });
+  const endDrag = (e) => { if (e.pointerId === dragId) dragId = null; };
+  renderer.domElement.addEventListener('pointerup', endDrag);
+  renderer.domElement.addEventListener('pointercancel', endDrag);
 
   /** 入る所：礁の北のふち、水深 3m あたり。南（礁のまん中）を向いて */
   function startPoint(out) {
@@ -312,7 +332,11 @@ export function createDiving({ scene, renderer, camera, reef, groundAt, beachGro
         setTimeout(() => { if (active) { blow(_v.clone(), 14); onBreath?.('out'); } }, 1600);
         onBreath?.('in');
       }
-      if (hud && !xr) hud.textContent = `水深 ${(SEA_LEVEL - pos.y).toFixed(1)}m　W/S 進む・A/D 向き・スペース 上・Shift 下・R/F 見上げる/見下ろす・E 浜へ`;
+      if (hud && !xr) {
+        // スマホは水深だけ（操作は右下のボタンに名前で出ている）
+        hud.textContent = touch() ? `水深 ${(SEA_LEVEL - pos.y).toFixed(1)}m`
+          : `水深 ${(SEA_LEVEL - pos.y).toFixed(1)}m　W/S 進む・A/D 向き・スペース 上・Shift 下・R/F 見上げる/見下ろす・E 浜へ`;
+      }
     },
     /** 毎フレーム（乗っていなくても）：泡・マリンスノー・礁 */
     tick(dt, eye) {

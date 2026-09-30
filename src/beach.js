@@ -688,6 +688,12 @@ export function createBeach() {
     }
   }
 
+  /** F で何ができるか（'ball' 打つ / 'shell' 拾う / null）。use と同じ決まり */
+  function canUse(eye) {
+    if (Math.hypot(ball.position.x - eye.x, ball.position.z - eye.z) < 2.6 && ball.position.y < eye.y + 1.2) return 'ball';
+    for (const sh of shells) if (!sh.taken && Math.hypot(sh.mesh.position.x - eye.x, sh.mesh.position.z - eye.z) < 2.2) return 'shell';
+    return null;
+  }
   /** PC：F かクリックで、近く（2.6m）のボールか貝がらを。使ったら true */
   function use(eye, forward, girlPos) {
     const d = Math.hypot(ball.position.x - eye.x, ball.position.z - eye.z);
@@ -733,6 +739,7 @@ export function createBeach() {
     interactables,
     update,
     use,
+    canUse,
     hitFrom,
     ball,
     launchTo,

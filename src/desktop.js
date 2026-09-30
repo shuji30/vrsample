@@ -382,6 +382,17 @@ export function createDesktopControls(renderer, camera, world) {
       driving = Boolean(value);
       controls.enabled = !driving;
     },
+    /** 持っている物の種類（スマホのボタンを出し分ける）：'boomerang' / 'tennis' / 'ball' / null。ラケットは swing.holding */
+    get heldKind() { return heldBall ? (isBoomerang(heldBall) ? 'boomerang' : heldBall.userData.tennis ? 'tennis' : 'ball') : null; },
+    /** いま F で拾える物があるか（手の届く所の球・ラケット、ラケットを持っていればボールかご） */
+    canPick() {
+      if (driving || heldBall) return false;
+      if (nearest()) return true;
+      if (!basket || basket.count === 0) return false;
+      camera.getWorldPosition(eye);
+      basket.mouth(mouth);
+      return Math.hypot(mouth.x - eye.x, mouth.z - eye.z) <= PICK_RANGE;
+    },
     /** F を押したとき、先に聞く（砂浜のボール・貝がら。使ったら true） */
     set onUse(fn) { onUse = fn; },
     /** 乗り物に乗っていないときのハンコンの入力（kartdrive.js の walkInput） */

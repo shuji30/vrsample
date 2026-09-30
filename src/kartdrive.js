@@ -25,7 +25,7 @@ import { createEngineSound, createSignalSound } from './audio.js';
  * VR では、乗った瞬間の頭の位置を覚えておき、それが運転席の目の位置に来るように
  * プレイヤーのリグを置く。そのあとの頭の動き（のぞき込むなど）はそのまま効く。
  */
-export function createKartDrive({ renderer, camera, player, desktop, world, kart, bike = null, others = [] }) {
+export function createKartDrive({ renderer, camera, player, desktop, world, kart, bike = null, others = [], analogSteer = () => null }) {
   const vehicles = [kart, bike, ...others].filter(Boolean);
   /** いま乗っている（最後に乗った）乗り物 */
   let vehicle = kart;
@@ -126,6 +126,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   let noticeTimer = 0;
   function notice(text) {
     if (typeof document === 'undefined') return;
+    // スマホ・タブレットでは、ハンコンの案内は出さない（つながないので、乗るたびに出るとじゃま）
+    if (/ハンコン/.test(text) && document.body.classList.contains('touch')) return;
     if (!noticeEl) {
       noticeEl = document.createElement('div');
       noticeEl.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);padding:8px 14px;background:rgba(20,24,36,.85);color:#fff;font:600 14px/1.4 sans-serif;border-radius:8px;z-index:30;pointer-events:none';
@@ -205,8 +207,9 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     if (event.fromPad && (event.code === 'Space' || event.code === 'ShiftLeft')) return;
     keys.add(event.code);
     // シフト：X で上げる、Z で下げる（ハンコンのボタンを割り当てると、このキーとして届く。VR でも効く）
-    if (!event.repeat && driving && event.code === 'KeyX') shiftQueue++;
-    if (!event.repeat && driving && event.code === 'KeyZ') shiftQueue--;
+    // 「＞」（. キー）でも上げ、「＜」（, キー）でも下げる（Shift を押さなくても効く）
+    if (!event.repeat && driving && (event.code === 'KeyX' || event.code === 'Period')) shiftQueue++;
+    if (!event.repeat && driving && (event.code === 'KeyZ' || event.code === 'Comma')) shiftQueue--;
     // AT / MT の切り替え（GT3。Q・パッドの十字キー上・VR の右スティックの押し込み）
     if (!event.repeat && driving && event.code === 'KeyQ') autoToggle = true;
     // 乗る / 降りるは E（どの乗り物も同じ。F は拾う / 投げる）。VR でも効く（ハンコンに割り当てた
@@ -264,8 +267,10 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   function keyboardInput() {
     const left = keys.has('KeyA') || keys.has('ArrowLeft');
     const right = keys.has('KeyD') || keys.has('ArrowRight');
+    // スマホのジャイロ（傾けた分だけ。十字ボタンの ◀ ▶ を押しているときはそちら）
+    const tilt = left || right ? null : analogSteer();
     return {
-      steer: (left ? 1 : 0) - (right ? 1 : 0),
+      steer: tilt ?? (left ? 1 : 0) - (right ? 1 : 0),
       throttle: keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0,
       brake: keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0,
       handbrake: keys.has('Space') ? 1 : 0,
@@ -525,6 +530,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     enter,
     exit,
     get driving() { return driving; },
+    /** 乗っていないとき、E で乗れる近くの乗り物（無ければ null） */
+    nearby() { return driving ? null : nearestVehicle(); },
     /** PC の視点（'first' 運転席 / 'chase' 後ろから） */
     get view() { return view; },
     /** いま乗っている（最後に乗った）乗り物 */

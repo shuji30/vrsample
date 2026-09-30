@@ -214,16 +214,23 @@ body.xr-presenting #perf { opacity: 0; }
   position: absolute;
   right: max(16px, env(safe-area-inset-right));
   bottom: max(20px, env(safe-area-inset-bottom));
-  /* 右下から並べる：大きいボタンがいちばん右、小さいボタンはその左・上へ */
+  /* 2 段：上の段（サイドブレーキ・シフト など）と、下の段（アクセル・ブレーキ など）。どちらも右から並べる */
   display: flex;
-  flex-direction: row-reverse;
-  flex-wrap: wrap-reverse;
+  flex-direction: column;
   align-items: flex-end;
-  justify-content: flex-start;
   gap: 12px;
-  max-width: 260px;
   pointer-events: none;
 }
+
+.touch-row {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-end;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.touch-row:empty { display: none; }
 
 .touch-btn {
   pointer-events: auto;
@@ -276,28 +283,22 @@ body.xr-presenting #perf { opacity: 0; }
 
 .touch-btn.chip.on { background: rgba(60, 170, 110, 0.7); }
 
-/* 運転中の十字ボタン（左下。スティックと入れ替える） */
+/* 運転中の左下のボタン（◀ ▶ ハンドル。スティックと入れ替える） */
 .touch-dpad {
   position: absolute;
   left: max(16px, env(safe-area-inset-left));
-  bottom: max(16px, env(safe-area-inset-bottom));
-  width: 190px;
-  height: 170px;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  display: flex;
+  gap: 14px;
   pointer-events: none;
 }
 
 .touch-btn.dpad {
-  position: absolute;
-  width: 72px;
-  height: 64px;
-  border-radius: 14px;
-  font-size: 15px;
+  width: 84px;
+  height: 84px;
+  border-radius: 18px;
+  font-size: 30px;
 }
-
-.touch-btn.dpad.left { left: 0; top: 53px; font-size: 26px; }
-.touch-btn.dpad.right { right: 0; top: 53px; font-size: 26px; }
-.touch-btn.dpad.up { left: 59px; top: 0; height: 50px; font-size: 12px; }
-.touch-btn.dpad.down { left: 59px; bottom: 0; height: 50px; font-size: 12px; }
 
 .touch-btn.pressed { background: rgba(142, 240, 255, 0.55); color: #0b1020; }
 

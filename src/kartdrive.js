@@ -267,7 +267,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   function keyboardInput() {
     const left = keys.has('KeyA') || keys.has('ArrowLeft');
     const right = keys.has('KeyD') || keys.has('ArrowRight');
-    // スマホのジャイロ（傾けた分だけ。十字ボタンの ◀ ▶ を押しているときはそちら）
+    // スマホのジャイロ（傾けた分だけ。左下の ◀ ▶ を押しているときはそちら）
     const tilt = left || right ? null : analogSteer();
     return {
       steer: tilt ?? (left ? 1 : 0) - (right ? 1 : 0),

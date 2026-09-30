@@ -4,9 +4,9 @@
  * 画面の上に、左下の仮想スティックと右下のボタンを重ねる。どちらも PC のキーとして届ける
  * （window へ KeyboardEvent を送る。歩く・乗り物・ゲームは、今までどおりキーで動く）。
  *   - 左のスティック：前後左右（W / S / A / D）。いっぱいまで倒すと走る（Shift）
- *   - 乗り物の運転中は、左のスティックが十字ボタンに変わる：◀ ▶ でハンドル、▲ ▼ でシフトアップ・ダウン（GT3・F40）、
- *     潜っているときは上へ・下へ。上の「ジャイロ」を入れると、スマホを傾けてハンドルを切れる（ハンドルのように、
- *     画面を左右に傾ける。±30° でいっぱい）
+ *   - 乗り物の運転中は、左のスティックが ◀ ▶ のボタン（ハンドル）に変わり、アクセル・ブレーキは右下（サイドブレーキの下）。
+ *     上の「ジャイロ」を入れると、スマホを傾けてハンドルを切れる（ハンドルのように、
+ *     画面を左右に傾ける。±30° でいっぱい。画面の左右のふちが水平ならまっすぐ）
  *   - 右のボタン：いまできることを 1 つだけ、大きいボタンで出す（名前もそのときの動き：乗る・降りる・拾う・投げる・
  *     打つ・振る・座る・もぐる…）。2 つ同時に要るとき（潜っているときの上へ・下へ、ブーメランの右へ投げる、
  *     ラケットを置く・サイドブレーキ）だけ、小さいボタンを足す。降りる・視点・ジャイロ・AT/MT は上（左上の「？ 説明」の右）に小さく。
@@ -152,17 +152,24 @@ export function createTouchControls({ isXR = () => false, actions = () => ({}) }
     }
     return true;
   }
-  // 右下：いまできること（大きいボタン、ときどき小さいボタン）
+  // 右下：いまできること（大きいボタン、ときどき小さいボタン）。2 段：下の段（row 省略）と上の段（row: 'top'）。
+  // 乗り物では、下の段にアクセル（右）・ブレーキ、上の段にサイドブレーキ・シフト
   const pad = document.createElement('div');
   pad.className = 'touch-buttons';
   root.appendChild(pad);
-  const mainEls = Array.from({ length: 4 }, () => makeButton(pad));
+  const padTop = document.createElement('div');
+  padTop.className = 'touch-row';
+  const padBottom = document.createElement('div');
+  padBottom.className = 'touch-row';
+  pad.append(padTop, padBottom);
+  const topEls = Array.from({ length: 3 }, () => makeButton(padTop));
+  const bottomEls = Array.from({ length: 3 }, () => makeButton(padBottom));
   // 上（「？ 説明」の右）：降りる・視点・ジャイロ・AT/MT
   const bar = document.createElement('div');
   bar.className = 'touch-chips';
   root.appendChild(bar);
   const chipEls = Array.from({ length: 4 }, () => makeButton(bar, 'chip'));
-  // 左下：運転中の十字ボタン（スティックと入れ替える）
+  // 左下：運転中の ◀ ▶（ハンドル）（スティックと入れ替える）
   const cross = document.createElement('div');
   cross.className = 'touch-dpad';
   cross.style.display = 'none';
@@ -177,10 +184,13 @@ export function createTouchControls({ isXR = () => false, actions = () => ({}) }
     if (key === shownKey) return;
     shownKey = key;
     let ok = true;
-    mainEls.forEach((el, i) => { ok = fill(el, list.buttons?.[i]) && ok; });
+    const tops = (list.buttons ?? []).filter((b) => b.row === 'top');
+    const bottoms = (list.buttons ?? []).filter((b) => b.row !== 'top');
+    topEls.forEach((el, i) => { ok = fill(el, tops[i]) && ok; });
+    bottomEls.forEach((el, i) => { ok = fill(el, bottoms[i]) && ok; });
     chipEls.forEach((el, i) => { ok = fill(el, list.chips?.[i], 'chip') && ok; });
     const d = list.dpad;
-    // 十字ボタンのあいだは、スティックを隠して離す
+    // ◀ ▶ のあいだは、スティックを隠して離す
     const useDpad = Boolean(d);
     if (useDpad !== (cross.style.display !== 'none')) {
       applyStick(0, 0);
@@ -194,30 +204,37 @@ export function createTouchControls({ isXR = () => false, actions = () => ({}) }
   setActions({});
 
   // --- ジャイロのハンドル --------------------------------------------------------
-  // 画面を左右に傾けた角度（ハンドルのように）。横向きでは beta、縦向きでは gamma が画面の中の傾き
+  // 画面を左右に傾けた角度（ハンドルのように。右へ傾けると +）。重力の向きを画面の中（画面の右・上）で測る。
+  // 画面の左右のふちが水平なら 0 なので、スマホを奥へ倒していても手前に起こしていても、まっすぐは 0。
+  // 以前は deviceorientation の beta（横向きのとき）だけで測っていて、スマホを立てて持つと、まっすぐでも右へ曲がっていた
   let gyroOn = false;
   let tilt = null;
-  let tilt0 = 0;                    // 入れたときの傾き（まっすぐ）
-  let zeroNext = false;
-  function onOrient(e) {
-    if (e.beta == null || e.gamma == null) return;
-    const angle = screen.orientation?.angle ?? window.orientation ?? 0;
-    const t = angle === 90 ? e.beta : angle === -90 || angle === 270 ? -e.beta : angle === 180 ? -e.gamma : e.gamma;
-    if (zeroNext) { tilt0 = t; zeroNext = false; }
-    tilt = t - tilt0;
+  function onMotion(e) {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x == null || g.y == null) return;
+    // 端末の軸（縦向きの右 x・上 y）から、いまの画面の軸へ回す
+    const a = ((screen.orientation?.angle ?? window.orientation ?? 0) * Math.PI) / 180;
+    let sx = g.x * Math.cos(a) + g.y * Math.sin(a);
+    let sy = -g.x * Math.sin(a) + g.y * Math.cos(a);
+    // 上向き（重力の反対）が画面の上を向くようにそろえる（端末によって符号が逆）
+    if (sy < 0) { sx = -sx; sy = -sy; }
+    if (Math.hypot(sx, sy) < 1.5) return;      // ほぼ水平に寝かせているときは、読まない
+    const t = (-Math.atan2(sx, sy) * 180) / Math.PI;
+    // 手のふるえを除く（なめらかに）
+    tilt = tilt === null ? t : tilt + (t - tilt) * 0.35;
   }
   async function toggleGyro() {
-    if (gyroOn) { gyroOn = false; tilt = null; window.removeEventListener('deviceorientation', onOrient); shownKey = null; return; }
+    if (gyroOn) { gyroOn = false; tilt = null; window.removeEventListener('devicemotion', onMotion); shownKey = null; return; }
     // iOS は、タップの中で許可を求める
     try {
-      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        const r = await DeviceOrientationEvent.requestPermission();
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        const r = await DeviceMotionEvent.requestPermission();
         if (r !== 'granted') return;
       }
     } catch { return; }
     gyroOn = true;
-    zeroNext = true;
-    window.addEventListener('deviceorientation', onOrient);
+    tilt = null;
+    window.addEventListener('devicemotion', onMotion);
     shownKey = null;
   }
 
@@ -256,6 +273,8 @@ export function createTouchControls({ isXR = () => false, actions = () => ({}) }
     get gyro() { return gyroOn; },
     /** 検証用：傾きを入れる（度。+ で右へ傾ける） */
     debugTilt(deg) { gyroOn = true; tilt = deg; },
+    /** 検証用：重力の値（端末の軸）を入れて、傾きを計る */
+    debugMotion(x, y, z = 0) { gyroOn = true; tilt = null; onMotion({ accelerationIncludingGravity: { x, y, z } }); return tilt; },
     /** 検証用：いま出ているボタン */
     get shown() { return allButtons.filter((el) => el.style.display !== 'none').map((el) => el.textContent); },
     releaseAll,

@@ -535,11 +535,11 @@ const talkEye = new THREE.Vector3();
     desktop.controls.update();
   }
   /**
-   * 操作はスマホも PC も同じ形にそろえる：十字ボタン（PC は W A S D）と、右のボタン（PC はスペース）1 つ。
+   * 操作はスマホも PC も同じ形にそろえる：歩く・運転（PC は W A S D。スマホはスティックと、運転中は右下のアクセル・ブレーキ・左下の ◀ ▶）と、右のボタン（PC はスペース）1 つ。
    *   - 歩いているとき：スペース（右の大きいボタン）が「いまできること」になる（打つ・投げる・拾う・乗る・座る…）。
    *     contextAction() がそれを決め、スペースを押すと、その動きのキー（F / E など）に置き換えて送る
-   *   - 乗り物：▲ ▼（W / S）でアクセル・ブレーキ、◀ ▶（A / D）でハンドル。スペースはサイドブレーキ（潜っているときは上へ）
-   * スマホのボタンは touchActions() が決める（{ buttons: 右下, chips: 上の小さいボタン, dpad: 十字ボタン（運転中） }）
+   *   - 乗り物：W / S（スマホは右下のアクセル・ブレーキ）、A / D（スマホは左下の ◀ ▶）でハンドル。スペースはサイドブレーキ（潜っているときは上へ）
+   * スマホのボタンは touchActions() が決める（{ buttons: 右下, chips: 上の小さいボタン, dpad: 左下の ◀ ▶（運転中） }）
    */
   const btn = (code, key, label, size = 'big', hint) => ({ code, key, label, size, ...(hint ? { hint } : {}) });
   const SIT = new Set(['seat', 'ferris', 'carousel', 'coaster']);
@@ -572,24 +572,26 @@ const talkEye = new THREE.Vector3();
       const kind = v?.kind ?? 'kart';
       const view = btn('KeyC', 'c', '視点');
       const gyro = { code: 'gyro', label: touch.gyro ? 'ジャイロ ON' : 'ジャイロ', on: touch.gyro };
+      const top = (b) => ({ ...b, row: 'top' });
+      const steer = { left: LEFT, right: RIGHT };
+      // 右下の下の段は、右から「前へ」（アクセル）・「後ろへ」（ブレーキ）。上の段にサイドブレーキ・シフト
+      const pedals = (fwd, back) => [btn('KeyW', 'w', fwd), ...(back ? [btn('KeyS', 's', back)] : [])];
       if (kind === 'diver') {
-        return { buttons: [btn('Space', ' ', '上へ'), btn('KeyG', 'g', '下へ', 'small')], chips: [btn('KeyE', 'e', '浜へ'), view],
-          dpad: { up: btn('KeyW', 'w', '進む'), down: btn('KeyS', 's', '下がる'), left: LEFT, right: RIGHT } };
+        return { buttons: [...pedals('進む', '下がる'), top(btn('Space', ' ', '上へ', 'small')), top(btn('KeyG', 'g', '下へ', 'small'))], chips: [btn('KeyE', 'e', '浜へ'), view], dpad: steer };
       }
       if (kind === 'seat') return { buttons: [btn('KeyE', 'e', '立つ')] };
       if (SIT.has(kind)) return { buttons: [btn('KeyE', 'e', '降りる')], chips: [view] };
       const out = btn('KeyE', 'e', '降りる');
-      if (kind === 'seesaw') return { chips: [out], dpad: { up: btn('KeyW', 'w', 'ける') } };
-      if (kind === 'buranko') return { chips: [out], dpad: { up: btn('KeyW', 'w', 'こぐ'), down: btn('KeyS', 's', '止める') } };
-      if (kind === 'fishing') return { chips: [out], dpad: { up: btn('KeyW', 'w', '投げる・巻く') } };
-      const dpad = { up: btn('KeyW', 'w', 'アクセル'), down: btn('KeyS', 's', 'ブレーキ'), left: LEFT, right: RIGHT };
-      if (kind === 'horse') return { chips: [out, view, gyro], dpad: { ...dpad, up: btn('KeyW', 'w', '進む'), down: btn('KeyS', 's', '止まる') } };
+      if (kind === 'seesaw') return { buttons: pedals('ける'), chips: [out] };
+      if (kind === 'buranko') return { buttons: pedals('こぐ', '止める'), chips: [out] };
+      if (kind === 'fishing') return { buttons: pedals('投げる・巻く'), chips: [out] };
+      if (kind === 'horse') return { buttons: pedals('進む', '止まる'), chips: [out, view, gyro], dpad: steer };
+      const buttons = pedals('アクセル', 'ブレーキ');
       const chips = [out, view, gyro];
-      const buttons = [];
-      if (kind === 'kart' || kind === 'gt3' || kind === 'bike') buttons.push(btn('Space', ' ', 'サイド', 'big', 'ブレーキ'));
-      // GT3・F40：シフトは右の小さいボタン（PC は X / Z）、上に AT / MT
-      if (kind === 'gt3') { buttons.push(btn('KeyX', 'x', 'シフト▲', 'small'), btn('KeyZ', 'z', 'シフト▼', 'small')); chips.push(btn('KeyQ', 'q', 'AT/MT')); }
-      return { buttons, chips, dpad };
+      if (kind === 'kart' || kind === 'gt3' || kind === 'bike') buttons.push(top(btn('Space', ' ', 'サイド', 'small')));
+      // GT3・F40：シフトは右の上の段（PC は ＞ ＜）、上に AT / MT
+      if (kind === 'gt3') { buttons.push(top(btn('KeyX', 'x', 'シフト▲', 'small')), top(btn('KeyZ', 'z', 'シフト▼', 'small'))); chips.push(btn('KeyQ', 'q', 'AT/MT')); }
+      return { buttons, chips, dpad: steer };
     }
     // 歩いているとき：右の大きいボタンはスペース（いまできることの名前で）。2 つ目が要るときだけ小さく
     const a = contextAction();

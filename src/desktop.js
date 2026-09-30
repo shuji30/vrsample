@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createDesktopSwing } from './swing.js';
 import { createGamepadInput } from './gamepad.js';
+import { ROOM, ANNEX } from './room.js';
 
 /** PC で歩く速さ（m/s）。VR のスティック移動と同じにして感覚を揃える */
 const WALK_SPEED = 2.2;
@@ -364,6 +365,56 @@ export function createDesktopControls(renderer, camera, world) {
     controls.target.copy(camera.position).add(orbit);
   }
 
+  /**
+   * 見回し・ズームで、部屋の壁や天井を突き抜けないように。ドラッグやホイールは注視点のまわりを回る・遠ざかるので、
+   * ビリヤードの部屋（手球が注視点）でホイールを回すと 6.5m まで離れて、壁の外から部屋を見ることになった。
+   * 動かす前にいた部屋（本の部屋・ビリヤードの部屋）から出たら、注視点へ向かって縮めて部屋の中へ戻す。
+   * 縮める（x・z をそれぞれ寄せない）のは、ビリヤードの狙いがカメラ→手球の向きなので、向きを変えないため。
+   * 歩いて出入り口を抜けるのは walk の中なので、ここでは止めない（呼ぶのは見回しの前後だけ）。
+   * OrbitControls はホイール・ドラッグのイベントの中で直接 update() を呼ぶので、毎フレームの確かめでは間に合わない
+   * （前のフレームの終わりから、もう壁の外にいる）。そこで controls.update そのものを包む
+   */
+  const ROOMS = [
+    { minX: ROOM.minX, maxX: ROOM.maxX, minZ: ROOM.minZ, maxZ: ROOM.maxZ, maxY: ROOM.height },
+    { minX: ANNEX.minX, maxX: ANNEX.maxX, minZ: ANNEX.minZ, maxZ: ANNEX.maxZ, maxY: ANNEX.height },
+  ];
+  const WALL_GAP = 0.18;
+  const roomOf = (v, m = 0) => ROOMS.find((r) => v.x > r.minX + m && v.x < r.maxX - m && v.z > r.minZ + m && v.z < r.maxZ - m && v.y < r.maxY - m) ?? null;
+  const viewFrom = new THREE.Vector3();
+  function keepInRoom(from) {
+    if (camera.position.distanceToSquared(from) < 1e-12) return;
+    const box = roomOf(from);
+    if (!box || roomOf(camera.position, WALL_GAP) === box) return;
+    const p = camera.position;
+    const t = controls.target;
+    const lo = { x: box.minX + WALL_GAP, z: box.minZ + WALL_GAP };
+    const hi = { x: box.maxX - WALL_GAP, z: box.maxZ - WALL_GAP, y: box.maxY - WALL_GAP };
+    if (roomOf(t, WALL_GAP) === box) {
+      // 注視点から、箱の面に当たる所まで
+      let k = 1;
+      for (const a of ['x', 'z', 'y']) {
+        const d = p[a] - t[a];
+        if (d > 0 && p[a] > hi[a]) k = Math.min(k, (hi[a] - t[a]) / d);
+        if (d < 0 && a !== 'y' && p[a] < lo[a]) k = Math.min(k, (lo[a] - t[a]) / d);
+      }
+      p.set(t.x + (p.x - t.x) * k, t.y + (p.y - t.y) * k, t.z + (p.z - t.z) * k);
+    } else {
+      // 注視点が部屋の外（出入り口や窓の向こうを見ている）：その場で箱の中へ寄せる
+      p.x = THREE.MathUtils.clamp(p.x, lo.x, hi.x);
+      p.z = THREE.MathUtils.clamp(p.z, lo.z, hi.z);
+      p.y = Math.min(p.y, hi.y);
+    }
+  }
+
+  const orbitUpdate = controls.update.bind(controls);
+  const orbitFrom = new THREE.Vector3();
+  controls.update = (...args) => {
+    orbitFrom.copy(camera.position);
+    const changed = orbitUpdate(...args);
+    keepInRoom(orbitFrom);
+    return changed;
+  };
+
   /** VR のコントローラーの Gamepad（ゲームパッドの写しを見分けるのに使う） */
   function xrGamepads() {
     const session = renderer.xr.getSession?.();
@@ -434,7 +485,9 @@ export function createDesktopControls(renderer, camera, world) {
       if (driving) return;
       stick.x = pad.move.x;
       stick.y = pad.move.y;
+      viewFrom.copy(camera.position);
       lookAround(pad.look.x, pad.look.y, seconds);
+      keepInRoom(viewFrom);
       // ハンコン：ハンドルで向きを変える（左へ切ると左を向く）。後ろは前の 0.7 倍の速さ
       const wheel = wheelSource?.();
       wheelAhead = wheel ? wheel.throttle - wheel.brake * 0.7 : 0;

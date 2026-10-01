@@ -556,6 +556,9 @@ const talkEye = new THREE.Vector3();
     if (held === 'boomerang') return btn('KeyF', 'f', '投げる', 'big', '長押しで遠く');
     if (desktop.swing?.holding) return btn('Space', ' ', held === 'tennis' ? 'サーブ' : '振る');
     if (held) return btn('KeyF', 'f', '投げる');
+    // ビリヤード・パットゴルフの最中（相手の番・球が転がっているあいだ）は、ほかの候補（近くの椅子の「座る」など）を出さない。
+    // 出すと、次に突こうとしてスペースを押したときに座ってしまう
+    if (b?.state === 'play' || g?.state === 'play') return null;
     const beach = world.beachCanUse?.(camera);
     if (beach) return btn('KeyF', 'f', beach === 'ball' ? '打つ' : '拾う');
     if (desktop.canPick()) return btn('KeyF', 'f', '拾う');

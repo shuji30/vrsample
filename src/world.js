@@ -834,10 +834,18 @@ export function createWorld(renderer, scene, {
     const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || ferrisBlocks(x, z, inset) || gt3Blocks(x, z) || road.garageBlocks(x, z, inset) || f40Blocks(x, z)
       || annexBlocks(x, z, inset) || tableBlocks(x, z, inset);
     if (solid(p.x, p.z)) {
-      if (!from || solid(from.x, from.z)) return p;
-      if (!solid(p.x, from.z)) return { x: p.x, z: from.z };
-      if (!solid(from.x, p.z)) return { x: from.x, z: p.z };
-      return { x: from.x, z: from.z };
+      if (!from) return p;
+      // 直前の点がもう壁（の余白）の中なら、いちばん近い空いている点（ふつうは入ってきた側）を直前の点とみなす。
+      // 前は「中にいるなら、どこへでも動いてよい」としていたので、ズームや立ち上がりで壁の余白に入ると、
+      // そのまま歩いて壁の向こうへ抜けられた（外からは余白に入らないので入れない）
+      let f = from;
+      if (solid(from.x, from.z)) {
+        f = nearestFree(from.x, from.z, solid, inset);
+        if (!f) return p;
+      }
+      if (!solid(p.x, f.z)) return { x: p.x, z: f.z };
+      if (!solid(f.x, p.z)) return { x: f.x, z: p.z };
+      return { x: f.x, z: f.z };
     }
     const m = inset + 0.2;
     if (!inPond(p.x, p.z, m)) return p;
@@ -847,6 +855,20 @@ export function createWorld(renderer, scene, {
       return { x: from.x, z: from.z };
     }
     return outOfPond(p.x, p.z, m);
+  }
+  /** (x, z) のまわりで、壁などに当たらず歩ける範囲の中の、いちばん近い点（1m 以内。無ければ null） */
+  function nearestFree(x, z, solid, inset) {
+    for (let r = 0.04; r <= 1.0; r += 0.04) {
+      for (let k = 0; k < 24; k++) {
+        const a = (k / 24) * Math.PI * 2;
+        const fx = x + Math.cos(a) * r;
+        const fz = z + Math.sin(a) * r;
+        if (solid(fx, fz)) continue;
+        const q = clampToRegions(fx, fz, inset);
+        if (q.x === fx && q.z === fz) return q;
+      }
+    }
+    return null;
   }
   function clampToRegions(x, z, inset = 0, from = null) {
     let best = null;

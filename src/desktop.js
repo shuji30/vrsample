@@ -42,8 +42,12 @@ export function createDesktopControls(renderer, camera, world) {
   controls.dampingFactor = 0.08;
   controls.minDistance = 0.8;
   controls.maxDistance = 6.5;   // 見回すぶんにはこれで足りる。遠出は歩いて行く
-  controls.minPolarAngle = Math.PI * 0.12;
-  controls.maxPolarAngle = Math.PI * 0.495; // 床より下に潜らない
+  // 見上げ・見下ろしの限り。ふだんは目の位置のまま向きを変える（lookFromEye）ので、注視点より下から見上げるのも
+  // 許す。ビリヤード・パットゴルフで球のまわりを回って狙う（setOrbitAim）ときは、床より下に潜らないように水平まで
+  const LOOK_POLAR = { min: Math.PI * 0.12, max: Math.PI * 0.8 };
+  const ORBIT_POLAR = { min: Math.PI * 0.12, max: Math.PI * 0.495 };
+  controls.minPolarAngle = LOOK_POLAR.min;
+  controls.maxPolarAngle = LOOK_POLAR.max;
   controls.update();
 
   const raycaster = new THREE.Raycaster();
@@ -378,7 +382,7 @@ export function createDesktopControls(renderer, camera, world) {
     { minX: ROOM.minX, maxX: ROOM.maxX, minZ: ROOM.minZ, maxZ: ROOM.maxZ, maxY: ROOM.height },
     { minX: ANNEX.minX, maxX: ANNEX.maxX, minZ: ANNEX.minZ, maxZ: ANNEX.maxZ, maxY: ANNEX.height },
   ];
-  const WALL_GAP = 0.18;
+  const WALL_GAP = 0.3;   // 歩くときの壁の余白（体の半径 0.25＋0.05）と同じ。ズームで余白の中へ入らない
   const roomOf = (v, m = 0) => ROOMS.find((r) => v.x > r.minX + m && v.x < r.maxX - m && v.z > r.minZ + m && v.z < r.maxZ - m && v.y < r.maxY - m) ?? null;
   const viewFrom = new THREE.Vector3();
   function keepInRoom(from) {
@@ -406,11 +410,45 @@ export function createDesktopControls(renderer, camera, world) {
     }
   }
 
+  /**
+   * 見回しは、目の位置のまま向きだけ変える。OrbitControls は注視点（3m 先）のまわりをカメラが回るので、
+   * 下を見ようとドラッグすると目が注視点の上へ回り込んで 1.62m → 2.4m まで上がり、見上げると下がった。
+   * 歩いても高さはそのままなので「歩いていると目線が上がる」と感じる。回ったあとの向きはそのままに、
+   * 目を元の位置へ戻して、注視点を目のまわりへ置き直す。ズーム（距離が変わる）は、目の高さだけ元へ戻す。
+   * ビリヤード・パットゴルフで狙うあいだ（orbitAim）は、今までどおり球のまわりを回る
+   */
+  let orbitAim = false;
+  let standUp = false;
+  /** 目の高さを、立ったとき（地面から 1.62m）へ少しずつ戻す（向きは変えない） */
+  function easeStandUp(dt) {
+    if (!standUp) return;
+    const want = (world.groundHeight?.(camera.position.x, camera.position.z) ?? 0) + 1.62;
+    const d = want - camera.position.y;
+    const stepY = Math.sign(d) * Math.min(Math.abs(d), 1.2 * dt);
+    camera.position.y += stepY;
+    controls.target.y += stepY;
+    if (Math.abs(d) < 1e-3) standUp = false;
+  }
+  const lookDir = new THREE.Vector3();
+  function lookFromEye(from, distBefore) {
+    if (orbitAim) return;
+    const p = camera.position;
+    const t = controls.target;
+    if (p.distanceToSquared(from) < 1e-12) return;
+    const dist = p.distanceTo(t);
+    if (Math.abs(dist - distBefore) > 1e-5) { p.y = from.y; return; }
+    lookDir.subVectors(t, p).normalize();
+    p.copy(from);
+    t.copy(p).addScaledVector(lookDir, dist);
+  }
+
   const orbitUpdate = controls.update.bind(controls);
   const orbitFrom = new THREE.Vector3();
   controls.update = (...args) => {
     orbitFrom.copy(camera.position);
+    const distBefore = orbitFrom.distanceTo(controls.target);
     const changed = orbitUpdate(...args);
+    lookFromEye(orbitFrom, distBefore);
     keepInRoom(orbitFrom);
     return changed;
   };
@@ -429,8 +467,20 @@ export function createDesktopControls(renderer, camera, world) {
   return {
     controls,
     swing,
+    /** 球のまわりを回って狙う（ビリヤード・パットゴルフの自分の番）。false で、目の位置のまま見回すのに戻す */
+    setOrbitAim(value) {
+      // 狙い終わったら、かがんだ目の高さから立った高さへ、なめらかに戻す（update の中で）
+      if (orbitAim && !value) standUp = true;
+      if (value) standUp = false;
+      orbitAim = Boolean(value);
+      const lim = orbitAim ? ORBIT_POLAR : LOOK_POLAR;
+      controls.minPolarAngle = lim.min;
+      controls.maxPolarAngle = lim.max;
+    },
+    get orbitAim() { return orbitAim; },
     setDriving(value) {
       driving = Boolean(value);
+      if (driving) standUp = false;
       controls.enabled = !driving;
     },
     /** 持っている物の種類（スマホのボタンを出し分ける）：'boomerang' / 'tennis' / 'ball' / null。ラケットは swing.holding */
@@ -486,13 +536,16 @@ export function createDesktopControls(renderer, camera, world) {
       stick.x = pad.move.x;
       stick.y = pad.move.y;
       viewFrom.copy(camera.position);
+      const lookDist = viewFrom.distanceTo(controls.target);
       lookAround(pad.look.x, pad.look.y, seconds);
+      lookFromEye(viewFrom, lookDist);
       keepInRoom(viewFrom);
       // ハンコン：ハンドルで向きを変える（左へ切ると左を向く）。後ろは前の 0.7 倍の速さ
       const wheel = wheelSource?.();
       wheelAhead = wheel ? wheel.throttle - wheel.brake * 0.7 : 0;
       if (wheel?.steer) turnInPlace(wheel.steer * Math.abs(wheel.steer) ** 0.5 * 1.1 * seconds);
       walk(seconds);
+      easeStandUp(seconds);
       controls.update();
       // 目が地面より下へ行かないように（歩くときは地面の高さの差だけ上げ下げするので、一度ずれると戻らない。
       // 地面から 0.8m より下になったら、目の高さ 1.62m へ戻す。C でも戻せる：main.js の resetView）

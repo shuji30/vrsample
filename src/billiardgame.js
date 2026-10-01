@@ -733,8 +733,12 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
     drawBoard();
   }
 
+  let orbitOn = false;
   function update(dt) {
     if (!body.loaded) return;
+    // PC の自分の番は、視点が球のまわりを回る（desktop.js。ふだんは目の位置のまま見回す）
+    const wantOrbit = !isXR() && state === 'play' && turn === 'player' && phase === 'aim';
+    if (wantOrbit !== orbitOn && desktop?.setOrbitAim) { orbitOn = wantOrbit; desktop.setOrbitAim(wantOrbit); }
     awayFor = playerHere ? 0 : awayFor + dt;
     if (state !== 'off' && awayFor > 4) { finish(); return; }
     if (state === 'off') return;

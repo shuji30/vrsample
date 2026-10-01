@@ -113,6 +113,7 @@ export function createTennisGame({ character, balls, racket, playerRacket, camer
   const ready = readyPoints();
 
   let state = 'off';
+  let declined = false;
   let timer = 0;
   let path = [];
   let plan = null;            // { point, t, stand, yaw, height }
@@ -904,7 +905,20 @@ export function createTennisGame({ character, balls, racket, playerRacket, camer
     set onFinish(fn) { onFinish = fn; },
     get state() { return state; },
     get active() { return state !== 'off'; },
-    get wanted() { readPlayer(); return playerWantsTennis(); },
+    // やめた（Esc・スマホの「やめる」）あとは、ラケットを置くかコートを出るまで始め直さない
+    get wanted() {
+      readPlayer();
+      const w = playerWantsTennis();
+      if (!w) declined = false;
+      return w && !declined;
+    },
+    /** やめる（PC の Esc・スマホの「やめる」）。やめたら true */
+    quit() {
+      if (state === 'off') return false;
+      declined = true;
+      stop();
+      return true;
+    },
     get plan() { return plan; },
     get lastShot() { return lastShot; },
     /** 検証用：いま飛んでいる球をどう打つつもりか */

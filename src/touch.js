@@ -9,10 +9,11 @@
  *     画面を左右に傾ける。±30° でいっぱい。画面の左右のふちが水平ならまっすぐ）
  *   - 右のボタン：いまできることを 1 つだけ、大きいボタンで出す（名前もそのときの動き：乗る・降りる・拾う・投げる・
  *     打つ・振る・座る・もぐる…）。2 つ同時に要るとき（潜っているときの上へ・下へ、ブーメランの右へ投げる、
- *     ラケットを置く・サイドブレーキ）だけ、小さいボタンを足す。降りる・視点・ジャイロ・AT/MT は上（左上の「？ 説明」の右）に小さく。
+ *     ラケットを置く・サイドブレーキ）だけ、小さいボタンを足す。視点・ジャイロ・AT/MT は上（左上の「？ 説明」の右）に小さく。
+ *   - 左上（「？ 説明」の下）：やめる（乗り物を降りる・席を立つ・潜るのをやめる・ビリヤードなどをやめる。PC の Esc と同じ）
  *     何もできないときは出さない
  *     （以前は 5 つのボタンがいつも出ていて、「スペース」「置く / 右へ」など、何をするのか分かりにくかった）。
- *     出すボタンは main.js の actions() が決める（{ buttons, chips, dpad }。ボタンは { code, key, label, size, hint }。
+ *     出すボタンは main.js の actions() が決める（{ buttons, chips, dpad, quit }。ボタンは { code, key, label, size, hint }。
  *     code 'gyro' はキーではなく、ジャイロの入り切り）
  *   - 見回す：画面をドラッグ（1 本指）、ズームは 2 本指でつまむ（OrbitControls のまま）
  *   - 物にさわる・乗り物に乗る・座る：その物をタップ（今までのクリックと同じ）
@@ -169,6 +170,11 @@ export function createTouchControls({ isXR = () => false, actions = () => ({}) }
   bar.className = 'touch-chips';
   root.appendChild(bar);
   const chipEls = Array.from({ length: 4 }, () => makeButton(bar, 'chip'));
+  // 左上（「？ 説明」の下）：やめる（降りる・立つ・潜るのをやめる・ビリヤードなどをやめる。PC の Esc と同じ）
+  const quitBar = document.createElement('div');
+  quitBar.className = 'touch-quit';
+  root.appendChild(quitBar);
+  const quitEl = makeButton(quitBar, 'quit');
   // 左下：運転中の ◀ ▶（ハンドル）（スティックと入れ替える）
   const cross = document.createElement('div');
   cross.className = 'touch-dpad';
@@ -189,6 +195,7 @@ export function createTouchControls({ isXR = () => false, actions = () => ({}) }
     topEls.forEach((el, i) => { ok = fill(el, tops[i]) && ok; });
     bottomEls.forEach((el, i) => { ok = fill(el, bottoms[i]) && ok; });
     chipEls.forEach((el, i) => { ok = fill(el, list.chips?.[i], 'chip') && ok; });
+    ok = fill(quitEl, list.quit ?? null, 'quit') && ok;
     const d = list.dpad;
     // ◀ ▶ のあいだは、スティックを隠して離す
     const useDpad = Boolean(d);

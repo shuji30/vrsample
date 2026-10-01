@@ -54,6 +54,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
   let charge = 0;
   let charging = false;
   let pcTurnSet = false;
+  let declined = false;
   const driver = { get state() { return `golf:${state}:${phase}:${turn}`; } };
   const gaze = new THREE.Object3D();
   gaze.userData = { held: false, velocity: new THREE.Vector3() };
@@ -535,6 +536,8 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     golf.girlPutter.visible = false;
     golf.showAim(null);
     golf.showText(null);
+    // 球のまわりを回る見回しを戻す（終わると update が呼ばれなくなるので、ここで）
+    if (orbitOn) { orbitOn = false; desktop?.setOrbitAim?.(false); }
     state = 'off';
     path = [];
     onFinish?.();
@@ -544,8 +547,16 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     update,
     start,
     set onFinish(fn) { onFinish = fn; },
-    set playerHere(v) { playerHere = Boolean(v); },
-    get wanted() { return playerHere; },
+    // やめた（Esc・スマホの「やめる」）あとは、いったんその場を離れるまで始め直さない
+    set playerHere(v) { playerHere = Boolean(v); if (!playerHere) declined = false; },
+    get wanted() { return playerHere && !declined; },
+    /** やめる（PC の Esc・スマホの「やめる」）。やめたら true */
+    quit() {
+      if (state === 'off') return false;
+      declined = true;
+      finish();
+      return true;
+    },
     get active() { return state !== 'off'; },
     get state() { return state; },
     get turn() { return turn; },

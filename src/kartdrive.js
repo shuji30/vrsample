@@ -6,6 +6,7 @@ import { BIKE_TRACK } from './biketrack.js';
 import { createWheelInput } from './wheel.js';
 import { createWheelFFB } from './wheelffb.js';
 import { createEngineSound, createSignalSound } from './audio.js';
+import { ROOM, ANNEX } from './room.js';
 
 /**
  * プレイヤーがカート（またはポケバイ）に乗って運転する。乗り物は近いほうに乗る。
@@ -64,13 +65,22 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   // --- 乗る / 降りる ---------------------------------------------------------
 
   /** 近く（2.2m 以内）にある乗り物。無ければ null */
+  /** 家のどの部屋か（1 本の部屋、2 ビリヤードの部屋、0 家の外。壁や出入り口の中も 0） */
+  const roomOf = (p) => {
+    if (p.x > ROOM.minX && p.x < ROOM.maxX && p.z > ROOM.minZ && p.z < ROOM.maxZ) return 1;
+    if (p.x > ANNEX.minX && p.x < ANNEX.maxX && p.z > ANNEX.minZ && p.z < ANNEX.maxZ) return 2;
+    return 0;
+  };
   function nearestVehicle() {
     camera.getWorldPosition(tmp);
+    const here = roomOf(tmp);
     let best = null;
     let bestD = 2.2;
     for (const v of vehicles) {
       // 乗り口が目の位置と離れている乗り物（桟橋の横のクルーザー）は、乗り口の近さで見る
       if (v.enterPoint) v.enterPoint(tmp, tmp2); else v.eye(tmp2);
+      // 壁の向こうの席は選ばない（ビリヤードの部屋の西の端から、本の部屋の東の壁ぎわのソファーに「座る」が出ていた）
+      if (roomOf(tmp2) !== here) continue;
       const d = Math.hypot(tmp.x - tmp2.x, tmp.z - tmp2.z);
       if (d < bestD) { bestD = d; best = v; }
     }

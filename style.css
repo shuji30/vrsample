@@ -283,6 +283,24 @@ body.xr-presenting #perf { opacity: 0; }
 
 .touch-btn.chip.on { background: rgba(60, 170, 110, 0.7); }
 
+/* 左上の「やめる」（「？ 説明」の下）。降りる・立つ・ビリヤードなどをやめる（PC の Esc） */
+.touch-quit {
+  position: absolute;
+  top: calc(max(14px, env(safe-area-inset-top)) + 46px);
+  left: max(16px, env(safe-area-inset-left));
+  pointer-events: none;
+}
+
+.touch-btn.quit {
+  border-radius: 20px;
+  height: 40px;
+  padding: 0 18px;
+  font-size: 14px;
+  flex-direction: row;
+  background: rgba(170, 50, 60, 0.72);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
 /* 運転中の左下のボタン（◀ ▶ ハンドル。スティックと入れ替える） */
 .touch-dpad {
   position: absolute;

@@ -77,6 +77,7 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
   let charge = 0;
   let charging = false;
   let pcTurnSet = false;
+  let declined = false;
   let rollingFor = 0;
   let approached = false;
   let shooter = 'player';
@@ -185,6 +186,8 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
     aimLine.visible = false;
     ghost.visible = false;
     if (hud) hud.style.display = 'none';
+    // 球のまわりを回る見回しを戻す（終わると update が呼ばれなくなるので、ここで）
+    if (orbitOn) { orbitOn = false; desktop?.setOrbitAim?.(false); }
     state = 'off';
     path = [];
     onFinish?.();
@@ -800,8 +803,16 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
     update,
     start,
     set onFinish(fn) { onFinish = fn; },
-    set playerHere(v) { playerHere = Boolean(v); },
-    get wanted() { return playerHere; },
+    // やめた（Esc・スマホの「やめる」）あとは、いったんその場を離れるまで始め直さない
+    set playerHere(v) { playerHere = Boolean(v); if (!playerHere) declined = false; },
+    get wanted() { return playerHere && !declined; },
+    /** やめる（PC の Esc・スマホの「やめる」）。やめたら true */
+    quit() {
+      if (state === 'off') return false;
+      declined = true;
+      finish();
+      return true;
+    },
     get active() { return state !== 'off'; },
     get state() { return state; },
     get turn() { return turn; },

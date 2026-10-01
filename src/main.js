@@ -569,7 +569,28 @@ const talkEye = new THREE.Vector3();
     }
     return null;
   }
+  /**
+   * やめる（PC の Esc・スマホの左上の「やめる」）。乗り物を降りる・席を立つ・潜るのをやめる、
+   * ビリヤード・パットゴルフ・テニスをやめる。やめられるものが無ければ null
+   */
+  function quitAction() {
+    if (kartDrive.driving) return () => kartDrive.exit();
+    const game = [world.billiardGame, world.golfGame, world.tennisGame].find((g) => g?.active && g.quit);
+    return game ? () => game.quit() : null;
+  }
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Escape' || e.repeat || renderer.xr.isPresenting || e.target?.tagName === 'INPUT') return;
+    const quit = quitAction();
+    if (!quit) return;
+    e.preventDefault();
+    quit();
+  });
+  const QUIT = btn('Escape', 'Escape', 'やめる');
   function touchActions() {
+    const a = touchActionsFor();
+    return quitAction() ? { ...a, quit: QUIT } : a;
+  }
+  function touchActionsFor() {
     if (kartDrive.driving) {
       const v = kartDrive.vehicle;
       const kind = v?.kind ?? 'kart';
@@ -580,17 +601,17 @@ const talkEye = new THREE.Vector3();
       // 右下の下の段は、右から「前へ」（アクセル）・「後ろへ」（ブレーキ）。上の段にサイドブレーキ・シフト
       const pedals = (fwd, back) => [btn('KeyW', 'w', fwd), ...(back ? [btn('KeyS', 's', back)] : [])];
       if (kind === 'diver') {
-        return { buttons: [...pedals('進む', '下がる'), top(btn('Space', ' ', '上へ', 'small')), top(btn('KeyG', 'g', '下へ', 'small'))], chips: [btn('KeyE', 'e', '浜へ'), view], dpad: steer };
+        return { buttons: [...pedals('進む', '下がる'), top(btn('Space', ' ', '上へ', 'small')), top(btn('KeyG', 'g', '下へ', 'small'))], chips: [view], dpad: steer };
       }
-      if (kind === 'seat') return { buttons: [btn('KeyE', 'e', '立つ')] };
-      if (SIT.has(kind)) return { buttons: [btn('KeyE', 'e', '降りる')], chips: [view] };
-      const out = btn('KeyE', 'e', '降りる');
-      if (kind === 'seesaw') return { buttons: pedals('ける'), chips: [out] };
-      if (kind === 'buranko') return { buttons: pedals('こぐ', '止める'), chips: [out] };
-      if (kind === 'fishing') return { buttons: pedals('投げる・巻く'), chips: [out] };
-      if (kind === 'horse') return { buttons: pedals('進む', '止まる'), chips: [out, view, gyro], dpad: steer };
+      // 降りる・立つは、左上の「やめる」（PC は Esc。E でも降りられる）
+      if (kind === 'seat') return {};
+      if (SIT.has(kind)) return { chips: [view] };
+      if (kind === 'seesaw') return { buttons: pedals('ける') };
+      if (kind === 'buranko') return { buttons: pedals('こぐ', '止める') };
+      if (kind === 'fishing') return { buttons: pedals('投げる・巻く') };
+      if (kind === 'horse') return { buttons: pedals('進む', '止まる'), chips: [view, gyro], dpad: steer };
       const buttons = pedals('アクセル', 'ブレーキ');
-      const chips = [out, view, gyro];
+      const chips = [view, gyro];
       if (kind === 'kart' || kind === 'gt3' || kind === 'bike') buttons.push(top(btn('Space', ' ', 'サイド', 'small')));
       // GT3・F40：シフトは右の上の段（PC は ＞ ＜）、上に AT / MT
       if (kind === 'gt3') { buttons.push(top(btn('KeyX', 'x', 'シフト▲', 'small')), top(btn('KeyZ', 'z', 'シフト▼', 'small'))); chips.push(btn('KeyQ', 'q', 'AT/MT')); }
@@ -639,12 +660,14 @@ const talkEye = new THREE.Vector3();
     if (!touchMode && !renderer.xr.isPresenting) {
       if (kartDrive.driving) {
         const k = kartDrive.vehicle?.kind;
-        text = k === 'diver' ? 'W 進む・A D 向き・スペース 上へ・Shift 下へ・E 浜へ'
-          : SIT.has(k) ? 'E 降りる' : k === 'gt3' ? 'W / ↑ アクセル・S / ↓ ブレーキ・A D / ← → ハンドル・＞ ＜ シフト・スペース サイド・E 降りる'
-          : 'W / ↑ アクセル・S / ↓ ブレーキ・A D / ← → ハンドル・スペース サイド・E 降りる';
+        text = k === 'diver' ? 'W 進む・A D 向き・スペース 上へ・Shift 下へ・Esc やめる（浜へ）'
+          : k === 'seat' ? 'Esc 立つ' : SIT.has(k) ? 'Esc 降りる' : k === 'gt3' ? 'W / ↑ アクセル・S / ↓ ブレーキ・A D / ← → ハンドル・＞ ＜ シフト・スペース サイド・Esc 降りる'
+          : 'W / ↑ アクセル・S / ↓ ブレーキ・A D / ← → ハンドル・スペース サイド・Esc 降りる';
       } else {
         const a = contextAction();
-        if (a) text = `スペース　${a.label}${a.hint ? `（${a.hint}）` : ''}`;
+        const quit = quitAction() ? 'Esc やめる' : '';
+        if (a) text = `スペース　${a.label}${a.hint ? `（${a.hint}）` : ''}${quit ? `・${quit}` : ''}`;
+        else text = quit;
       }
     }
     if (text !== hintText) { hintText = text; actionHint.textContent = text; actionHint.style.display = text ? 'block' : 'none'; }

@@ -799,8 +799,17 @@ export function createWorld(renderer, scene, {
     { minX: 5.5, maxX: 22.0, minZ: -5.6, maxZ: 4.5 },
     // 観覧車の南のパットゴルフの芝地（観覧車のまわりの範囲と 0.5m 重ねる）
     { minX: -37.5, maxX: -15.5, minZ: 11.5, maxZ: 34.5 },
-    // 家の南の芝生と、ジェットコースターの駅のホーム（線路の手前まで）。家の右の芝生と 0.5m 重ねる
-    { minX: -3.5, maxX: 18.0, minZ: 4.0, maxZ: COASTER.station.z - 0.75 },
+    // 家の南の芝生と、ジェットコースターの駅のホーム（線路の手前まで）。家の右の芝生と 0.5m 重ねる。
+    // 北は本の部屋の南の外壁の外面まで（前は 4.0 からで、壁の 0.5m 手前に見えない壁があった）
+    { minX: -3.5, maxX: 18.0, minZ: ROOM.maxZ + ROOM.wall, maxZ: COASTER.station.z - 0.75 },
+    // 家のまわりの芝生の抜け（前は歩けず、「壁がないのに進めない」所になっていた）。家の外壁の外面まで。
+    // 西：本の部屋の西の外壁と、メリーゴーランドの芝生（x -5.5 まで）のあいだ
+    { minX: -6.0, maxX: ROOM.minX - ROOM.wall, minZ: ROOM.minZ - ROOM.wall - 0.5, maxZ: 5.0 },
+    // 南西：メリーゴーランドの芝生の南、観覧車のまわりの東、家の南の芝生の西（ジェットコースターの線路（z 10.5〜）の 1m 手前まで）
+    { minX: -16.5, maxX: -3.0, minZ: 4.5, maxZ: 9.5 },
+    // ビリヤードの部屋の南の外壁の前（本の部屋より 0.3m 北へ引っ込んでいる）と、北の外壁の前（庭とのあいだ）
+    { minX: ROOM.maxX + ROOM.wall, maxX: 6.0, minZ: ANNEX.maxZ + ANNEX.wall, maxZ: 4.5 },
+    { minX: ROOM.maxX + ROOM.wall, maxX: 6.0, minZ: outerZ - 0.5, maxZ: ANNEX.minZ - ANNEX.wall },
   ];
 
   function courtRegion() {

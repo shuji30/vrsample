@@ -78,6 +78,9 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
   let charging = false;
   let pcTurnSet = false;
   let declined = false;
+  // フリーボール（相手のファウルのあと、手球を台の好きな所へ置ける）。突く前の、いちばん小さい番号
+  let ballInHand = false;
+  let lowAtShot = 1;
   let rollingFor = 0;
   let approached = false;
   let shooter = 'player';
@@ -156,9 +159,10 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
   }
   function showHud(extra = '') {
     if (!hud) return;
-    const whose = phase === 'over' ? message : phase === 'rolling' ? '球が転がっています' : turn === 'player' ? (breakShot ? 'あなたのブレイク' : 'あなたの番') : `${girlName()}の番`;
+    const whose = phase === 'over' ? message : phase === 'rolling' ? '球が転がっています' : phase === 'place' ? 'あなたのフリーボール' : turn === 'player' ? (breakShot ? 'あなたのブレイク' : 'あなたの番') : `${girlName()}の番`;
     hud.innerHTML = `ビリヤード（ナインボール）　${escapeHtml(whose)}　<span style="opacity:.8">あなた ${wins.player} - ${wins.girl} ${escapeHtml(girlName())}</span>`
-      + `<br><span style="font-weight:400;font-size:12px">のこり：${remaining().join(' ')}　${isXR() ? '' : 'ドラッグで狙う・スペース長押しで力をためて離す'}</span>${extra}`;
+      + (message && phase !== 'over' ? `<br><span style="color:#ffb0a0">${escapeHtml(message)}</span>` : '')
+      + `<br><span style="font-weight:400;font-size:12px">のこり：${remaining().join(' ')}　${isXR() || phase === 'place' ? '' : 'ドラッグで狙う・スペース長押しで力をためて離す'}</span>${extra}`;
     hud.style.display = '';
   }
 
@@ -167,6 +171,7 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
     if (state !== 'off') return;
     state = 'waitStand';
     B.rack();
+    ballInHand = false;
     turn = breaker = 'player';
     breakShot = true;
     phase = 'aim';
@@ -378,7 +383,8 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
       const d = Math.hypot(dx, dz);
       return withError({ dirX: dx / d, dirZ: dz / d, speed: 6.0, target: low }, 0.3);
     }
-    for (const b of B.balls) {
+    // 狙えるのは、台の上でいちばん小さい番号の球だけ（ナインボール。ほかの球に先に当てるとファウル）
+    for (const b of [B.balls[low]]) {
       if (b.pocketed || b.n === 0) continue;
       for (const p of POCKETS) {
         // ポケットの口の少し奥を狙う
@@ -402,7 +408,7 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
         // 真ん中のポケットへ浅い角度で入れるのは難しい
         if (!p.corner && Math.abs(bz) < 0.45) continue;
         const stand = standFor(cx, cz);
-        const score = cut * 1.2 + cd * 0.35 + bd * 0.45 + (stand.reach > 1.25 ? 1.2 : 0) + (b.n === 9 ? -0.35 : 0) + b.n * 0.01;
+        const score = cut * 1.2 + cd * 0.35 + bd * 0.45 + (stand.reach > 1.25 ? 1.2 : 0);
         if (score < bestScore) {
           bestScore = score;
           const travel = cd + bd / Math.max(0.35, Math.cos(cut));
@@ -416,7 +422,17 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
       const dx = b.x - cue.x;
       const dz = b.z - cue.z;
       const d = Math.hypot(dx, dz) || 1;
-      best = { dirX: dx / d, dirZ: dz / d, speed: 2.2, target: low };
+      // まっすぐの線に別の球があると、先にそれへ当たってファウルになる。少しずつ（±25° まで）向きを変えて、
+      // 最初に当たるのがその球になる向きを選ぶ（薄く当てる）
+      let ax = dx / d;
+      let az = dz / d;
+      for (let k = 0; k <= 50; k++) {
+        const a = THREE.MathUtils.degToRad((k % 2 ? 1 : -1) * Math.ceil(k / 2));
+        const ux = (dx / d) * Math.cos(a) - (dz / d) * Math.sin(a);
+        const uz = (dx / d) * Math.sin(a) + (dz / d) * Math.cos(a);
+        if (firstHit(cue.x, cue.z, ux, uz, 0).ball?.n === low) { ax = ux; az = uz; break; }
+      }
+      best = { dirX: ax, dirZ: az, speed: 2.2, target: low };
     }
     return withError(best, 0.9);
   }
@@ -597,6 +613,110 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
     prevTip.copy(tipV);
     hadTip = true;
   }
+  // --- フリーボール ---------------------------------------------------------------
+  /** プレイヤーのフリーボールを始める。PC は台の真ん中を見る（見ている所に手球が動く） */
+  function beginPlace() {
+    if (isXR() || !desktop || !camera) return;
+    desktop.controls.target.set(TABLE.x, TABLE.height, TABLE.z);
+    desktop.controls.update();
+  }
+  /** 手球を置ける所か（台の上で、ほかの球と重ならない）。台のローカル */
+  function canPlace(x, z) {
+    if (Math.abs(x) > L - BALL_R * 1.2 || Math.abs(z) > Wd - BALL_R * 1.2) return false;
+    return !B.balls.some((o) => o.n !== 0 && !o.pocketed && Math.hypot(o.x - x, o.z - z) < BALL_R * 2.1);
+  }
+  const placeRay = new THREE.Ray();
+  const placePlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(TABLE.height + BALL_R));
+  const placeHit = new THREE.Vector3();
+  /**
+   * プレイヤーのフリーボール：PC・スマホは見ている所（画面の真ん中）、VR はキューの先の真下に手球が動く。
+   * 置けない所（台の外・ほかの球と重なる）では、最後に置けた所のまま。PC はスペース、VR はトリガーで置く
+   */
+  function placeTurn() {
+    aimLine.visible = false;
+    let want = null;
+    if (isXR()) {
+      if (hadTip) want = { x: tipV.x - TABLE.x, z: tipV.z - TABLE.z };
+    } else if (camera) {
+      camera.getWorldPosition(placeRay.origin);
+      camera.getWorldDirection(placeRay.direction);
+      if (placeRay.direction.y < -0.05 && placeRay.intersectPlane(placePlane, placeHit)) want = { x: placeHit.x - TABLE.x, z: placeHit.z - TABLE.z };
+      playerCue.visible = false;
+    }
+    if (want) {
+      want.x = THREE.MathUtils.clamp(want.x, -(L - BALL_R * 1.2), L - BALL_R * 1.2);
+      want.z = THREE.MathUtils.clamp(want.z, -(Wd - BALL_R * 1.2), Wd - BALL_R * 1.2);
+      if (canPlace(want.x, want.z)) B.spotCue(want.x, want.z);
+    }
+    // 置く所のしるし（手球のまわりの輪）
+    ghost.visible = true;
+    ghost.position.set(TABLE.x + B.cue.x, TABLE.height + 0.003, TABLE.z + B.cue.z);
+    showHud(`<div style="margin-top:4px;color:#ffd24a">フリーボール：${isXR() ? 'キューの先の真下に手球が動きます。トリガーで置く' : '手球を置きたい所を見て、スペースで置く'}</div>`);
+  }
+  /** フリーボールの手球を、いまの所に置いて、狙う番へ */
+  function confirmPlace() {
+    if (!(state === 'play' && turn === 'player' && phase === 'place')) return false;
+    if (!canPlace(B.cue.x, B.cue.z)) return false;
+    phase = 'aim';
+    ballInHand = false;
+    pcTurnSet = false;
+    ghost.visible = false;
+    message = '';
+    return true;
+  }
+  /**
+   * 女の子のフリーボール：いちばん小さい番号の球を、まっすぐポケットへ入れられる所に手球を置く
+   * （球からポケットへの線の延長の、球の後ろ 0.22〜0.7m。ほかの球が邪魔をせず、手が届く所）
+   */
+  function placeForGirl() {
+    const t = B.balls[lowest()];
+    let best = null;
+    let bestScore = Infinity;
+    const keep = { x: B.cue.x, z: B.cue.z };
+    for (const p of POCKETS) {
+      const px = p.x + (p.corner ? Math.sign(p.x) * 0.012 : 0);
+      const pz = p.z + Math.sign(p.z) * 0.012;
+      let bx = px - t.x;
+      let bz = pz - t.z;
+      const bd = Math.hypot(bx, bz);
+      bx /= bd; bz /= bd;
+      if (!p.corner && Math.abs(bz) < 0.45) continue;
+      if (blockedPath(t.x, t.z, px, pz, [0, t.n])) continue;
+      const gx = t.x - bx * BALL_R * 2;
+      const gz = t.z - bz * BALL_R * 2;
+      for (const d of [0.22, 0.35, 0.5, 0.7]) {
+        const cx = gx - bx * d;
+        const cz = gz - bz * d;
+        if (!canPlace(cx, cz) || blockedPath(cx, cz, gx, gz, [0, t.n])) continue;
+        B.cue.x = cx; B.cue.z = cz;
+        const reach = standFor(bx, bz).reach;
+        const score = bd * 0.45 + d * 0.2 + (reach > 1.1 ? 1.5 : 0);
+        if (score < bestScore) { bestScore = score; best = { x: cx, z: cz }; }
+      }
+    }
+    // まっすぐ入れられる形が無い（ラックが組まれたまま・ほかの球が邪魔）ときは、その球へまっすぐ当てられて、
+    // 手の届く所（球から 0.4〜1.0m、まわり 24 方向）。近いほど・ヘッドスポットに近いほどよい
+    if (!best) {
+      for (let k = 0; k < 24; k++) {
+        const a = (k / 24) * Math.PI * 2;
+        const ux = Math.cos(a);
+        const uz = Math.sin(a);
+        for (const d of [0.4, 0.7, 1.0]) {
+          const cx = t.x - ux * d;
+          const cz = t.z - uz * d;
+          if (!canPlace(cx, cz) || blockedPath(cx, cz, t.x - ux * BALL_R * 2, t.z - uz * BALL_R * 2, [0, t.n])) continue;
+          B.cue.x = cx; B.cue.z = cz;
+          const reach = standFor(ux, uz).reach;
+          const score = d * 0.5 + Math.hypot(cx - HEAD_SPOT.x, cz - HEAD_SPOT.z) * 0.3 + (reach > 1.1 ? 1.5 : 0);
+          if (score < bestScore) { bestScore = score; best = { x: cx, z: cz }; }
+        }
+      }
+    }
+    B.cue.x = keep.x; B.cue.z = keep.z;
+    if (best) B.spotCue(best.x, best.z);
+    else if (B.cue.pocketed || !canPlace(B.cue.x, B.cue.z)) B.spotCue(HEAD_SPOT.x, HEAD_SPOT.z);
+  }
+
   function pcAimDir() {
     const c = tableToWorld(B.cue.x, B.cue.z, tmp);
     camera.getWorldPosition(tmp2);
@@ -653,6 +773,7 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
       // ラケットを持っているときのスペースはラケットを振る（desktop.js）
       if (desktop?.swing?.holding) return;
       if (turn === 'player' && phase === 'aim' && !B.moving) { e.preventDefault(); if (!e.repeat) charging = true; }
+      else if (turn === 'player' && phase === 'place') { e.preventDefault(); if (!e.repeat) confirmPlace(); }
     });
     window.addEventListener('keyup', (e) => {
       if (e.code !== 'Space' || state !== 'play' || isXR()) return;
@@ -663,6 +784,8 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
   // --- 突く・次の番 ------------------------------------------------------------
   function shoot(who, dx, dz, speed) {
     shooter = who;
+    lowAtShot = lowest();
+    message = '';
     B.shoot(dx, dz, speed);
     phase = 'rolling';
     rollingFor = 0;
@@ -678,7 +801,13 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
     const nine = pocketed.includes(9);
     const potted = pocketed.filter((n) => n !== 0);
     const other = shooter === 'player' ? 'girl' : 'player';
-    if (nine && !scratch) {
+    // ファウル（ナインボール）：手球が落ちる・どの球にも当たらない・最初にいちばん小さい番号の球に当てない・
+    // 当てたあと、どの球もクッションに当たらず、何も落ちない。相手はフリーボール（手球を台の好きな所に置ける）
+    const firstIdx = ev.findIndex((e) => e.type === 'hit' && (e.a === 0 || e.b === 0));
+    const first = firstIdx >= 0 ? (ev[firstIdx].a === 0 ? ev[firstIdx].b : ev[firstIdx].a) : null;
+    const railAfter = firstIdx >= 0 && ev.slice(firstIdx + 1).some((e) => e.type === 'rail');
+    const foul = scratch ? 'scratch' : first === null ? 'none' : first !== lowAtShot ? 'wrong' : !railAfter && !potted.length ? 'rail' : null;
+    if (nine && !foul) {
       wins[shooter]++;
       phase = 'over';
       timer = 0;
@@ -689,12 +818,17 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
       drawBoard();
       return;
     }
-    if (nine && scratch) B.spotBall(9);
-    if (scratch) {
-      B.spotCue(HEAD_SPOT.x, HEAD_SPOT.z);
-      voice?.say('billiardScratch');
+    // ファウルで落ちた 9 番は戻す（ファウルでは勝ちにならない）
+    if (nine && foul) B.spotBall(9);
+    if (foul) {
+      // 手球が落ちたら、まずヘッドスポットに置いておく（フリーボールで置き直せる）
+      if (scratch) B.spotCue(HEAD_SPOT.x, HEAD_SPOT.z);
+      const why = { scratch: '手球が落ちた', none: 'どの球にも当たらなかった', wrong: `先に ${lowAtShot} 番に当てていない`, rail: '当てたあと、どの球もクッションに当たらなかった' }[foul];
+      message = `ファウル（${why}）→ ${other === 'player' ? 'あなた' : girlName()}のフリーボール`;
+      if (scratch) voice?.say('billiardScratch');
+      else voice?.say(shooter === 'girl' ? 'billiardFoulMine' : 'billiardFoul');
       turn = other;
-      message = 'スクラッチ（手球が落ちた）';
+      ballInHand = true;
     } else if (potted.length) {
       voice?.say(shooter === 'player' ? 'billiardNice' : 'billiardPot', { chance: 0.85 });
       if (shooter === 'girl') body.smile(2, 1);
@@ -705,9 +839,11 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
       turn = other;
       message = '';
     }
-    phase = 'aim';
+    phase = ballInHand && turn === 'player' ? 'place' : 'aim';
     pcTurnSet = false;
+    if (phase === 'place') beginPlace();
     if (turn === 'girl') {
+      if (ballInHand) { placeForGirl(); ballInHand = false; }
       girlShot = planGirlShot();
       girlStep = 'walk';
       timer = 0;
@@ -721,6 +857,7 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
   }
   function newRack() {
     B.rack();
+    ballInHand = false;
     turn = breaker;
     breakShot = true;
     phase = 'aim';
@@ -758,7 +895,8 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
       if (timer > 6) newRack();
     }
     // PC の自分の番
-    if (!isXR() && state === 'play' && turn === 'player' && phase === 'aim') pcTurn(dt);
+    if (state === 'play' && turn === 'player' && phase === 'place') placeTurn();
+    else if (!isXR() && state === 'play' && turn === 'player' && phase === 'aim') pcTurn(dt);
     else { aimLine.visible = false; ghost.visible = false; showHud(); }
     switch (state) {
       case 'waitStand':
@@ -820,7 +958,17 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
     get wins() { return wins; },
     get charging() { return charging; },
     /** main.js から：VR のコントローラー・PC の視点・VR かどうか */
-    bind(o) { controllers = o.controllers ?? controllers; desktop = o.desktop ?? desktop; isXR = o.isXR ?? isXR; },
+    bind(o) {
+      controllers = o.controllers ?? controllers; desktop = o.desktop ?? desktop; isXR = o.isXR ?? isXR;
+      // VR のフリーボール：トリガーで手球を置く
+      for (const c of o.controllers ?? []) if (!c.userData.billiardPlace) { c.userData.billiardPlace = true; c.addEventListener('selectstart', () => { if (isXR()) confirmPlace(); }); }
+    },
+    get ballInHand() { return ballInHand; },
+    /** 検証用：フリーボールの手球を置いて、狙う番へ */
+    debugPlace(x, z) { if (phase === 'place' && canPlace(x, z)) { B.spotCue(x, z); return confirmPlace(); } return false; },
+    confirmPlace,
+    /** 検証用：プレイヤーのフリーボールにする（女の子がファウルしたことにする） */
+    debugBallInHand() { if (state !== 'play' || B.moving) return; turn = 'player'; ballInHand = true; phase = 'place'; message = 'ファウル（検証）→ あなたのフリーボール'; beginPlace(); },
     /** 検証用 */
     debugShoot(dirX, dirZ, speed) { if (turn === 'player' && phase === 'aim') shoot('player', dirX, dirZ, speed); },
     get debug() { return { state, turn, phase, girlStep, shooter, breakShot, message, left: remaining(), pos: [+body.position.x.toFixed(2), +body.position.z.toFixed(2)], shot: girlShot && { ...girlShot, stand: girlShot.stand && { x: +girlShot.stand.x.toFixed(2), z: +girlShot.stand.z.toFixed(2), reach: +girlShot.stand.reach.toFixed(2) } } }; },

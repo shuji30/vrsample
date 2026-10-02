@@ -552,6 +552,7 @@ const talkEye = new THREE.Vector3();
     if (g?.state === 'play' && g.turn === 'player' && g.phase === 'aim') return btn('Space', ' ', '打つ', 'big', '長押しで強く');
     const b = world.billiardGame;
     if (b?.state === 'play' && b.turn === 'player' && b.phase === 'aim' && !desktop.swing?.holding) return btn('Space', ' ', '突く', 'big', '長押しで強く');
+    if (b?.state === 'play' && b.turn === 'player' && b.phase === 'place' && !desktop.swing?.holding) return btn('Space', ' ', '置く', 'big', 'フリーボール');
     const held = desktop.heldKind;
     if (held === 'boomerang') return btn('KeyF', 'f', '投げる', 'big', '長押しで遠く');
     if (desktop.swing?.holding) return btn('Space', ' ', held === 'tennis' ? 'サーブ' : '振る');

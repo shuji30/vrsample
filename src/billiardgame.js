@@ -383,7 +383,8 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
       const d = Math.hypot(dx, dz);
       return withError({ dirX: dx / d, dirZ: dz / d, speed: 6.0, target: low }, 0.3);
     }
-    for (const b of B.balls) {
+    // 狙えるのは、台の上でいちばん小さい番号の球だけ（ナインボール。ほかの球に先に当てるとファウル）
+    for (const b of [B.balls[low]]) {
       if (b.pocketed || b.n === 0) continue;
       for (const p of POCKETS) {
         // ポケットの口の少し奥を狙う
@@ -407,7 +408,7 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
         // 真ん中のポケットへ浅い角度で入れるのは難しい
         if (!p.corner && Math.abs(bz) < 0.45) continue;
         const stand = standFor(cx, cz);
-        const score = cut * 1.2 + cd * 0.35 + bd * 0.45 + (stand.reach > 1.25 ? 1.2 : 0) + (b.n === 9 ? -0.35 : 0) + b.n * 0.01;
+        const score = cut * 1.2 + cd * 0.35 + bd * 0.45 + (stand.reach > 1.25 ? 1.2 : 0);
         if (score < bestScore) {
           bestScore = score;
           const travel = cd + bd / Math.max(0.35, Math.cos(cut));
@@ -421,7 +422,17 @@ export function createBilliardGame({ character, billiards, voice = null, scene, 
       const dx = b.x - cue.x;
       const dz = b.z - cue.z;
       const d = Math.hypot(dx, dz) || 1;
-      best = { dirX: dx / d, dirZ: dz / d, speed: 2.2, target: low };
+      // まっすぐの線に別の球があると、先にそれへ当たってファウルになる。少しずつ（±25° まで）向きを変えて、
+      // 最初に当たるのがその球になる向きを選ぶ（薄く当てる）
+      let ax = dx / d;
+      let az = dz / d;
+      for (let k = 0; k <= 50; k++) {
+        const a = THREE.MathUtils.degToRad((k % 2 ? 1 : -1) * Math.ceil(k / 2));
+        const ux = (dx / d) * Math.cos(a) - (dz / d) * Math.sin(a);
+        const uz = (dx / d) * Math.sin(a) + (dz / d) * Math.cos(a);
+        if (firstHit(cue.x, cue.z, ux, uz, 0).ball?.n === low) { ax = ux; az = uz; break; }
+      }
+      best = { dirX: ax, dirZ: az, speed: 2.2, target: low };
     }
     return withError(best, 0.9);
   }

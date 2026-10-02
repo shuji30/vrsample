@@ -807,6 +807,8 @@ export function createWorld(renderer, scene, {
     { minX: -6.0, maxX: ROOM.minX - ROOM.wall, minZ: ROOM.minZ - ROOM.wall - 0.5, maxZ: 5.0 },
     // 南西：メリーゴーランドの芝生の南、観覧車のまわりの東、家の南の芝生の西（ジェットコースターの線路（z 10.5〜）の 1m 手前まで）
     { minX: -16.5, maxX: -3.0, minZ: 4.5, maxZ: 9.5 },
+    // その南、パットゴルフの芝地（x -15.5 まで）とジェットコースターの線路（x -7.6 より東）のあいだの芝生（線路の 1m 手前まで）
+    { minX: -16.5, maxX: -8.6, minZ: 9.0, maxZ: 34.5 },
     // ビリヤードの部屋の南の外壁の前（本の部屋より 0.3m 北へ引っ込んでいる）と、北の外壁の前（庭とのあいだ）
     { minX: ROOM.maxX + ROOM.wall, maxX: 6.0, minZ: ANNEX.maxZ + ANNEX.wall, maxZ: 4.5 },
     { minX: ROOM.maxX + ROOM.wall, maxX: 6.0, minZ: outerZ - 0.5, maxZ: ANNEX.minZ - ANNEX.wall },

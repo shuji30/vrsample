@@ -60,6 +60,7 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
   gaze.userData = { held: false, velocity: new THREE.Vector3() };
   const tmp = new THREE.Vector3();
   const tmp2 = new THREE.Vector3();
+  const tmp3 = new THREE.Vector2();
   const head = new THREE.Vector3();
   const prevHead = new THREE.Vector3();
   let hadHead = false;
@@ -270,6 +271,25 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     character.watch(gaze);
   }
 
+  /**
+   * プレイヤーの番に女の子が立つ所：プレイヤーの球から狙う向きの 1.1m 後ろ、0.8m 横（右打ちのプレイヤーが
+   * 立つのと反対の側）。狙う線・カップ・旗の前をふさがず、PC の視点（球の 1.8m 後ろ）からは斜め前に見える。
+   * 縁の上なら、球から離れる向きへずらして縁の外へ（stance と同じ）
+   */
+  function spectateSpot(out) {
+    const b = P();
+    const a = aimPoint(b);
+    let dx = a.x - b.x;
+    let dz = a.z - b.z;
+    const d = Math.hypot(dx, dz) || 1;
+    dx /= d; dz /= d;
+    const sx = -dz;
+    const sz = dx;
+    out.set(b.x - dx * 1.1 + sx * 0.8, b.z - dz * 1.1 + sz * 0.8);
+    for (let k = 0; k < 8 && railDist(out.x, out.y) < 0.12; k++) { out.x += sx * 0.05; out.y += sz * 0.05; }
+    return out;
+  }
+
   /** 見ている所：プレイヤーの番はプレイヤーの球、転がっているあいだは転がっている球 */
   function spectate(dt) {
     // reachHands(null) は「いま手のある所」へ伸ばし続ける（片手の reach に戻る）ので、reach(null) で放す。
@@ -280,9 +300,10 @@ export function createGolfGame({ character, golf, voice = null, playerHead, came
     body.setBend(0);
     golf.girlPutter.visible = false;
     const b = P();
-    // プレイヤーの番は、女の子は自分の球の少し後ろに立って見ている
-    const g = Gb();
-    const stand = new THREE.Vector2(g.x - 0.6, g.z - 0.5);
+    // プレイヤーの番は、プレイヤーの球の後ろ斜め（プレイヤーが立つのと反対の側）に立って見ている。
+    // 前は自分の球の少し後ろに立っていたので、自分の球がもうカップに入っていると、カップと旗の前
+    // （プレイヤーが狙う所）に立ってしまった
+    const stand = spectateSpot(tmp3);
     if (Math.hypot(body.position.x - stand.x, body.position.z - stand.y) > 0.35) body.stepTowards(stand, dt, WALK);
     else { body.stand(dt); body.turnTowards(Math.atan2(b.x - body.position.x, b.z - body.position.z), dt); }
     watchPoint(b.x, golf.laneY(b.x, b.z), b.z);

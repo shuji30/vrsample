@@ -143,7 +143,7 @@ function createHidPad(device) {
   return pad;
 }
 
-export function createWheelInput() {
+export function createWheelInput({ bridge = null } = {}) {
   let config = load();
   /** 機器ごとの、最初に見たときの軸の値（ペダルの軸を見分けるのに使う） */
   const firstAxes = new Map();
@@ -156,7 +156,8 @@ export function createWheelInput() {
   function pads() {
     const list = typeof navigator !== 'undefined' && navigator.getGamepads
       ? [...navigator.getGamepads()].filter((p) => p && p.connected && p.axes.length > 0 && !VR_CONTROLLER.test(p.id)) : [];
-    return list.concat(hidPads.filter((p) => p.seen && p.axes.length > 0));
+    // デバイスブリッジ（ffb-bridge）経由の機器も並べる（Gamepad API の 4 台の枠に入らない機器も読める）
+    return list.concat(hidPads.filter((p) => p.seen && p.axes.length > 0), bridge?.pads?.() ?? []);
   }
 
   async function openHid(device) {
@@ -645,6 +646,10 @@ export function createWheelInput() {
       lines.push(`   ボタン ${p.buttons.length}: 押している ${p.buttons.map((b, k) => (b.pressed || b.value > 0.05 ? `${k}(${b.value.toFixed(2)})` : null)).filter(Boolean).join(' ') || 'なし'}`);
     });
     for (const p of hidPads) lines.push(`HID: ${p.id}  軸 ${p.axes.length}: ${p.axes.map((v, k) => `${k}:${v.toFixed(3)}`).join(' ')}  受信 ${p.seen ? 'あり' : 'まだ'}`);
+    if (bridge) {
+      lines.push(`デバイスブリッジ: ${bridge.connected ? `接続中（FFB：${bridge.status.selected ?? 'なし'}）` : '未接続'}`);
+      for (const p of bridge.pads()) lines.push(`${p.id}  軸 ${p.axes.length}: ${p.axes.map((v, k) => `${k}:${v.toFixed(3)}`).join(' ')}  ボタン ${p.buttons.length}`);
+    }
     const roles = guess();
     for (const role of ['steer', ...PEDAL_ROLES]) {
       const r = roles[role];
@@ -763,6 +768,8 @@ export function createWheelInput() {
   }
   return {
     refresh,
+    /** ハンコン・ペダルらしい機器（ゲームパッドでない入力機器）が見えているか */
+    get simVisible() { return pads().some(isSimDevice); },
     reconnect,
     read,
     readPad,

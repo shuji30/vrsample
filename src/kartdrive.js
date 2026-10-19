@@ -5,6 +5,7 @@ import { BIKE } from './bike.js';
 import { BIKE_TRACK } from './biketrack.js';
 import { createWheelInput } from './wheel.js';
 import { createWheelFFB } from './wheelffb.js';
+import { createFfbBridge } from './ffbbridge.js';
 import { createEngineSound, createSignalSound } from './audio.js';
 import { ROOM, ANNEX } from './room.js';
 
@@ -39,8 +40,10 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   let xrStickRight = false;
   const padShift = { up: false, down: false };
   const xrShift = { up: false, down: false };
-  const wheel = createWheelInput();
-  const ffb = createWheelFFB();
+  // デバイスブリッジ（vrgame2 の ffb-bridge）。入力の中継と FFB の両方に使う
+  const bridge = createFfbBridge();
+  const wheel = createWheelInput({ bridge });
+  const ffb = createWheelFFB({ bridge });
   const engine = createEngineSound();
   const signal = createSignalSound();
   const keys = new Set();
@@ -103,9 +106,18 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     // Gamepad API のハンコンはボタンを 1 回押すまで見えないので、そう知らせる
     if (DRIVEN.has(vehicle.kind ?? 'kart')) reconnectWheel();
     else {
+      bridgeTry();
       ffb.refresh?.();
       if (!wheel.refresh()) notice('ハンコンが見えません。ハンコンのボタンを 1 回押すと、つながります');
     }
+  }
+  /**
+   * 乗り物に乗ったとき・つなぎ直すとき：デバイスブリッジを試す。ただし、前につながったことがあるか、ハンコンらしい機器が
+   * 見えているか、VR の最中（Pimax などに Gamepad API の枠を取られて、ハンコンが見えないことがある）だけ。
+   * ハンコンを使わない人のブラウザに、つなげなかったというエラーを出さないため
+   */
+  function bridgeTry() {
+    if (bridge.seen || bridge.connected || wheel.simVisible || renderer.xr.isPresenting) bridge.connectNow();
   }
   /** ハンドルで運転する乗り物（kind。カートは kind を持たないので 'kart'）。F40 は GT3 と同じ 'gt3' */
   const DRIVEN = new Set(['kart', 'bike', 'gt3', 'jetski', 'cruiser', 'cessna']);
@@ -116,6 +128,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   let reconnecting = null;
   function reconnectWheel({ beep = false } = {}) {
     if (reconnecting) return reconnecting;
+    // デバイスブリッジ：切れていればすぐつなぎ直し、つながっていれば FFB の機器を開き直す（エフェクトを作り直す）
+    bridgeTry();
     // 入力（wheel.js）を先に開き直し、FFB はそのあとで始め直す（同じ機器のことがあるので、順番に）
     reconnecting = wheel.reconnect()
       .then(async (r) => { await (ffb.forceReconnect?.(r.devices) ?? false); return r; })
@@ -245,19 +259,46 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   // ハンコンの設定の画面に、FFB の欄を足す
   wheel.onPanel = (panel) => {
     const slot = panel.querySelector('[data-ffb]');
+    bridge.connectNow();
+    const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    /** デバイスブリッジ（ffb-bridge）の欄 */
+    const bridgeHtml = () => {
+      const st = bridge.status;
+      if (bridge.disabled) return '<b>デバイスブリッジ</b>：使わない（?bridge=off）<br>';
+      if (!st.connected) {
+        return '<b>デバイスブリッジ</b>：<span style="color:#ffb0a0">未接続</span>　'
+          + '<small>PC で <a href="https://github.com/shuji30/vrgame2/tree/main/ffb-bridge" target="_blank" rel="noopener" style="color:#9cf">ffb-bridge</a>'
+          + '（vrgame2 のデバイスブリッジ）を起動すると、どの FFB ハンコンにも力を出せ、Gamepad API に見えない機器も読めます</small> '
+          + '<button data-bridge-retry>つなぎ直す</button><br>';
+      }
+      const haptic = st.devices.filter((d) => d.haptic);
+      const options = haptic.map((d) => `<option ${d.name === st.selected ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
+      return '<b>デバイスブリッジ</b>：<span style="color:#9f9">接続中</span>'
+        + `（入力の機器 ${st.devices.length} 台。「SDL: 名前」として割り当ての一覧に出ます）<br>`
+        + (st.selected
+          ? `FFB を出す機器：<select data-bridge-dev>${options}</select> `
+            + '<button data-bridge-test="left">左へ</button><button data-bridge-test="right">右へ</button>'
+            + '<button data-bridge-test="rumble">振動</button><button data-bridge-test="center">センター</button><br>'
+            + '<small>ブリッジで FFB を出しているあいだは、下の WebHID の FFB は使いません。強さと向きは下の設定が効きます（ブリッジの最大出力は --max）</small><br>'
+          : `<span style="color:#ffb0a0">FFB を出せる機器がありません</span>${st.error ? `（${esc(st.error)}）` : ''}<br>`);
+    };
     const draw = () => {
-      if (!ffb.supported) { slot.innerHTML = '<br>FFB：このブラウザは WebHID に対応していません（Chrome / Edge で開いてください）'; return; }
-      slot.innerHTML = `<br><b>FFB</b>（実機では確かめていません）<br>`
+      if (!ffb.supported) { slot.innerHTML = `<br>${bridgeHtml()}FFB：このブラウザは WebHID に対応していません（Chrome / Edge で開いてください）`; return; }
+      slot.innerHTML = `<br>${bridgeHtml()}<b>FFB</b>（実機では確かめていません）<br>`
         + `<button data-connect>${ffb.connected ? '別のハンコンにつなぎ直す' : 'FFB を有効にする（ハンコンを選ぶ）'}</button> `
         + `${ffb.connected ? '<button data-describe>機器の情報を書き出す</button>' : ''}<br>`
         + `<span data-status>${ffb.status || (ffb.connected ? '' : 'Logitech（G29 / G27 など）は専用の命令、CAMMUS などの DD や Thrustmaster / Fanatec は HID 標準の命令で試します')}</span><br>`
-        + (ffb.connected
+        + (ffb.connected || ffb.bridgeDevice
           ? `強さ <input data-str type="range" min="0" max="1.5" step="0.1" value="${ffb.strength}">　<label><input data-inv type="checkbox" ${ffb.invert ? 'checked' : ''}> 向きを逆にする</label>`
           : '')
         + '<textarea data-dump readonly style="display:none;width:100%;height:10em;font:11px monospace"></textarea>';
     };
     draw();
+    // ブリッジの状態が変わったら描き直す（画面を閉じたら外す）
+    const unwatch = bridge.onStatus(() => { if (panel.isConnected) draw(); else unwatch(); });
     slot.addEventListener('click', async (event) => {
+      if (event.target.hasAttribute?.('data-bridge-retry')) { bridge.connectNow(); setTimeout(draw, 800); }
+      if (event.target.dataset?.bridgeTest) bridge.test(event.target.dataset.bridgeTest, Math.min(1, 0.5 * ffb.strength));
       if (event.target.hasAttribute?.('data-connect')) { await ffb.connect(); draw(); }
       if (event.target.hasAttribute?.('data-describe')) {
         const dump = slot.querySelector('[data-dump]');
@@ -267,6 +308,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       }
     });
     slot.addEventListener('change', (event) => {
+      if (event.target.hasAttribute('data-bridge-dev')) bridge.select(event.target.value);
       if (event.target.hasAttribute('data-str')) ffb.strength = event.target.value;
       if (event.target.hasAttribute('data-inv')) ffb.invert = event.target.checked;
     });
@@ -536,6 +578,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   }
 
   return {
+    bridge,
     update,
     enter,
     exit,

@@ -317,7 +317,7 @@ export function describeDevice(device) {
   return lines.join('\n');
 }
 
-export function createWheelFFB() {
+export function createWheelFFB({ bridge = null } = {}) {
   let device = null;
   let driver = null;
   let model = null;
@@ -410,9 +410,48 @@ export function createWheelFFB() {
    *   onCurb: boolean, onGrass: boolean, rpm: number, driving: boolean }} t
    *   angle はハンコンの角度（度、左が +）、rpm は 0..1
    */
+  /**
+   * デバイスブリッジ（ffb-bridge）へ送る。定数の力（センタリング・ハンドルを回す速さの重さ・衝突の反動）は c、
+   * 縁石・芝生は振動（r・hz）、速いほど重くなる手ごたえはダンパー（d）。ブリッジの力の向きは + が右へ回す力
+   * （ここで計算する力は左が +）なので符号を逆にする。0.25 秒送らないとブリッジが力を 0 にするので、同じ力でも 0.1 秒ごとに送る
+   */
+  let bridgeSent = 0;
+  let bridgeLast = '';
+  let bridgeActive = false;
+  function updateBridge(dt, t) {
+    let c = 0;
+    let d = 0;
+    let r = 0;
+    let hz = 0;
+    if (t.driving) {
+      const a = clamp(t.angle / Math.max(10, t.fullDegrees), -1.5, 1.5);
+      const sp = clamp(Math.abs(t.speed) / t.maxSpeed, 0, 1);
+      const k = 0.2 + 0.6 * sp;
+      const rate = (t.angle - prevAngle) / Math.max(1e-3, dt) / 360;
+      c = -a * k - clamp(rate, -2, 2) * 0.04 + impulse;
+      d = 0.05 + 0.2 * sp;
+      if (t.onCurb) { r = 0.3; hz = 18; } else if (t.onGrass) { r = 0.18 * clamp(Math.abs(t.speed) / 3, 0, 1); hz = 32; }
+    }
+    prevAngle = t.angle;
+    const sign = invert ? 1 : -1;
+    const f = { c: clamp(c * strength * sign, -1, 1), d: clamp(d * strength, 0, 1), s: 0, r: clamp(r * strength, 0, 1), hz };
+    const key = `${f.c.toFixed(2)}|${f.d.toFixed(2)}|${f.r.toFixed(2)}|${hz}`;
+    const now = performance.now();
+    if (!t.driving && !bridgeActive) return;
+    if ((key !== bridgeLast && now - bridgeSent > 16) || now - bridgeSent > 100) {
+      bridgeLast = key;
+      bridgeSent = now;
+      bridge.ffb(f);
+    }
+    // 降りたら、力を 0 にして送るのをやめる（ブリッジは 0.25 秒で 0 にする）
+    if (!t.driving) { bridge.stop(); bridgeActive = false; } else bridgeActive = true;
+  }
+
   function update(dt, t) {
     time += dt;
     impulse *= Math.exp(-dt / 0.12);
+    // ブリッジに FFB の機器があれば、そちらへ出す（WebHID へは出さない。同じハンコンへ二重に出さないように）
+    if (bridge?.ffbReady) { updateBridge(dt, t); return; }
     if (!device?.opened || !driver?.ok) return;
     let force = 0;
     if (t.driving) {
@@ -446,6 +485,7 @@ export function createWheelFFB() {
 
   function release() {
     lastForce = 0;
+    if (bridge?.connected) { bridge.stop(); bridgeActive = false; }
     driver?.stop?.().catch(() => {});
     if (driver?.leds) driver.leds(0).catch(() => {});
   }
@@ -468,6 +508,8 @@ export function createWheelFFB() {
       if (!supported) return false;
       // 入力の側（wheel.js）がいま開き直したのと同じ機器なら、閉じずに FFB だけ始め直す（CAMMUS などの DD は、
       // 入力と FFB が同じ HID の機器。両方から閉じ・開きすると取り合いになる）
+      // デバイスブリッジで FFB を出しているときは、WebHID の FFB は開き直さない（同じハンコンへ別の道から命令を送らない）
+      if (bridge?.ffbReady) return true;
       if (device && fresh.includes(device)) {
         release();
         try { await open(device); return true; } catch { return false; }
@@ -487,6 +529,9 @@ export function createWheelFFB() {
     get connected() { return Boolean(device?.opened); },
     get model() { return model; },
     get status() { return status; },
+    /** FFB をブリッジ経由で出しているか（出している機器の名前。出していなければ null） */
+    get bridgeDevice() { return bridge?.ffbReady ? bridge.status.selected : null; },
+    bridge,
     get invert() { return invert; },
     set invert(v) { invert = Boolean(v); store(); },
     get strength() { return strength; },

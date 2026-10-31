@@ -186,6 +186,13 @@ if (navigator.xr?.requestSession) {
     throw error;
   });
 }
+// Chrome 156 の WebXR Layers (投影レイヤー) は、Pimax の OpenXR と組み合わさると、VR に入ったあと
+// 画面の順番が回ってこない (どの WebXR のページも止まる。2026-10-31 に確かめた。Chrome を
+// --disable-features=WebXRLayers で起動すると直る)。three.js r186 は XRWebGLBinding に
+// createProjectionLayer があると投影レイヤーを使うので、消して、昔からの XRWebGLLayer で描かせる
+if (typeof XRWebGLBinding !== 'undefined' && 'createProjectionLayer' in XRWebGLBinding.prototype) {
+  try { delete XRWebGLBinding.prototype.createProjectionLayer; } catch { /* 消せないブラウザはそのまま */ }
+}
 {
   const setSession = renderer.xr.setSession.bind(renderer.xr);
   renderer.xr.setSession = (session) => Promise.resolve(setSession(session)).catch((error) => {

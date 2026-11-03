@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>声の試聴（VOICEVOX）</title>
+  <link rel="icon" href="data:,">
+  <script type="importmap">
+    { "imports": { "three": "../vendor/three/three.module.js" } }
+  </script>
+  <style>
+    :root { --bg: #f7f5f1; --fg: #222; --muted: #666; --line: #ddd6cc; --accent: #2b6fd6; --card: #fff; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #16181d; --fg: #eee; --muted: #9aa; --line: #333a44; --accent: #6aa5ff; --card: #1f232a; } }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 sans-serif; }
+    main { max-width: 980px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 20px; margin: 8px 0 4px; }
+    section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 12px 0; }
+    h2 { font-size: 16px; margin: 0 0 8px; }
+    small, .muted { color: var(--muted); }
+    label { display: inline-flex; align-items: center; gap: 6px; margin: 2px 12px 2px 0; }
+    input[type=range] { width: 160px; }
+    select, input[type=text] { font: inherit; padding: 4px 6px; max-width: 100%; }
+    button { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+    button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .lines { max-height: 50vh; overflow: auto; border-top: 1px solid var(--line); margin-top: 8px; }
+    .kind { font-weight: 600; margin: 10px 0 2px; }
+    .line { display: flex; gap: 8px; align-items: center; padding: 3px 0; border-bottom: 1px dashed var(--line); }
+    .line span { flex: 1; }
+    .line.playing span { color: var(--accent); font-weight: 600; }
+    code, pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+    pre { padding: 8px; white-space: pre-wrap; word-break: break-all; margin: 6px 0; }
+    #status { font-weight: 600; }
+    #status.ok { color: #2e9a52; } #status.ng { color: #d0503c; }
+    .favs button { margin: 2px 4px 2px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>女の子の声の試聴（VOICEVOX）</h1>
+  <p class="muted">VOICEVOX を起動した PC で開くと、声（キャラクターとスタイル）・速さ・高さ・抑揚を変えながら、ゲームの台詞をその場で聞けます。
+    気に入ったら、下の「作るコマンド」で全部の台詞を作ります（<code>scripts/voicevox.mjs</code>）。</p>
+
+  <section>
+    <h2>1. VOICEVOX につなぐ</h2>
+    <label>エンジン <input id="host" type="text" size="28" value="http://127.0.0.1:50021"></label>
+    <button id="connect" class="primary">つなぐ</button>
+    <span id="status">未接続</span>
+    <div id="help" class="muted" style="display:none;margin-top:6px"></div>
+  </section>
+
+  <section>
+    <h2>2. 声を選ぶ</h2>
+    <label>声 <select id="speaker" disabled></select></label>
+    <button id="fav" disabled>★ 聞き比べに入れる</button>
+    <div class="favs" id="favs"></div>
+    <div style="margin-top:6px">
+      <label>速さ <input id="speed" type="range" min="0.7" max="1.5" step="0.01"> <output data-for="speed"></output></label>
+      <label>高さ <input id="pitch" type="range" min="-0.15" max="0.15" step="0.01"> <output data-for="pitch"></output></label>
+      <label>抑揚 <input id="intonation" type="range" min="0" max="2" step="0.05"> <output data-for="intonation"></output></label>
+      <label>音量 <input id="volume" type="range" min="0.3" max="2" step="0.05"> <output data-for="volume"></output></label>
+      <button id="reset">ゲームの既定に戻す</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. 台詞を聞く</h2>
+    <label>自由に <input id="free" type="text" size="40" value="このこえ、どうかな？"></label>
+    <button id="sayFree" disabled>読む</button>
+    <button id="random" disabled>ランダムに 5 つ</button>
+    <button id="compare" disabled>★ の声で聞き比べ（いまの台詞）</button>
+    <button id="stop">止める</button>
+    <div><small>台詞を押すと、その声で読みます（一度作った音は覚えておくので、2 回目からはすぐ鳴ります）。</small></div>
+    <label style="margin-top:6px">しぼる <input id="filter" type="text" size="20" placeholder="例：キャッチ、ビリヤード"></label>
+    <div class="lines" id="lines"></div>
+  </section>
+
+  <section>
+    <h2>4. 作るコマンド</h2>
+    <p class="muted">リポジトリの直下で、VOICEVOX を起動したまま実行します（初回だけ <code>npm install</code>）。全部の台詞をこの声で作り、<code>voices/voicevox/</code> に入れます。</p>
+    <pre id="cmd"></pre>
+    <button id="copy">コピー</button>
+    <p class="muted" id="credit"></p>
+  </section>
+
+  <section>
+    <h2>うまくつながらないとき</h2>
+    <ul class="muted">
+      <li>VOICEVOX（アプリ）を起動しておきます。エンジンは <code>http://127.0.0.1:50021</code> で待ち受けます。</li>
+      <li>このページは、PC で <code>npm start</code>（リポジトリの直下）をして <code>http://localhost:8080/voices/try.html</code> で開くのが確実です
+        （VOICEVOX は、localhost のページからの読み込みを既定で許しています）。</li>
+      <li>GitHub Pages など別の所で開くときは、VOICEVOX の設定（エンジンの <code>http://127.0.0.1:50021/setting</code>）で、
+        許可するオリジンにそのページの URL（例 <code>https://shuji30.github.io</code>）を足します。それでもブラウザが止めることがあります。</li>
+    </ul>
+  </section>
+</main>
+
+<script type="module">
+import { LINES, VOICE_NUMBERS, EXTRA_LINES, spokenLine } from '../src/voice.js';
+
+// ゲームの生成の既定（scripts/voicevox.mjs と同じ）
+const DEFAULTS = { host: 'http://127.0.0.1:50021', speaker: 8, speed: 1.08, pitch: 0.02, intonation: 1.25, volume: 1.0 };
+const STORE = 'vrsample.voicetry';
+const $ = (id) => document.getElementById(id);
+let state = { ...DEFAULTS, host: 'http://127.0.0.1:50021', favs: [] };
+try { Object.assign(state, JSON.parse(localStorage.getItem(STORE) ?? '{}')); } catch { /* 既定のまま */ }
+const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* 覚えられなくても使える */ } };
+
+let speakers = [];      // [{ id, name, style }]
+let connected = false;
+let current = null;     // いま鳴っている { audio, el }
+let queue = [];
+let playId = 0;        // 止めたら増やす（合成を待っているあいだに止められたら鳴らさない）
+let lastText = state.free ?? 'このこえ、どうかな？';
+const cache = new Map();   // `${speaker}|${speed}|${pitch}|${intonation}|${volume}|${text}` → object URL
+
+// --- 台詞の一覧 ------------------------------------------------------------------
+function allLines() {
+  const groups = [];
+  for (const [kind, lines] of Object.entries(LINES)) {
+    const out = [];
+    for (const line of lines) {
+      if (line.includes('{n}')) {
+        const values = VOICE_NUMBERS[kind];
+        if (!values) continue;
+        out.push(spokenLine(line, values[Math.min(1, values.length - 1)]));
+      } else out.push(line);
+    }
+    if (out.length) groups.push([kind, out]);
+  }
+  if (EXTRA_LINES.length) groups.push(['その他', EXTRA_LINES]);
+  return groups;
+}
+const GROUPS = allLines();
+function drawLines() {
+  const q = $('filter').value.trim();
+  const box = $('lines');
+  box.textContent = '';
+  for (const [kind, lines] of GROUPS) {
+    const shown = q ? lines.filter((l) => l.includes(q) || kind.toLowerCase().includes(q.toLowerCase())) : lines;
+    if (!shown.length) continue;
+    const head = document.createElement('div');
+    head.className = 'kind';
+    head.textContent = kind;
+    box.append(head);
+    for (const text of shown) {
+      const row = document.createElement('div');
+      row.className = 'line';
+      const b = document.createElement('button');
+      b.textContent = '▶';
+      b.disabled = !connected;
+      b.addEventListener('click', () => { lastText = text; playList([text], [state.speaker], row); });
+      const s = document.createElement('span');
+      s.textContent = text;
+      row.append(b, s);
+      box.append(row);
+    }
+  }
+}
+
+// --- VOICEVOX ----------------------------------------------------------------------
+async function engine(path, { method = 'GET', body = null, binary = false } = {}) {
+  const res = await fetch(state.host.replace(/\/$/, '') + path, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`${method} ${path} → ${res.status}`);
+  return binary ? res.blob() : res.json();
+}
+async function connect() {
+  state.host = $('host').value.trim() || DEFAULTS.host;
+  save();
+  $('status').textContent = 'つないでいます…';
+  $('status').className = '';
+  $('help').style.display = 'none';
+  try {
+    const version = await engine('/version');
+    const list = await engine('/speakers');
+    speakers = [];
+    for (const s of list) for (const st of s.styles ?? []) speakers.push({ id: st.id, name: s.name, style: st.name });
+    connected = true;
+    $('status').textContent = `接続中（VOICEVOX ${version}・声 ${speakers.length}）`;
+    $('status').className = 'ok';
+    const sel = $('speaker');
+    sel.textContent = '';
+    for (const sp of speakers) {
+      const o = document.createElement('option');
+      o.value = sp.id;
+      o.textContent = `${sp.id}：${sp.name}（${sp.style}）`;
+      sel.append(o);
+    }
+    if (!speakers.some((sp) => sp.id === state.speaker)) state.speaker = speakers[0]?.id ?? DEFAULTS.speaker;
+    sel.value = state.speaker;
+    for (const id of ['speaker', 'fav', 'sayFree', 'random', 'compare']) $(id).disabled = false;
+  } catch (error) {
+    connected = false;
+    $('status').textContent = 'つながりません';
+    $('status').className = 'ng';
+    const local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+    $('help').innerHTML = `VOICEVOX が起動しているか確かめてください（${escapeHtml(error.message)}）。`
+      + (local ? '' : `<br>このページは ${escapeHtml(location.origin)} で開いています。VOICEVOX の設定で、許可するオリジンにこの URL を足すか、PC で <code>npm start</code> して <code>http://localhost:8080/voices/try.html</code> で開いてください。`);
+    $('help').style.display = '';
+  }
+  drawLines();
+  drawFavs();
+  drawCmd();
+}
+
+async function synthesize(text, speaker) {
+  const key = [speaker, state.speed, state.pitch, state.intonation, state.volume, text].join('|');
+  if (cache.has(key)) return cache.get(key);
+  const query = await engine(`/audio_query?text=${encodeURIComponent(text)}&speaker=${speaker}`, { method: 'POST' });
+  // ゲームの声と同じ設定（scripts/voicevox.mjs の synthesize と揃える）
+  Object.assign(query, {
+    speedScale: state.speed, pitchScale: state.pitch, intonationScale: state.intonation, volumeScale: state.volume,
+    prePhonemeLength: 0.05, postPhonemeLength: 0.12, outputSamplingRate: 24000, outputStereo: false,
+  });
+  const wav = await engine(`/synthesis?speaker=${speaker}`, { method: 'POST', body: query, binary: true });
+  const url = URL.createObjectURL(wav);
+  cache.set(key, url);
+  return url;
+}
+
+function stop() {
+  playId++;
+  queue = [];
+  if (current) { current.audio.pause(); current.el?.classList.remove('playing'); current = null; }
+}
+/** texts を speakers の声で順に読む（どちらかは 1 つ） */
+async function playList(texts, voices, el = null) {
+  stop();
+  const my = playId;
+  const items = [];
+  for (const t of texts) for (const v of voices) items.push([t, v]);
+  queue = items;
+  while (queue.length) {
+    const [text, speaker] = queue.shift();
+    const sp = speakers.find((s) => s.id === speaker);
+    $('status').textContent = `${sp ? `${sp.name}（${sp.style}）` : speaker}：${text}`;
+    $('status').className = 'ok';
+    let url;
+    try { url = await synthesize(text, speaker); } catch (error) { $('status').textContent = `作れませんでした（${error.message}）`; $('status').className = 'ng'; return; }
+    if (my !== playId) return;   // 合成を待っているあいだに止められた
+    const audio = new Audio(url);
+    current = { audio, el };
+    el?.classList.add('playing');
+    await new Promise((resolve) => { audio.onended = resolve; audio.onerror = resolve; audio.play().catch(resolve); });
+    el?.classList.remove('playing');
+    if (my !== playId || current?.audio !== audio) return;   // 止められた
+    current = null;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+// --- 聞き比べ・コマンド ------------------------------------------------------------
+function drawFavs() {
+  const box = $('favs');
+  box.textContent = '';
+  if (!state.favs.length) { box.innerHTML = '<small>聞き比べ：まだありません（声を選んで「★ 聞き比べに入れる」）</small>'; return; }
+  const label = document.createElement('small');
+  label.textContent = '聞き比べ：';
+  box.append(label);
+  for (const id of state.favs) {
+    const sp = speakers.find((s) => s.id === id);
+    const b = document.createElement('button');
+    b.textContent = `${sp ? `${sp.name}（${sp.style}）` : id} ✕`;
+    b.title = '外す';
+    b.addEventListener('click', () => { state.favs = state.favs.filter((x) => x !== id); save(); drawFavs(); });
+    box.append(b);
+  }
+}
+function drawCmd() {
+  const sp = speakers.find((s) => s.id === state.speaker);
+  const args = [`--speaker ${state.speaker}`];
+  if (state.speed !== DEFAULTS.speed) args.push(`--speed ${state.speed}`);
+  if (state.pitch !== DEFAULTS.pitch) args.push(`--pitch ${state.pitch}`);
+  if (state.intonation !== DEFAULTS.intonation) args.push(`--intonation ${state.intonation}`);
+  if (state.volume !== DEFAULTS.volume) args.push(`--volume ${state.volume}`);
+  if (state.host.replace(/\/$/, '') !== DEFAULTS.host) args.push(`--host ${state.host}`);
+  $('cmd').textContent = `node scripts/voicevox.mjs ${args.join(' ')}`;
+  $('credit').textContent = sp ? `ゲームの開始画面に「VOICEVOX:${sp.name}」と出します（VOICEVOX の利用規約で表記が要ります。キャラクターごとの規約も確かめてください）。` : '';
+}
+function escapeHtml(v) { return String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+// --- 画面 ------------------------------------------------------------------------
+for (const k of ['speed', 'pitch', 'intonation', 'volume']) {
+  const input = $(k);
+  const out = document.querySelector(`output[data-for="${k}"]`);
+  const sync = () => { input.value = state[k]; out.textContent = Number(state[k]).toFixed(2); };
+  sync();
+  input.addEventListener('input', () => { state[k] = Number(input.value); out.textContent = state[k].toFixed(2); save(); drawCmd(); });
+  input.sync = sync;
+}
+$('host').value = state.host;
+$('free').value = lastText;
+$('connect').addEventListener('click', connect);
+$('speaker').addEventListener('change', (e) => { state.speaker = Number(e.target.value); save(); drawCmd(); });
+$('fav').addEventListener('click', () => { if (!state.favs.includes(state.speaker)) state.favs.push(state.speaker); save(); drawFavs(); });
+$('reset').addEventListener('click', () => {
+  Object.assign(state, { speed: DEFAULTS.speed, pitch: DEFAULTS.pitch, intonation: DEFAULTS.intonation, volume: DEFAULTS.volume });
+  for (const k of ['speed', 'pitch', 'intonation', 'volume']) $(k).sync();
+  save(); drawCmd();
+});
+$('sayFree').addEventListener('click', () => { lastText = $('free').value.trim() || lastText; state.free = lastText; save(); playList([lastText], [state.speaker]); });
+$('random').addEventListener('click', () => {
+  const all = GROUPS.flatMap(([, l]) => l);
+  const pick = Array.from({ length: 5 }, () => all[Math.floor(Math.random() * all.length)]);
+  playList(pick, [state.speaker]);
+});
+$('compare').addEventListener('click', () => playList([lastText], state.favs.length ? state.favs : [state.speaker]));
+$('stop').addEventListener('click', stop);
+$('filter').addEventListener('input', drawLines);
+$('copy').addEventListener('click', () => navigator.clipboard?.writeText($('cmd').textContent));
+drawLines();
+drawFavs();
+drawCmd();
+// 前につながったエンジンがあれば、開いたときにつなぐ
+if (state.connectedOnce) connect();
+window.__voiceTry = { get state() { return state; }, get connected() { return connected; }, get speakers() { return speakers; }, playList };
+// つながったことを覚える（次から自動でつなぐ）
+const origConnect = connect;
+$('connect').removeEventListener('click', connect);
+$('connect').addEventListener('click', async () => { await origConnect(); if (connected) { state.connectedOnce = true; save(); } });
+</script>
+</body>
+</html>

@@ -899,8 +899,11 @@ TURBO KART VR と同じものをそのまま使えます（`ws://127.0.0.1:18765
 
 1. VOICEVOX をインストールして起動する（起動しているあいだ、PC の中で VOICEVOX エンジンが動きます）
 2. このリポジトリで `npm install`（初回だけ。MP3 にする lamejs が入ります）
-3. 声を選ぶ：`node scripts/voicevox.mjs --samples` で、候補の声の見本が `voices/samples/` にできます。
-   `npm start` で開いて http://localhost:8080/voices/samples/ で聞き比べます（`--list` で全部の声の番号も出ます）
+3. 声を選ぶ：**試聴のページ** http://localhost:8080/voices/try.html（`npm start` で開く）で、VOICEVOX の全部の声から選び、
+   速さ・高さ・抑揚・音量を変えながら、ゲームの台詞（約 570 本。しぼりこめます）をその場で聞けます。
+   気に入った声を「★ 聞き比べに入れる」と、同じ台詞を続けて聞き比べられます。決まったら、ページの「作るコマンド」を写して 4. で使います
+   （`npm install` は要りません。GitHub Pages など別の所で開くときは、VOICEVOX の設定で許可するオリジンにその URL を足します）。
+   コマンドだけで見本を作るなら `node scripts/voicevox.mjs --samples`（`voices/samples/` にでき、http://localhost:8080/voices/samples/ で聞く。`--list` で全部の声の番号）
 4. 台詞を作る：`node scripts/voicevox.mjs --speaker 番号`（既定は 8 = 春日部つむぎ ノーマル）。
    約 470 本（数の入った台詞も、ゲームで出る数のぶん）を作り、`voices/voicevox/` に MP3（合わせて 4MB ほど）と
    `manifest.json`（台詞 → ファイル・長さ・拍ごとの母音と時間）を書きます。数分かかります

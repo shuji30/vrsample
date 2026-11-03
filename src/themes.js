@@ -24,6 +24,9 @@ export const THEMES = {
     sunIntensity: 4.2,
     sunDirection: [-9, 7.2, -4.2],
 
+    // 空（park.js の天球）：高さで混ぜる指数、太陽の円盤（色・半径・ぼかし（度））と光の輪、地平線の帯、星
+    sky: { pow: 0.55, disc: 0xfff6e0, discRadius: 1.4, discGain: 6, discSoft: 0.3, moon: false, glow: 0x9a8f70, glowPow: 64, band: 0x000000, stars: 0 },
+
     // 窓の面光源 = 窓から見える空の明るさ
     windowColor: 0xc5dcf4,
     windowIntensity: 3.4,
@@ -42,7 +45,7 @@ export const THEMES = {
     label: '夕',
     swatch: 0xff9a56,
 
-    skyTop: 0x2c2a55,
+    skyTop: 0x34407e,
     skyBottom: 0xff9c58,
     fog: 0xe6a070,
     fogNear: 50,
@@ -51,6 +54,9 @@ export const THEMES = {
     sunColor: 0xffa14e,
     sunIntensity: 3.1,
     sunDirection: [-13, 2.3, -3.0],
+
+    // 上の紫が見えるよう指数を小さく（0.55 では空全体がほぼ同じ赤橙だった）。地平線の上に明るい帯
+    sky: { pow: 0.32, disc: 0xffb060, discRadius: 2.2, discGain: 1.6, discSoft: 0.4, moon: false, glow: 0xcc7b40, glowPow: 40, band: 0x5a3a14, stars: 0 },
 
     windowColor: 0xffb277,
     windowIntensity: 2.2,
@@ -70,7 +76,7 @@ export const THEMES = {
     swatch: 0x2b3a6b,
 
     skyTop: 0x04060f,
-    skyBottom: 0x111c3c,
+    skyBottom: 0x1a2850,
     fog: 0x0e1730,
     fogNear: 30,
     fogFar: 700,
@@ -79,6 +85,9 @@ export const THEMES = {
     sunColor: 0x9fb4ff,
     sunIntensity: 0.45,
     sunDirection: [-7, 6.5, -5.0],
+
+    // 月（光の向きと同じ所。実物の約 4 倍の 2°）と星
+    sky: { pow: 0.55, disc: 0xd8e0f6, discRadius: 1.8, discGain: 1, discSoft: 0.2, moon: true, glow: 0x1c2440, glowPow: 200, band: 0x000000, stars: 1 },
 
     windowColor: 0x3d4f84,
     windowIntensity: 0.40,

@@ -205,13 +205,37 @@ function makeRandom(seed) {
 
 // --- 空 -------------------------------------------------------------------
 
-/** グラデーションの天球。頂点のワールド高さで 2 色を混ぜるだけ。 */
+/**
+ * 天球。高さで 2 色を混ぜたグラデーションに、太陽（昼・夕）か月（夜）の円盤とまわりの光の輪、夜の星、
+ * 夕方の地平線の上の明るい帯を、シェーダーで描く（画像は使わない）。
+ * 円盤の向きは照明の太陽（夜は月）と同じ（lighting.js の setTheme が sunDir を入れる）。
+ * 見かけの大きさは実物より大きい（直径で太陽 0.53° → 2.8°、夕日 4.4°、月 0.52° → 3.6°。値は themes.js の半径）。実物どおりだと VR で小さすぎて、何かわからない。
+ * 星は向きを 3D の格子に分けてハッシュで置く（Points より軽く、VR の左右の目で大きさが揃う）。角度 0.1〜0.15° より
+ * 細かくすると VR でちらつくので、点はそれより大きくし、またたきは弱くゆっくりにする。地平線の近くは消す。
+ */
 function createSky() {
   const uniforms = {
     topColor: { value: new THREE.Color(0x2a6bd4) },
     bottomColor: { value: new THREE.Color(0xbfe4ff) },
     // 地平線と、その下（霧の色にそろえて、遠くの海が霧に溶けるところと空をつなぐ）
     horizonColor: { value: new THREE.Color(0xcfe0ee) },
+    // 高さで混ぜるときの指数（小さいほど上の色が下まで降りる）
+    skyPow: { value: 0.55 },
+    // 太陽・月の向き・色・半径（度）・縁のぼかし（度）。moon が 1 なら月（欠けと模様）
+    sunDir: { value: new THREE.Vector3(0, 1, 0) },
+    discColor: { value: new THREE.Color(0xffffff) },
+    discRadius: { value: 0.6 },
+    discGain: { value: 1 },
+    discSoft: { value: 0.15 },
+    moon: { value: 0 },
+    // まわりの光の輪（Mie 散乱ふう）と、その広がり（大きいほど狭い）
+    glowColor: { value: new THREE.Color(0x000000) },
+    glowPow: { value: 64 },
+    // 地平線の上（2〜8°）の明るい帯（夕方）
+    bandColor: { value: new THREE.Color(0x000000) },
+    // 星の量（0〜1）と、またたき用の時間
+    stars: { value: 0 },
+    time: { value: 0 },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -231,11 +255,68 @@ function createSky() {
       uniform vec3 topColor;
       uniform vec3 bottomColor;
       uniform vec3 horizonColor;
+      uniform float skyPow;
+      uniform vec3 sunDir;
+      uniform vec3 discColor;
+      uniform float discRadius;
+      uniform float discGain;
+      uniform float discSoft;
+      uniform float moon;
+      uniform vec3 glowColor;
+      uniform float glowPow;
+      uniform vec3 bandColor;
+      uniform float stars;
+      uniform float time;
       varying vec3 vWorldPosition;
+      float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
       void main() {
         // 見ている所からの向き（天球はカメラについてくるが、念のため）
-        float y = normalize(vWorldPosition - cameraPosition).y;
-        vec3 sky = mix(bottomColor, topColor, pow(clamp(y, 0.0, 1.0), 0.55));
+        vec3 dir = normalize(vWorldPosition - cameraPosition);
+        float y = dir.y;
+        vec3 sky = mix(bottomColor, topColor, pow(clamp(y, 0.0, 1.0), skyPow));
+        // 夕方：地平線の上 2〜8° を明るく（赤一色にしない）
+        // （pow は負の数を受けると NaN になる。2 乗はかけ算で。NaN が環境マップに焼き込まれると、照らされた物が黒くなる）
+        float bandT = (y - 0.07) / 0.05;
+        sky += bandColor * exp(-bandT * bandT);
+        // 星（夜）。向きを 3D の格子に分け、1.2% のセルに 1 つ。月のまわりは消す。地平線の近くは消す
+        float d = dot(dir, sunDir);
+        if (stars > 0.0) {
+          vec3 cell = floor(dir * 180.0);
+          float h = hash(cell);
+          if (h > 0.988) {
+            vec3 jitter = vec3(hash(cell + 1.3), hash(cell + 2.7), hash(cell + 4.1)) - 0.5;
+            vec3 c = normalize((cell + 0.5 + jitter * 0.6) / 180.0);
+            float ang = acos(clamp(dot(dir, c), -1.0, 1.0));
+            float size = mix(0.0014, 0.0026, hash(cell + 7.9));
+            float b = mix(0.3, 1.0, hash(cell + 9.1));
+            // またたきは ±15%、周期 2〜4 秒
+            b *= 1.0 + 0.15 * sin(time * (1.6 + 1.5 * hash(cell + 3.3)) + h * 40.0);
+            vec3 tint = mix(vec3(0.81, 0.86, 1.0), vec3(1.0, 0.91, 0.78), hash(cell + 5.5));
+            sky += tint * b * (1.0 - smoothstep(size * 0.4, size, ang)) * smoothstep(0.05, 0.18, y) * stars * (1.0 - moon * smoothstep(0.97, 0.995, d));
+          }
+        }
+        // 太陽・月のまわりの光の輪
+        sky += glowColor * pow(max(d, 0.0), glowPow);
+        // 円盤
+        float ang = acos(clamp(d, -1.0, 1.0));
+        float r = radians(discRadius);
+        float disc = 1.0 - smoothstep(r - radians(discSoft), r, ang);
+        if (disc > 0.0) {
+          // 昼の太陽は 1 より明るくして白く飛ばす（夕日は少し、月はそのまま。themes.js の discGain）
+          vec3 col = discColor * discGain;
+          if (moon > 0.5) {
+            // 月：円の中の位置（-1..1）。右上から照らされた形で、左の端が少し欠ける。表面の模様（海）は暗い丸い斑を 3 つ（縞にすると木星に見える）
+            vec3 side = normalize(cross(sunDir, vec3(0.0, 1.0, 0.0)));
+            vec3 up = cross(side, sunDir);
+            vec2 p = vec2(dot(dir, side), dot(dir, up)) / sin(r);
+            float lit = smoothstep(-0.55, -0.25, p.x * 0.8 + p.y * 0.35);
+            float maria = 1.0 - 0.16 * (1.0 - smoothstep(0.18, 0.34, length(p - vec2(-0.18, 0.28))))
+                              - 0.13 * (1.0 - smoothstep(0.14, 0.28, length(p - vec2(0.22, 0.12))))
+                              - 0.11 * (1.0 - smoothstep(0.10, 0.24, length(p - vec2(0.02, -0.30))));
+            col *= mix(0.12, 1.0, lit) * maria;
+          }
+          sky = mix(sky, col, disc);
+        }
         // 地平線の少し上までは霧の色へ寄せ、地平線より下は霧の色
         sky = mix(horizonColor, sky, smoothstep(-0.01, 0.12, y));
         gl_FragColor = vec4(sky, 1.0);
@@ -254,6 +335,8 @@ function createSky() {
     // VR で移動すると家だけが動き、家具と景色と目線は動かず、乗り物の目線・C の合わせ直し・VR の開始位置も効かなかった
     sky.position.setFromMatrixPosition(camera.matrixWorld);
     sky.updateMatrixWorld();
+    // 星のまたたき
+    uniforms.time.value = performance.now() / 1000;
   };
   return { sky, uniforms };
 }

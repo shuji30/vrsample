@@ -160,6 +160,12 @@ export function createWorld(renderer, scene, {
     skyUniforms: park.skyUniforms,
     shadowMapSize,
     environment,
+    // 屋外用の環境マップを焼くときは、家（本の部屋・ビリヤードの部屋）を隠す。海はいつも空を映す
+    outdoorHide: () => [room.group, billiards.group],
+    // 海は、焼くあいだだけ光を使わない素材にする（遠くの海面で光の計算が NaN を出すため）。色は霧（地平線の空）と海の間
+    outdoorSwap: park.hill?.sea ? [[park.hill.sea, new THREE.MeshBasicMaterial({ fog: true }),
+      (m, theme) => m.color.setHex(theme.fog).lerp(park.hill.sea.material.color, 0.45).multiplyScalar(0.55)]] : [],
+    outdoorMaterials: park.hill?.sea ? [park.hill.sea.material] : [],
   });
 
   // 初期テーマ。環境マップは「部屋を撮って部屋に返す」ので、
@@ -553,6 +559,8 @@ export function createWorld(renderer, scene, {
     if (scene.fog) { scene.fog.color.setHex(WATER); scene.fog.near = 1; scene.fog.far = 32; }
     const u = park.skyUniforms;
     for (const k of ['topColor', 'bottomColor', 'horizonColor']) u[k]?.value.setHex(WATER);
+    // 水の中では、太陽・月・星・光の輪・夕方の帯を描かない（水面の上に戻ると setTheme で戻る）
+    if (u.discRadius) { u.discRadius.value = 0; u.glowColor.value.setHex(0); u.bandColor.value.setHex(0); u.stars.value = 0; }
   };
   // 息の音：吸う（シューッ）と、吐いた泡（ぶくぶく）
   diver.onBreath = (kind) => impact.play(kind === 'in' ? 'regIn' : 'bubbles', 0.55);
@@ -936,8 +944,14 @@ export function createWorld(renderer, scene, {
   let shadowOnCourt = false;
   // カートコースへ出たら、コースの真ん中へ寄せる
   let shadowAt = 'house';
+  /** 目が家の中か（本の部屋・ビリヤードの部屋。壁の外面まで） */
+  const eyeInHouse = (p) => (p.x > ROOM.minX - ROOM.wall && p.x < ROOM.maxX + ROOM.wall && p.z > ROOM.minZ - ROOM.wall && p.z < ROOM.maxZ + ROOM.wall && p.y < ROOM.height + 1)
+    || (p.x > ANNEX.minX - ANNEX.wall && p.x < ANNEX.maxX + ANNEX.wall && p.z > ANNEX.minZ - ANNEX.wall && p.z < ANNEX.maxZ + ANNEX.wall && p.y < ANNEX.height + 1);
   function updateShadowFocus() {
     if (!camera) return;
+    // 環境マップ：家の中は室内用、外は屋外用（夜の庭が室内灯の色で照らされないように）
+    camera.getWorldPosition(eye);
+    lighting.setInside(eyeInHouse(eye));
     // サーキットにいるあいだは、プレイヤーの車のまわりに影を落とす
     // 高速道路を走っているあいだは、F40 のまわりに
     if (f40Ridden && !f40AtHome()) {

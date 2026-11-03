@@ -119,18 +119,29 @@ function waveNormalTexture(size = 256) {
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   const img = ctx.createImageData(size, size);
-  const waves = [[1, 2, 0.6], [3, -1, 0.4], [-2, 3, 0.35], [5, 4, 0.2], [-6, 1, 0.15], [7, -5, 0.1]];
+  // 向きと波長の違う 24 本の波（整数の波数なので継ぎ目なく繰り返す）。本数が少ないと規則正しい格子に見える。
+  // 振幅は波長に比例（短い波ほど小さい）、位相はばらばら。乱数は固定の種で、毎回同じ模様にする
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const waves = [];
+  while (waves.length < 24) {
+    const kx = Math.round((rnd() - 0.5) * 24);
+    const ky = Math.round((rnd() - 0.5) * 24);
+    const k = Math.hypot(kx, ky);
+    if (k < 2 || k > 12) continue;
+    waves.push([kx, ky, 1.1 / k, rnd() * Math.PI * 2]);
+  }
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       let dx = 0;
       let dy = 0;
-      for (const [kx, ky, a] of waves) {
-        const p = ((kx * x + ky * y) / size) * Math.PI * 2;
+      for (const [kx, ky, a, ph] of waves) {
+        const p = ((kx * x + ky * y) / size) * Math.PI * 2 + ph;
         const c = Math.cos(p) * a;
         dx += c * kx;
         dy += c * ky;
       }
-      const n = new THREE.Vector3(-dx * 0.08, -dy * 0.08, 1).normalize();
+      const n = new THREE.Vector3(-dx * 0.06, -dy * 0.06, 1).normalize();
       const i = (y * size + x) * 4;
       img.data[i] = (n.x * 0.5 + 0.5) * 255;
       img.data[i + 1] = (n.y * 0.5 + 0.5) * 255;
@@ -255,6 +266,24 @@ export function createHill(tex) {
     color: 0x1d6690, roughness: 0.08, metalness: 0.15,
     normalMap, normalScale: new THREE.Vector2(0.45, 0.45),
   });
+  // 波の模様を 2 枚重ねる：2 枚目は 0.37 倍の細かさで 37° 回し、逆向きに流す（1 枚だと 17m ごとの繰り返しと、
+  // 遠くの格子状の照り返しが目立つ）。遠いほど凹凸を弱める（30m から 300m で 15% まで。VR でのちらつきを抑える）
+  normalMap.anisotropy = 8;
+  const seaWave = { value: new THREE.Vector2() };
+  seaMat.onBeforeCompile = (shader) => {
+    shader.uniforms.seaWave = seaWave;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', 'uniform vec2 seaWave;\nvoid main() {')
+      .replace(
+        'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+        `vec2 seaUv2 = mat2(0.799, 0.602, -0.602, 0.799) * vNormalMapUv * 0.37 + seaWave;
+        vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
+        vec3 mapN2 = texture2D( normalMap, seaUv2 ).xyz * 2.0 - 1.0;
+        mapN = vec3( mapN.xy * 0.6 + mapN2.xy * 0.55, mapN.z * mapN2.z );
+        mapN.xy *= mix( 1.0, 0.15, smoothstep( 30.0, 300.0, length( vViewPosition ) ) );`,
+      );
+  };
+  seaMat.customProgramCacheKey = () => 'sea2';
   const sea = new THREE.Mesh(new THREE.CircleGeometry(1900, 96), seaMat);
   sea.rotation.x = -Math.PI / 2;
   sea.position.y = SEA_LEVEL;
@@ -329,6 +358,7 @@ export function createHill(tex) {
       time += dt;
       // 波を流す
       normalMap.offset.set(time * 0.012, time * 0.007);
+      seaWave.value.set(-time * 0.009, time * 0.011);
       for (const b of boats) {
         b.boat.position.x = b.x + Math.sin(time * 0.02 + b.phase) * 40;
         b.boat.rotation.z = Math.sin(time * 0.8 + b.phase) * 0.05;

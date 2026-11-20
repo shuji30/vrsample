@@ -249,7 +249,8 @@ async function start() {
     environment: !safeMode,
     // キャラクターの視線に追わせる。?vrm= で別の VRM に差し替えられる
     camera,
-    characterUrl: params.get('vrm') ?? undefined,
+    // ?girl=original で、コードで作るオリジナルのモデル（src/girlmodel.js）
+    characterUrl: params.get('girl') === 'original' ? 'original' : (params.get('vrm') ?? undefined),
     wander: params.get('walk') !== 'off',
     sit: params.get('sit') !== 'off',
     voice: params.get('voice') !== 'off',

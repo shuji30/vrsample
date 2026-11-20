@@ -961,6 +961,7 @@ TURBO KART VR と同じものをそのまま使えます（`ws://127.0.0.1:18765
 | `?sit=off` | キャラクターをソファに座らせない |
 | `?debug` | VR 内にデバッグパネルを出す（PC では D キーでも切替） |
 | `?vrm=./models/other.vrm` | 読み込む VRM を差し替える（既定 `./models/character.vrm`） |
+| `?girl=original` | 女の子を、コードで作るオリジナルのモデル（`src/girlmodel.js`）にする。外から持ち込むアセットが無い（試作） |
 | `?name=さくら` | 女の子の名前（説明画面で付けた名前より先に使う。覚え直しはしない） |
 | `?walk=off` | キャラクターを歩かせず、その場に立たせる |
 | `?bridge=off` | デバイスブリッジ（ffb-bridge）につながない |

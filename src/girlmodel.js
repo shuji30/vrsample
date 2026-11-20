@@ -81,21 +81,49 @@ const FINGERS = [['Index', 0.022, 1.0], ['Middle', 0.008, 1.08], ['Ring', -0.007
 const FINGER_LEN = [0.026, 0.019, 0.016];
 
 /** 頭の輪郭：頭の骨（首の上）からの高さ y での半径。あごは細く、目の高さでいちばん広い */
-const HEAD_PROFILE = [[0.0, 0.028], [0.012, 0.05], [0.03, 0.07], [0.055, 0.087], [0.085, 0.097], [0.115, 0.1], [0.15, 0.093], [0.18, 0.073], [0.2, 0.045], [0.212, 0.0]];
+const HEAD_TOP = [[0.18, 0.075], [0.197, 0.053], [0.207, 0.031], [0.212, 0.0]];
+// 向きごとの輪郭。回転体（どの向きも同じ輪郭）だと、横顔が丸い筒になる。
+//   前：あごの先が前へ出て（あごの下は首へ向かって引っ込む）、口もと・ほおがふくらみ、目のあたりが少しくぼんで、おでこが丸い
+//   横：あごの線は細く、耳の高さでいちばん広い
+//   後ろ：首のつけ根は細く、後頭部が大きく丸く張り出す
+const HEAD_FRONT = [[0.0, 0.03], [0.005, 0.05], [0.014, 0.0635], [0.03, 0.0775], [0.05, 0.0875], [0.076, 0.0905], [0.11, 0.099], [0.15, 0.094], ...HEAD_TOP];
+const HEAD_SIDE = [[0.0, 0.02], [0.012, 0.038], [0.03, 0.062], [0.055, 0.086], [0.085, 0.097], [0.115, 0.1], [0.15, 0.093], ...HEAD_TOP];
+const HEAD_BACK = [[0.0, 0.02], [0.015, 0.04], [0.04, 0.075], [0.07, 0.098], [0.11, 0.108], [0.15, 0.103], [0.18, 0.084], [0.197, 0.059], [0.207, 0.034], [0.212, 0.0]];
 const HEAD_X = 0.95;   // 左右は少し細く
 /** 頭・髪・顔の拡大率。絵としての頭身（5.5 頭身ほど）にする。頭の部品は等身大で作って、頭の骨を中心に広げる */
 const HEAD_SCALE = 1.22;
-function headR(y) {
-  const p = HEAD_PROFILE;
-  if (y <= p[0][0]) return p[0][1];
-  for (let i = 1; i < p.length; i++) {
-    if (y <= p[i][0]) {
-      const t = (y - p[i - 1][0]) / (p[i][0] - p[i - 1][0]);
-      const s = t * t * (3 - 2 * t);
-      return p[i - 1][1] + (p[i][1] - p[i - 1][1]) * s;
-    }
-  }
-  return 0;
+/**
+ * 点の並び [x, 値, 値, …] を、なめらかにつないだ曲線の x での値（col 番目の値）。
+ * 点ごとの傾きを前後の点から決める 3 次の補間（Catmull-Rom）。前は点のあいだを smoothstep でつないでいたが、
+ * それだと点ごとに傾きが 0 になり、輪郭が段々になる（顔・胴・手足が、がたがたに見えた）
+ */
+function spline(points, x, col = 1) {
+  const n = points.length;
+  if (x <= points[0][0]) return points[0][col];
+  if (x >= points[n - 1][0]) return points[n - 1][col];
+  let i = 1;
+  while (i < n - 1 && points[i][0] < x) i++;
+  const p0 = points[i - 1];
+  const p1 = points[i];
+  const h = p1[0] - p0[0];
+  const slope = (k) => {
+    const a = points[Math.max(0, k - 1)];
+    const b = points[Math.min(n - 1, k + 1)];
+    return (b[col] - a[col]) / (b[0] - a[0]);
+  };
+  const t = (x - p0[0]) / h;
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (2 * t3 - 3 * t2 + 1) * p0[col] + (t3 - 2 * t2 + t) * h * slope(i - 1) + (-2 * t3 + 3 * t2) * p1[col] + (t3 - t2) * h * slope(i);
+}
+/** 頭の半径：頭の骨からの高さ y、まわりの角度 a（0 が正面、±π/2 が横、π が後ろ）。前・横・後ろの輪郭を、向きでなめらかに混ぜる */
+function headR(y, a = 0) {
+  if (y >= 0.212) return 0;
+  const c = Math.cos(a);
+  const wf = c > 0 ? c * c : 0;
+  const wb = c < 0 ? c * c : 0;
+  const r = spline(HEAD_FRONT, y) * wf + spline(HEAD_BACK, y) * wb + spline(HEAD_SIDE, y) * (1 - wf - wb);
+  return Math.max(0, r);
 }
 
 // --- 部品を 1 つのジオメトリへ集める -----------------------------------------------------
@@ -217,13 +245,7 @@ export function createGirlModel({ camera = null } = {}) {
     axis.normalize();
     const side1 = new THREE.Vector3(0, 0, 1);
     const side2 = new THREE.Vector3().crossVectors(axis, side1).normalize();
-    const radius = (t) => {
-      let i = 1;
-      while (i < profile.length - 1 && profile[i][0] < t) i++;
-      const p = profile[i - 1];
-      const q = profile[i];
-      return p[1] + (q[1] - p[1]) * THREE.MathUtils.smoothstep(t, p[0], q[0]);
-    };
+    const radius = (t) => spline(profile, t);
     const pos = [];
     const idx = [];
     for (let j = 0; j <= rows; j++) {
@@ -265,19 +287,12 @@ export function createGirlModel({ camera = null } = {}) {
   {
     // [高さ, 左右の半径, 前後の半径, 前へのずれ]
     const rings = [[0.835, 0.119, 0.097, 0], [0.86, 0.11, 0.088, 0], [0.9, 0.098, 0.077, 0.002], [0.95, 0.102, 0.08, 0.006], [1.0, 0.11, 0.088, 0.012],
-      [1.035, 0.114, 0.088, 0.012], [1.075, 0.117, 0.078, 0.004], [1.105, 0.1, 0.066, 0], [1.125, 0.062, 0.05, 0], [1.14, 0.04, 0.04, 0]];
-    const SEG = 24;
+      [1.035, 0.114, 0.088, 0.012], [1.075, 0.118, 0.078, 0.004], [1.105, 0.11, 0.067, 0], [1.125, 0.075, 0.052, 0], [1.14, 0.042, 0.04, 0]];
+    const SEG = 32;
     const pos = [];
     const idx = [];
-    const ROWS = 36;
-    const at = (y) => {
-      let i = 1;
-      while (i < rings.length - 1 && rings[i][0] < y) i++;
-      const a = rings[i - 1];
-      const b = rings[i];
-      const t = THREE.MathUtils.smoothstep(y, a[0], b[0]);
-      return [a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t];
-    };
+    const ROWS = 44;
+    const at = (y) => [spline(rings, y, 1), spline(rings, y, 2), spline(rings, y, 3)];
     for (let j = 0; j <= ROWS; j++) {
       const y = THREE.MathUtils.lerp(rings[0][0], rings[rings.length - 1][0], j / ROWS);
       const [rx, rz, oz] = at(y);
@@ -314,15 +329,19 @@ export function createGirlModel({ camera = null } = {}) {
   for (const s of [1, -1]) ball('upperChest', V(0.022 * s, 1.1, 0.07), [0.022, 0.013, 0.009], RIBBON);
   ball('upperChest', V(0, 1.1, 0.074), [0.008, 0.01, 0.008], 0xb53838);
   // 首
-  limb('neck', V(0, 1.115, 0), V(0, 1.215, 0), 0.031, 0.029, SKIN, { caps: false, shade: SKIN_SHADE });
+  // 首：付け根は太く、上は細く。頭の中まで入れて、あごの下の面とつなぐ。少し前へ傾ける
+  limb('neck', V(0, 1.11, -0.004), V(0, 1.16, 0), 0.037, 0.03, SKIN, { caps: false, shade: SKIN_SHADE, seg: 18 });
+  limb('neck', V(0, 1.16, 0), V(0, 1.225, 0.004), 0.03, 0.03, SKIN, { caps: false, shade: SKIN_SHADE, seg: 18 });
 
   for (const [side, s] of [['left', 1], ['right', -1]]) {
     const sh = rest[`${side}UpperArm`];
     const el = rest[`${side}LowerArm`];
     const wr = rest[`${side}Hand`];
     // 肩（ふくらんだ袖）・二の腕・ひじ・前腕
-    ball(`${side}UpperArm`, sh, [0.046, 0.044, 0.044], BLOUSE, 0xcdd2dc);
-    limb(`${side}UpperArm`, sh, V(sh.x + 0.08 * s, sh.y, 0), 0.044, 0.041, BLOUSE, { caps: false, shade: 0xcdd2dc });
+    // 袖：胴の中から肩を通って二の腕の途中まで、1 本のなめらかな形。肩の関節の前後は、肩の骨と腕の骨で分け合う
+    // （前は腕の骨に固定した球だったので、腕を下ろすと、胴と別の玉が付いているように見えた）
+    tube(`${side}Shoulder`, `${side}UpperArm`, V(0.055 * s, sh.y - 0.004, 0), sh, V(sh.x + 0.085 * s, sh.y, 0),
+      [[0, 0.05], [0.35, 0.051], [0.6, 0.049], [0.85, 0.044], [1, 0.041]], BLOUSE, { shade: 0xcdd2dc, seg: 18, rows: 18, blend: 0.035 });
     {
       const a = V(sh.x + 0.06 * s, sh.y, 0);
       const tj = Math.abs(el.x - a.x) / Math.abs(wr.x - a.x);
@@ -371,22 +390,49 @@ export function createGirlModel({ camera = null } = {}) {
 
   // ここから頭・髪：等身大で作り、頭の骨を中心に HEAD_SCALE 倍に広げる
   B.pre.makeTranslation(rest.head.x, rest.head.y, rest.head.z).scale(V(HEAD_SCALE, HEAD_SCALE, HEAD_SCALE)).multiply(new THREE.Matrix4().makeTranslation(-rest.head.x, -rest.head.y, -rest.head.z));
-  // 頭（回転体）。左右は少し細く
+  // 頭：向きごとに輪郭の違う立体（headR）。左右は少し細く
   {
-    const pts = [];
-    for (let i = 0; i <= 26; i++) {
-      const y = (i / 26) * 0.212;
-      pts.push(new THREE.Vector2(Math.max(0.0005, headR(y)), y));
+    const SEG = 52;
+    const ROWS = 48;
+    const pos = [];
+    const idx = [];
+    for (let j = 0; j <= ROWS; j++) {
+      const y = (j / ROWS) * 0.212;
+      for (let i = 0; i <= SEG; i++) {
+        const a = (i / SEG) * Math.PI * 2 - Math.PI;
+        const r = Math.max(0.0005, headR(y, a));
+        pos.push(rest.head.x + Math.sin(a) * r * HEAD_X, rest.head.y + y, Math.cos(a) * r);
+      }
     }
-    const g = new THREE.LatheGeometry(pts, 28);
-    M.compose(rest.head, Q.identity(), V(HEAD_X, 1, 1));
-    B.add(g, M, index.head, SKIN, SKIN_SHADE);
+    for (let j = 0; j < ROWS; j++) {
+      for (let i = 0; i < SEG; i++) {
+        const k = j * (SEG + 1) + i;
+        idx.push(k, k + 1, k + SEG + 1, k + 1, k + SEG + 2, k + SEG + 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    B.add(g, new THREE.Matrix4(), index.head, SKIN, SKIN_SHADE);
     g.dispose();
-    // 鼻：小さなふくらみ（顔の絵は平らなので、横から見たときの手がかりになる）
-    ball('head', V(0, rest.head.y + 0.051, headR(0.051) - 0.0035), [0.0065, 0.0075, 0.008], SKIN, SKIN_SHADE);
-    // あごの下をふさぐ・耳
-    ball('head', V(0, rest.head.y + 0.004, 0), [0.03, 0.012, 0.03], SKIN_SHADE);
-    for (const s of [1, -1]) ball('head', V(0.092 * s, rest.head.y + 0.078, -0.006), [0.012, 0.022, 0.016], SKIN, SKIN_SHADE);
+    // 鼻：ごく小さなふくらみ（顔の面から 2mm ほど出るだけ。大きいと、横から見て玉が付いているように見える）
+    // 鼻：鼻筋から鼻先へなだらかに出る、しずく形（先は 7mm ほど出る。玉のままだと付け鼻に、小さすぎると平らに見える）
+    {
+      const g = new THREE.SphereGeometry(1, 14, 12);
+      const p = g.attributes.position;
+      for (let k = 0; k < p.count; k++) {
+        const yy = p.getY(k);
+        if (yy > 0) { p.setX(k, p.getX(k) * (1 - yy * 0.55)); p.setZ(k, p.getZ(k) * (1 - yy * 0.8)); }
+      }
+      g.computeVertexNormals();
+      M.compose(V(0, rest.head.y + 0.056, headR(0.056) - 0.0035), Q.identity(), V(0.0062, 0.016, 0.0105));
+      B.add(g, M, index.head, SKIN, SKIN_SHADE);
+      g.dispose();
+    }
+    // あごの下の面（あご先から首へ）・耳
+    ball('head', V(0, rest.head.y + 0.006, 0.012), [0.034, 0.011, 0.04], SKIN, SKIN_SHADE);
+    for (const s of [1, -1]) ball('head', V((headR(0.078, Math.PI / 2) * HEAD_X - 0.003) * s, rest.head.y + 0.078, -0.006), [0.011, 0.021, 0.015], SKIN, SKIN_SHADE);
   }
 
   // 髪：頭を包むボブ。前は生えぎわまで、横と後ろはあごの下まで下ろす
@@ -412,8 +458,10 @@ export function createGirlModel({ camera = null } = {}) {
         const t = j / ROWS;
         const y = THREE.MathUtils.lerp(TOP, bottom, t);
         // 頭より少し外。耳より下は、頭がすぼまっても髪はまっすぐ下ろす（すそは少し内へ）
-        let r = Math.max(headR(Math.min(y, 0.206)), y < 0.09 ? 0.097 - Math.max(0, 0.02 - y) * 0.25 : 0) * 1.06 + 0.007;
-        if (y > 0.2) r = Math.max(0.0005, r * (1 - (y - 0.2) / (TOP - 0.2 + 1e-6)));
+        // てっぺんは、頭の丸みに沿って閉じる（まっすぐ絞ると、とがる）
+        const yy = y * (0.212 / TOP);
+        const r = Math.max(0.0005, Math.max(headR(yy, a), y < 0.09 ? 0.097 - Math.max(0, 0.02 - y) * 0.25 : 0) * 1.06
+          + 0.007 * (1 - THREE.MathUtils.smoothstep(y, 0.19, TOP)));
         pos.push(Math.sin(a) * r * HEAD_X, hy + y, Math.cos(a) * r);
       }
     }
@@ -445,7 +493,7 @@ export function createGirlModel({ camera = null } = {}) {
     // 前髪：生えぎわから眉の上へ下がる房。1 つおきに色を明るく
     // 薄く、下がとがった房を、少しずつ重ねて並べる（丸い玉を並べると、ソーセージに見える）
     [-0.98, -0.74, -0.5, -0.27, -0.04, 0.2, 0.44, 0.68, 0.92].forEach((a, i) => {
-      const r = headR(0.112) + 0.0075;
+      const r = headR(0.112, a) + 0.0075;
       const g2 = new THREE.SphereGeometry(1, 10, 10);
       // 下へ行くほど細く（しずくを逆さにした形）
       const p2 = g2.attributes.position;
@@ -472,7 +520,7 @@ export function createGirlModel({ camera = null } = {}) {
     for (const tilt of [0.5, -0.5]) {
       const g2 = new THREE.CapsuleGeometry(0.0042, 0.03, 3, 6);
       const a = 0.86;
-      const r = headR(0.125) + 0.021;
+      const r = headR(0.125, a) + 0.021;
       M.compose(V(Math.sin(a) * r * HEAD_X, hy + 0.128, Math.cos(a) * r), Q.setFromEuler(new THREE.Euler(0, a, Math.PI / 2 + tilt)), V(1, 1, 1));
       B.add(g2, M, index.head, PIN);
       g2.dispose();
@@ -563,36 +611,39 @@ export function createGirlModel({ camera = null } = {}) {
 // --- 顔の絵 ------------------------------------------------------------------------------
 /** 顔の板の範囲（頭の骨から。m） */
 const FACE = { x0: -0.08, x1: 0.08, y0: 0.004, y1: 0.152 };
+/** 顔の板が、正面から左右へ回り込む角度（rad） */
+const FACE_ANGLE = 1.02;
 const EYE = { x: 0.0315, y: 0.074, rx: 0.0165, ry: 0.0205 };
 
 function createFace() {
   const SIZE = 512;
+  // 絵は 512 の目盛りで描き、キャンバスは 2 倍の細かさにする（近くで見ても、線がぎざぎざにならない）
   const canvas = document.createElement('canvas');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
+  canvas.width = SIZE * 2;
+  canvas.height = SIZE * 2;
   const ctx = canvas.getContext('2d');
+  ctx.scale(2, 2);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
+  texture.anisotropy = 8;
 
   // 頭の曲面に沿わせた板（頭より 1.5mm 外）
-  const NX = 20;
-  const NY = 18;
+  const NX = 36;
+  const NY = 32;
   const pos = [];
   const uv = [];
   const idx = [];
   for (let j = 0; j <= NY; j++) {
     const v = j / NY;
     const y = THREE.MathUtils.lerp(FACE.y0, FACE.y1, v);
-    const r = headR(y);
     for (let i = 0; i <= NX; i++) {
-      const u = i / NX;
-      // 板の横の位置を、その高さの頭の幅の中に収める（あごの近くは頭が細い）
-      const x = THREE.MathUtils.clamp(THREE.MathUtils.lerp(FACE.x0, FACE.x1, u), -r * HEAD_X * 0.985, r * HEAD_X * 0.985);
-      const k = x / (r * HEAD_X);
-      const z = r * Math.sqrt(Math.max(0, 1 - k * k)) + 0.0015;
-      pos.push(x, y, z);
-      uv.push(u, v);
+      // 正面から左右へ FACE_ANGLE まで、頭の面に沿って置く。絵の横の位置は、正面から見た位置（x）で決める
+      // （こうすると、正面から見た絵はゆがまず、横へ回り込むぶんだけ縮む）
+      const a = THREE.MathUtils.lerp(-FACE_ANGLE, FACE_ANGLE, i / NX);
+      const r = headR(y, a);
+      const x = Math.sin(a) * r * HEAD_X;
+      pos.push(x, y, Math.cos(a) * r + 0.0015);
+      uv.push(THREE.MathUtils.clamp((x - FACE.x0) / (FACE.x1 - FACE.x0), 0, 1), v);
     }
   }
   for (let j = 0; j < NY; j++) {

@@ -455,16 +455,16 @@ export function createGirlModel({ camera = null } = {}) {
     limb(`${side}UpperLeg`, V(hip.x, hip.y + 0.03, 0), V(hip.x, hip.y - 0.1, 0), 0.076, 0.072, SLIP, { caps: false, shade: SKIRT_SHADE, seg: 16 });
     {
       const a = V(hip.x, hip.y - 0.01, 0);
-      const b = V(ankle.x, ankle.y + 0.005, 0);
+      const b = V(ankle.x, ankle.y - 0.012, 0);
       const tj = (a.y - knee.y) / (a.y - b.y);
-      tube(`${side}UpperLeg`, `${side}LowerLeg`, a, knee, b, [[0, 0.073], [0.2, 0.067], [tj - 0.06, 0.05], [tj, 0.0465], [tj + 0.14, 0.0485], [0.84, 0.034], [0.95, 0.0295], [1, 0.03]],
+      tube(`${side}UpperLeg`, `${side}LowerLeg`, a, knee, b, [[0, 0.073], [0.2, 0.067], [tj - 0.06, 0.05], [tj, 0.0465], [tj + 0.14, 0.0485], [0.84, 0.034], [0.94, 0.0292], [1, 0.0288]],
         SKIN, { shade: SKIN_SHADE, seg: 18, rows: 40, blend: 0.045 });
     }
     // 足と、かかとの低い靴
     // 足首から足へ：くるぶし・かかと・足の甲をつなぐ（すねの管をそのまま足に刺すと、棒に見える）
-    ball(`${side}Foot`, V(ankle.x, ankle.y - 0.004, -0.002), [0.031, 0.032, 0.036], SKIN, SKIN_SHADE);
+    // 足首の球は、すねの端より小さくして中に収める（大きいと、足首に輪をはめたように見える）
+    ball(`${side}Foot`, V(ankle.x, ankle.y - 0.006, 0), [0.027, 0.03, 0.029], SKIN, SKIN_SHADE);
     ball(`${side}Foot`, V(ankle.x, 0.045, -0.014), [0.028, 0.038, 0.03], SKIN, SKIN_SHADE);
-    for (const k of [1, -1]) ball(`${side}Foot`, V(ankle.x + 0.0245 * k, ankle.y - 0.002, -0.004), [0.009, 0.011, 0.011], SKIN, SKIN_SHADE);
     {
       // 足の甲：足首から つま先へ下る
       const g = new THREE.SphereGeometry(1, 14, 10);
@@ -507,8 +507,7 @@ export function createGirlModel({ camera = null } = {}) {
     B.add(g, new THREE.Matrix4(), index.head, SKIN, SKIN_SHADE);
     g.dispose();
     // あごの下の面（あご先から首へ）・耳
-    // あごの下の面：あご先から首へ向かう、影になる面
-    ball('head', V(0, rest.head.y + 0.007, 0.01), [0.03, 0.009, 0.036], SKIN_SHADE);
+    // あごの下は、首が頭の中まで入っているので、ふさぐ部品は置かない（置くと、あごにふたが付いて見える）
     // 耳：頭の横（少し後ろ）に、薄いだ円。この髪型では髪に隠れるので、髪から突き出ない大きさに
     for (const s of [1, -1]) {
       const ex = headR(0.098, Math.PI / 2 + 0.12) * HEAD_X;

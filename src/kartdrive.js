@@ -298,7 +298,13 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     const unwatch = bridge.onStatus(() => { if (panel.isConnected) draw(); else unwatch(); });
     slot.addEventListener('click', async (event) => {
       if (event.target.hasAttribute?.('data-bridge-retry')) { bridge.connectNow(); setTimeout(draw, 800); }
-      if (event.target.dataset?.bridgeTest) bridge.test(event.target.dataset.bridgeTest, Math.min(1, 0.5 * ffb.strength));
+      if (event.target.dataset?.bridgeTest) {
+        // 「向きを逆にする」のときは、テストの左右も入れ替える（走行中の力と同じ向きの決め方にする。前はブリッジへ
+        // 名前をそのまま送っていたので、逆にしても「左へ」「右へ」だけ逆のままだった）
+        const effect = event.target.dataset.bridgeTest;
+        const swapped = ffb.invert ? ({ left: 'right', right: 'left' })[effect] ?? effect : effect;
+        bridge.test(swapped, Math.min(1, 0.5 * ffb.strength));
+      }
       if (event.target.hasAttribute?.('data-connect')) { await ffb.connect(); draw(); }
       if (event.target.hasAttribute?.('data-describe')) {
         const dump = slot.querySelector('[data-dump]');
@@ -579,6 +585,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
 
   return {
     bridge,
+    /** ハンコンの設定の画面を開く（開始画面のボタンから。H キーと同じ画面。開いていればそのまま） */
+    openWheelPanel() { if (!document.getElementById('wheel-panel')) wheel.openPanel(); },
     update,
     enter,
     exit,

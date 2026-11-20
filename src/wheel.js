@@ -353,7 +353,11 @@ export function createWheelInput({ bridge = null } = {}) {
       (pad.buttons ?? []).forEach((b, index) => {
         const key = `${pad.id}#${index}`;
         const down = Boolean(b?.pressed);
-        const was = Boolean(lastPressed.get(key));
+        // 記録の無いボタン（最初に見たとき・つなぎ直したあと）は、いまの状態を覚えるだけにして、押したことにしない。
+        // 乗り物に乗るとハンコンをつなぎ直して記録を消すので、「乗る」のボタンを押したまま次のフレームに入ると、
+        // もう一度押したことになって、乗った直後に降りていた（乗れない・視点のボタンも効かない、と見えた）
+        if (!lastPressed.has(key)) { lastPressed.set(key, down); return; }
+        const was = lastPressed.get(key);
         if (down === was) return;
         lastPressed.set(key, down);
         if (learning && down) {

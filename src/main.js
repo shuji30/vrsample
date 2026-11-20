@@ -7,6 +7,7 @@ import { createKartDrive } from './kartdrive.js';
 import { createDebugPanel } from './debug.js';
 import { createMusic } from './music.js';
 import { givenGirlName, givenGirlNameYomi, setGirlName, girlNameSpoken } from './girlname.js';
+import { GIRL_MODELS, girlModelId, girlModelUrl, setGirlModel } from './girlchoice.js';
 import { createTouchControls, isTouchDevice } from './touch.js';
 import * as mixer from './mixer.js';
 import { VERSION, RELEASED } from './version.js';
@@ -255,7 +256,8 @@ async function start() {
     // キャラクターの視線に追わせる。?vrm= で別の VRM に差し替えられる
     camera,
     // ?girl=original で、コードで作るオリジナルのモデル（src/girlmodel.js）
-    characterUrl: params.get('girl') === 'original' ? 'original' : (params.get('vrm') ?? undefined),
+    // どちらも無ければ、説明画面の「女の子の見た目」で選んだモデル（src/girlchoice.js）
+    characterUrl: params.get('girl') === 'original' ? 'original' : (params.get('vrm') ?? girlModelUrl()),
     wander: params.get('walk') !== 'off',
     sit: params.get('sit') !== 'off',
     voice: params.get('voice') !== 'off',
@@ -704,6 +706,25 @@ const talkEye = new THREE.Vector3();
   const voiceStatusEl = document.getElementById('voice-status');
   // 女の子の名前（説明画面）。付けると女の子が喜ぶ。入力中のキーは、歩く・拾う・乗るなどへ渡さない
   {
+    // 女の子の見た目：選び直したら覚えて、ページを読み込み直す（モデルは起動のときに 1 回だけ読むので）
+    const modelEl = document.getElementById('girl-model');
+    if (modelEl) {
+      for (const m of GIRL_MODELS) modelEl.add(new Option(m.label, m.id));
+      modelEl.value = girlModelId();
+      // ?vrm= や ?girl=original で開いているあいだは、そちらが先に効く
+      if (params.get('vrm') || params.get('girl') === 'original') modelEl.disabled = true;
+      modelEl.addEventListener('change', () => {
+        if (setGirlModel(modelEl.value)) {
+          const url = new URL(location.href);
+          url.searchParams.delete('model');   // URL の指定が残っていると、覚えた選択より先に効いてしまう
+          location.replace(url);
+        } else {
+          const note = document.getElementById('girl-model-note');
+          if (note) note.textContent = 'このブラウザでは選択を覚えられないので、入れ替えられませんでした（URL の末尾に ?model=swim か ?model=street を付けると選べます）';
+          modelEl.value = girlModelId();
+        }
+      });
+    }
     const form = document.getElementById('girl-name');
     const nameEl = document.getElementById('girl-name-input');
     const yomiEl = document.getElementById('girl-name-yomi');

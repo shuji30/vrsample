@@ -1373,5 +1373,5 @@ export function createPark(scene, tex) {
   group.add(createKartCourse({ grass: lawn.material }));
   group.add(createBikeCourse());
 
-  return { group, sky, skyUniforms, hill };
+  return { group, sky, skyUniforms, hill, lawnMaterial: lawn.material };
 }

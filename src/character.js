@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import { createGirlModel } from './girlmodel.js';
 import { SOFA } from './furniture.js';
 
 /**
@@ -611,18 +612,24 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let idleUntil = 1.5;
   let headRestY = 1.2;     // 頭のボーンの、足元からの高さ
 
-  const ready = loader
-    .loadAsync(url)
-    .then((gltf) => {
-      vrm = gltf.userData.vrm;
-      if (!vrm) throw new Error('VRM 拡張が入っていないファイルです');
+  // url が 'original' なら、コードで作るオリジナルのモデル（girlmodel.js。VRM と同じ口を持つ）。ほかは VRM を読む
+  const source = url === 'original'
+    ? Promise.resolve().then(() => createGirlModel({ camera }))
+    : loader.loadAsync(url).then((gltf) => {
+      const model = gltf.userData.vrm;
+      if (!model) throw new Error('VRM 拡張が入っていないファイルです');
 
       // VRM 0.x は後ろ（-Z）を向いて出てくる。1.0 なら何もしない
-      VRMUtils.rotateVRM0(vrm);
+      VRMUtils.rotateVRM0(model);
       // VR は 1 フレームに 2 回描くので、無駄な頂点とスキンは落としておく
-      VRMUtils.removeUnnecessaryVertices(vrm.scene);
-      VRMUtils.combineSkeletons(vrm.scene);
-      VRMUtils.combineMorphs(vrm);
+      VRMUtils.removeUnnecessaryVertices(model.scene);
+      VRMUtils.combineSkeletons(model.scene);
+      VRMUtils.combineMorphs(model);
+      return model;
+    });
+  const ready = source
+    .then((model) => {
+      vrm = model;
 
       vrm.scene.traverse((object) => {
         if (!object.isMesh) return;

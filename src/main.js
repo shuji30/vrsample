@@ -257,7 +257,7 @@ async function start() {
     camera,
     // ?girl=original で、コードで作るオリジナルのモデル（src/girlmodel.js）
     // どちらも無ければ、説明画面の「女の子の見た目」で選んだモデル（src/girlchoice.js）
-    characterUrl: params.get('girl') === 'original' ? 'original' : (params.get('vrm') ?? girlModelUrl()),
+    characterUrl: params.get('girl') === 'original' ? 'original' : (params.get('vrm') ?? girlModelUrl(VERSION)),
     wander: params.get('walk') !== 'off',
     sit: params.get('sit') !== 'off',
     voice: params.get('voice') !== 'off',

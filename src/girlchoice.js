@@ -33,8 +33,10 @@ export function girlModelId() {
 }
 
 /** いま選ばれているモデルのファイル */
-export function girlModelUrl() {
-  return GIRL_MODELS.find((m) => m.id === girlModelId()).url;
+export function girlModelUrl(version = '') {
+  // 版を付けて読む：モデルを作り直しても名前が同じだと、ブラウザが覚えている古いファイルが出てしまう
+  const url = GIRL_MODELS.find((m) => m.id === girlModelId()).url;
+  return version ? `${url}?v=${encodeURIComponent(version)}` : url;
 }
 
 /** 選び直す。覚えられたら true（覚えられないと、読み込み直しても元に戻る） */

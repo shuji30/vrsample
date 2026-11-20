@@ -25,15 +25,16 @@ export const THEMES = {
     sunDirection: [-9, 7.2, -4.2],
 
     // 空（park.js の天球）：高さで混ぜる指数、太陽の円盤（色・半径・ぼかし（度））と光の輪、地平線の帯、星
-    sky: { pow: 0.55, disc: 0xfff6e0, discRadius: 1.4, discGain: 6, discSoft: 0.3, moon: false, glow: 0x9a8f70, glowPow: 64, band: 0x000000, stars: 0 },
+    sky: { pow: 0.55, disc: 0xfff6e0, discRadius: 1.4, discGain: 6, discSoft: 0.3, moon: false, glow: 0x9a8f70, glowPow: 64, band: 0x000000, stars: 0, clouds: 0.42, cloud: 0xffffff, cloudShade: 0xb4c2d6 },
 
     // 窓の面光源 = 窓から見える空の明るさ
     windowColor: 0xc5dcf4,
     windowIntensity: 3.4,
 
+    // 日陰は空の青で照らす（真っ黒にしない。日向の暖かい色との差で、晴れた日に見える）
     ambientSky: 0xbcd4ea,
-    ambientGround: 0x6d6459,
-    ambientIntensity: 0.40,
+    ambientGround: 0x7a705e,
+    ambientIntensity: 0.46,
 
     lampColor: 0xffd9a8,
     lampIntensity: 0,
@@ -56,7 +57,7 @@ export const THEMES = {
     sunDirection: [-13, 2.3, -3.0],
 
     // 上の紫が見えるよう指数を小さく（0.55 では空全体がほぼ同じ赤橙だった）。地平線の上に明るい帯
-    sky: { pow: 0.32, disc: 0xffb060, discRadius: 2.2, discGain: 1.6, discSoft: 0.4, moon: false, glow: 0xcc7b40, glowPow: 40, band: 0x5a3a14, stars: 0 },
+    sky: { pow: 0.32, disc: 0xffb060, discRadius: 2.2, discGain: 1.6, discSoft: 0.4, moon: false, glow: 0xcc7b40, glowPow: 40, band: 0x5a3a14, stars: 0, clouds: 0.4, cloud: 0xffa878, cloudShade: 0x7a4a66 },
 
     windowColor: 0xffb277,
     windowIntensity: 2.2,
@@ -87,7 +88,7 @@ export const THEMES = {
     sunDirection: [-7, 6.5, -5.0],
 
     // 月（光の向きと同じ所。実物の約 4 倍の 2°）と星
-    sky: { pow: 0.55, disc: 0xd8e0f6, discRadius: 1.8, discGain: 1, discSoft: 0.2, moon: true, glow: 0x1c2440, glowPow: 200, band: 0x000000, stars: 1 },
+    sky: { pow: 0.55, disc: 0xd8e0f6, discRadius: 1.8, discGain: 1, discSoft: 0.2, moon: true, glow: 0x1c2440, glowPow: 200, band: 0x000000, stars: 1, clouds: 0.38, cloud: 0x222c44, cloudShade: 0x0c1020 },
 
     windowColor: 0x3d4f84,
     windowIntensity: 0.40,

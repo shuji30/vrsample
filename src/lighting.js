@@ -213,6 +213,10 @@ export function createLighting(renderer, scene, {
       skyUniforms.glowPow.value = s.glowPow;
       skyUniforms.bandColor.value.setHex(s.band);
       skyUniforms.stars.value = s.stars;
+      // 雲（色・影の色・量）
+      skyUniforms.cloudColor.value.setHex(s.cloud ?? 0xffffff);
+      skyUniforms.cloudShade.value.setHex(s.cloudShade ?? 0xb8c4d4);
+      skyUniforms.cloudAmount.value = s.clouds ?? 0;
     }
 
     if (!scene.fog) scene.fog = new THREE.Fog(theme.fog, theme.fogNear, theme.fogFar);

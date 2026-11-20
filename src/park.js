@@ -203,6 +203,23 @@ function makeRandom(seed) {
   };
 }
 
+/**
+ * 葉の板の陰影を、丸い樹冠のようにする。交差させた板は、面の向きのまま照らすと、裏を向いた板が真っ黒になり、
+ * 「暗い板の束」に見える。法線を上向きへ寄せ（板の向きは 40% 残す）、どの板も空と太陽から同じように
+ * 照らされるようにする。instanceColor で、上の葉を明るい黄緑・下の葉を影の色にして、明暗 2 段にする
+ */
+function roundFoliage(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <normal_fragment_begin>',
+      `#include <normal_fragment_begin>
+      normal = normalize( ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz * 0.6 + normal * 0.4 );`,
+    );
+  };
+  material.customProgramCacheKey = () => `roundFoliage:${material.type}`;
+  return material;
+}
+
 // --- 空 -------------------------------------------------------------------
 
 /**
@@ -226,6 +243,9 @@ function createSky() {
     discColor: { value: new THREE.Color(0xffffff) },
     discRadius: { value: 0.6 },
     discGain: { value: 1 },
+    cloudColor: { value: new THREE.Color(0xffffff) },
+    cloudShade: { value: new THREE.Color(0xb8c4d4) },
+    cloudAmount: { value: 0 },
     discSoft: { value: 0.15 },
     moon: { value: 0 },
     // まわりの光の輪（Mie 散乱ふう）と、その広がり（大きいほど狭い）
@@ -260,6 +280,9 @@ function createSky() {
       uniform vec3 discColor;
       uniform float discRadius;
       uniform float discGain;
+      uniform vec3 cloudColor;
+      uniform vec3 cloudShade;
+      uniform float cloudAmount;
       uniform float discSoft;
       uniform float moon;
       uniform vec3 glowColor;
@@ -269,6 +292,18 @@ function createSky() {
       uniform float time;
       varying vec3 vWorldPosition;
       float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+      float hash2(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+      float vnoise(vec2 p) {
+        vec2 i = floor(p); vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
+      }
+      // 雲の濃さ（0..1）。3 オクターブ。Quest でも軽いように、テクスチャは使わず、回数も少なく
+      float cloudField(vec2 p) {
+        // 大きなむら（雲のある所・無い所）に、中くらいと細かい形を重ねる
+        float n = vnoise(p * 0.45 + 11.3) * 0.4 + vnoise(p) * 0.3 + vnoise(p * 2.3 + 7.1) * 0.2 + vnoise(p * 5.1 + 3.7) * 0.1;
+        return n;
+      }
       void main() {
         // 見ている所からの向き（天球はカメラについてくるが、念のため）
         vec3 dir = normalize(vWorldPosition - cameraPosition);
@@ -294,6 +329,18 @@ function createSky() {
             vec3 tint = mix(vec3(0.81, 0.86, 1.0), vec3(1.0, 0.91, 0.78), hash(cell + 5.5));
             sky += tint * b * (1.0 - smoothstep(size * 0.4, size, ang)) * smoothstep(0.05, 0.18, y) * stars * (1.0 - moon * smoothstep(0.97, 0.995, d));
           }
+        }
+        // 雲：頭の上の平らな層に、向きを投影する（地平線に近いほど遠く、細かく、薄く）。ゆっくり流れる。
+        // 上の面は明るい色、厚い所の下は影の色。太陽（月）の側は少し明るく
+        if (cloudAmount > 0.0 && y > 0.02) {
+          vec2 cp = dir.xz / (y + 0.15) * 1.9 + vec2(time * 0.006, time * 0.002);
+          float field = cloudField(cp);
+          float cover = smoothstep(1.0 - cloudAmount, 1.0 - cloudAmount + 0.12, field);
+          float thick = smoothstep(1.0 - cloudAmount + 0.06, 1.0 - cloudAmount + 0.3, field);
+          vec3 ccol = mix(cloudColor, cloudShade, thick * 0.7);
+          ccol += glowColor * pow(max(d, 0.0), 6.0) * 0.6;
+          // 地平線の近くは空の色へ溶かす（遠くの雲がくっきり見えると、天井に貼った絵に見える）
+          sky = mix(sky, ccol, cover * smoothstep(0.03, 0.3, y) * 0.9);
         }
         // 太陽・月のまわりの光の輪
         sky += glowColor * pow(max(d, 0.0), glowPow);
@@ -364,13 +411,13 @@ function createCrapeMyrtle(tex, { height = 5.0, trunks = 4, seed = 7 } = {}) {
     normalScale: new THREE.Vector2(0.35, 0.35),
   });
 
-  const leafMaterial = new THREE.MeshStandardMaterial({
+  const leafMaterial = roundFoliage(new THREE.MeshStandardMaterial({
     map: tex.foliage,
     alphaTest: 0.3,
     side: THREE.DoubleSide,
     roughness: 0.72,   // 葉の表面は意外とつやがある
     metalness: 0,
-  });
+  }));
 
   const blossomMaterial = new THREE.MeshStandardMaterial({
     map: tex.blossom,
@@ -768,13 +815,14 @@ function createBackdrop(tex, seed = 11) {
   const group = new THREE.Group();
   const rand = makeRandom(seed);
 
-  const leafMaterial = new THREE.MeshStandardMaterial({
+  // 照り返しのない素材（Lambert）にする。Standard だと、太陽の方向を見たとき、浅い角度の板が白く照り返して
+  // 葉が白い紙に見える（粗さ 0.9 でも、浅い角度ではフレネルで強く返る）。遠景なので軽いほうがよい
+  const leafMaterial = roundFoliage(new THREE.MeshLambertMaterial({
     map: tex.foliageDark,
     alphaTest: 0.35,
     side: THREE.DoubleSide,
-    roughness: 0.9,
-  });
-  const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4a4038, roughness: 0.95 });
+  }));
+  const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x6b5a48, roughness: 0.95 });
 
   const leaves = [];
   const trunks = [];
@@ -839,14 +887,21 @@ function createBackdrop(tex, seed = 11) {
   const position = new THREE.Vector3();
   const scale = new THREE.Vector3();
 
+  const backdropTint = new THREE.Color();
   const leafMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), leafMaterial, leaves.length);
   leaves.forEach((leaf, i) => {
     position.set(leaf.x, leaf.y, leaf.z);
     quaternion.setFromAxisAngle(UP, leaf.ry);
     scale.set(leaf.sx, leaf.sy, 1);
     leafMesh.setMatrixAt(i, matrix.compose(position, quaternion, scale));
+    // 明暗 2 段：高い板は日の当たる明るい黄緑、低い板は影の色（青みの暗い緑）。1 枚ずつ少しずらす。
+    // 法線を上へ寄せたので、どの板も太陽（強さ 4.2）をまともに受ける。色を 1 に近づけると白く飛ぶ
+    const lift = THREE.MathUtils.clamp((leaf.y - 1.2) / 5, 0, 1);
+    const vary = 0.9 + ((i * 29) % 13) / 12 * 0.2;
+    leafMesh.setColorAt(i, backdropTint.setRGB((0.42 + lift * 0.3) * vary, (0.5 + lift * 0.22) * vary, (0.5 + lift * 0.04) * vary));
   });
   leafMesh.instanceMatrix.needsUpdate = true;
+  if (leafMesh.instanceColor) leafMesh.instanceColor.needsUpdate = true;
   group.add(leafMesh);
 
   const trunkMesh = new THREE.InstancedMesh(

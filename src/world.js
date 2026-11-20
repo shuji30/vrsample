@@ -564,7 +564,7 @@ export function createWorld(renderer, scene, {
     const u = park.skyUniforms;
     for (const k of ['topColor', 'bottomColor', 'horizonColor']) u[k]?.value.setHex(WATER);
     // 水の中では、太陽・月・星・光の輪・夕方の帯を描かない（水面の上に戻ると setTheme で戻る）
-    if (u.discRadius) { u.discRadius.value = 0; u.glowColor.value.setHex(0); u.bandColor.value.setHex(0); u.stars.value = 0; }
+    if (u.discRadius) { u.discRadius.value = 0; u.glowColor.value.setHex(0); u.bandColor.value.setHex(0); u.stars.value = 0; u.cloudAmount.value = 0; }
   };
   // 息の音：吸う（シューッ）と、吐いた泡（ぶくぶく）
   diver.onBreath = (kind) => impact.play(kind === 'in' ? 'regIn' : 'bubbles', 0.55);

@@ -127,7 +127,7 @@ function spline(points, x, col = 1) {
  * 鼻：頭の面そのものを盛り上げる（別の部品を貼ると、継ぎ目と玉が見えて不自然になる）。
  * 目のあいだの鼻筋からゆるやかに高くなり、鼻先（NOSE.tip の高さ）でいちばん出て、その下はすぐ引っ込む。小鼻は鼻先の左右に低く広く
  */
-const NOSE = { top: 0.112, tip: 0.0705, bottom: 0.0632, height: 0.0128, width: 0.044, wing: 0.003, wingWidth: 0.125 };
+const NOSE = { top: 0.112, tip: 0.0705, bottom: 0.0632, height: 0.0112, width: 0.046, wing: 0.003, wingWidth: 0.125 };
 function noseBump(y, a) {
   if (y < NOSE.bottom - 0.004 || y > NOSE.top || Math.abs(a) > 0.6) return 0;
   // 鼻筋：上から鼻先へ、なめらかに高くなる。鼻先の下は、短い距離で 0 へ
@@ -562,11 +562,11 @@ export function createGirlModel({ camera = null } = {}) {
         // てっぺんは、頭の丸みに沿って閉じる。耳より下は、頭がすぼまっても髪はそのまま下ろし、すそへ少し広がって波打つ
         const yy = Math.max(0, y) * (HEAD_H / TOP);
         // ストレート：耳の下からは、ほぼまっすぐ下りる（背中へ向かって、体の厚みのぶんだけ外へ）
-        const hang = y < 0.075 ? 0.084 + Math.min(0.075 - y, 0.12) * 0.07 + Math.max(0, -0.1 - y) * 0.09 * Math.max(0, -Math.cos(a)) : 0;
+        const hang = y < 0.075 ? 0.089 + Math.min(0.075 - y, 0.12) * 0.07 + Math.max(0, -0.1 - y) * 0.09 * Math.max(0, -Math.cos(a)) : 0;
         // 髪の厚み：頭より 1.2cm ほど外（薄いと、地肌に貼り付いて見える）。てっぺんへ向かって閉じる
         // 頭の丸みから、まっすぐ下りる髪へは、耳の上あたりでなめらかに移る（急に切り替えると、髪に段ができる）
         const head = headR(yy, a);
-        const body = THREE.MathUtils.lerp(head, Math.max(head, y < 0.075 ? hang : 0.084), THREE.MathUtils.smoothstep(0.125 - y, 0, 0.06));
+        const body = THREE.MathUtils.lerp(head, Math.max(head, y < 0.075 ? hang : 0.089), THREE.MathUtils.smoothstep(0.125 - y, 0, 0.06));
         const r = Math.max(0.0005, body * 1.06 + 0.0115 * (1 - THREE.MathUtils.smoothstep(y, 0.195, TOP)));
         pos.push(Math.sin(a) * r * HEAD_X, hy + y, Math.cos(a) * r);
       }
@@ -608,11 +608,12 @@ export function createGirlModel({ camera = null } = {}) {
       for (let j = 0; j <= ROWS2; j++) {
         for (let i = 0; i <= COLS; i++) {
           const u = i / COLS;
-          const ang = THREE.MathUtils.lerp(0.9, 1.7, u);
+          const ang = THREE.MathUtils.lerp(0.8, 1.72, u);
           const bottom = -0.335 + Math.sin(u * 9 + s) * 0.006 - u * 0.02;
-          const y = THREE.MathUtils.lerp(0.13, bottom, j / ROWS2);
+          const y = THREE.MathUtils.lerp(0.15, bottom, j / ROWS2);
           const head = headR(Math.max(0, y) * (HEAD_H / TOP), ang * s);
-          const round = THREE.MathUtils.lerp(head, Math.max(head, 0.084), THREE.MathUtils.smoothstep(0.125 - y, 0, 0.06)) * 1.06 + 0.0135;
+          // 毛量：頭の髪より 1cm 外に、厚い束として重ねる（前の端は前髪の端に重なる）
+          const round = THREE.MathUtils.lerp(head, Math.max(head, 0.088), THREE.MathUtils.smoothstep(0.125 - y, 0, 0.06)) * 1.06 + 0.021;
           const down = Math.max(0, -y);
           const forward = 0.062 * THREE.MathUtils.smoothstep(down, 0, 0.12) + 0.034 * THREE.MathUtils.smoothstep(down, 0.1, 0.26);
           const out = 0.012 * THREE.MathUtils.smoothstep(down, 0.02, 0.14);
@@ -906,14 +907,16 @@ function createFace() {
     // 生えぎわ：センター分けで、おでこを出す。頭の髪のふち（hairline）より上を髪の色で塗り、ふちから下へ
     // 産毛のような細い毛を少し描く（ふちがまっすぐな線だと、かつらに見える）
     {
+      // 塗るのは前髪の範囲だけ（目じりの外まで）。顔の横は立体の髪が覆う。横まで塗ると、目の横に細い筋が垂れて見える
+      const BANG_X = 0.071;
       ctx.fillStyle = 'rgb(24,19,17)';
       ctx.beginPath();
-      ctx.moveTo(px(FACE.x0), py(FACE.y1));
+      ctx.moveTo(px(-BANG_X), py(FACE.y1));
       for (let i = 0; i <= 40; i++) {
-        const x = THREE.MathUtils.lerp(FACE.x0, FACE.x1, i / 40);
-        ctx.lineTo(px(x), py(hairlineAtX(x) + 0.0015));
+        const x = THREE.MathUtils.lerp(-BANG_X, BANG_X, i / 40);
+        ctx.lineTo(px(x), py(hairline(0) + 0.0015));
       }
-      ctx.lineTo(px(FACE.x1), py(FACE.y1));
+      ctx.lineTo(px(BANG_X), py(FACE.y1));
       ctx.closePath();
       ctx.fill();
     }

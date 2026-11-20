@@ -112,6 +112,52 @@ function axis(denseMin, denseMax, step, limit, ratio, must) {
   return [...out].sort((a, b) => a - b);
 }
 
+/**
+ * 針葉樹の葉：すその広い 3 段を重ねた形（高さ 1・半径 1、原点は真ん中）。1 つの円すいだと、積み木の三角に見える。
+ * 頂点色で、段の先（外側の下の縁）を明るい緑、段の付け根と内側を影の色にする
+ */
+function coniferGeometry() {
+  const tiers = [[-0.5, 0.05, 1.0], [-0.22, 0.3, 0.74], [0.06, 0.5, 0.46]];   // [下の高さ, 上の高さ, 半径]
+  const pos = [];
+  const col = [];
+  const idx = [];
+  const SEG = 9;
+  const light = new THREE.Color(0x5d9440);
+  const dark = new THREE.Color(0x27492a);
+  const c = new THREE.Color();
+  for (const [y0, y1, r] of tiers) {
+    const base = pos.length / 3;
+    // 頂点（段の先端）
+    pos.push(0, y1, 0);
+    c.copy(light).lerp(dark, 0.25);
+    col.push(c.r, c.g, c.b);
+    for (let k = 0; k < SEG; k++) {
+      const a = (k / SEG) * Math.PI * 2;
+      // すそを交互に少し上下させて、まっすぐな縁にしない
+      const wob = k % 2 ? 0.94 : 1.0;
+      pos.push(Math.cos(a) * r * wob, y0 + (k % 2 ? 0.03 : 0), Math.sin(a) * r * wob);
+      c.copy(light).lerp(dark, k % 2 ? 0.35 : 0.0);
+      col.push(c.r, c.g, c.b);
+    }
+    // 底の真ん中（下から見える面。影の色）
+    pos.push(0, y0 + 0.06, 0);
+    col.push(dark.r * 0.7, dark.g * 0.7, dark.b * 0.7);
+    const center = base + SEG + 1;
+    for (let k = 0; k < SEG; k++) {
+      const a = base + 1 + k;
+      const b = base + 1 + ((k + 1) % SEG);
+      idx.push(base, b, a);
+      idx.push(center, a, b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 /** 波の凹凸（法線の模様）。いくつかの向きの正弦波を重ねて、つなぎ目の無い模様にする */
 function waveNormalTexture(size = 256) {
   const canvas = document.createElement('canvas');
@@ -227,7 +273,7 @@ export function createHill(tex) {
   group.add(terrain);
 
   // --- 遠くの丘の木（円すいの葉と幹。1 つの InstancedMesh ずつ） ---------------------
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f6b35, roughness: 0.9, flatShading: true });
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, vertexColors: true });
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 0.95 });
   const spots = [];
   let seed = 7;
@@ -248,15 +294,20 @@ export function createHill(tex) {
     if (y < SEA_LEVEL + 2.5 || circuitFlat(x, z) > 0.05) continue;
     spots.push([x, y, z, 5 + rand() * 6]);
   }
-  const leaves = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 7), leafMat, spots.length);
+  const leaves = new THREE.InstancedMesh(coniferGeometry(), leafMat, spots.length);
+  const treeTint = new THREE.Color();
   const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.2, 1, 6), trunkMat, spots.length);
   const m4 = new THREE.Matrix4();
   spots.forEach(([x, y, z, h], i) => {
     m4.compose(new THREE.Vector3(x, y + h * 0.62, z), new THREE.Quaternion(), new THREE.Vector3(h * 0.32, h * 0.8, h * 0.32));
     leaves.setMatrixAt(i, m4);
+    // 1 本ごとに、明るさと色味を少しずらす（同じ色が並ぶと、判で押したように見える）
+    const k = ((i * 37) % 11) / 10;
+    leaves.setColorAt(i, treeTint.setRGB(0.85 + k * 0.3, 0.9 + ((i * 53) % 7) / 6 * 0.2, 0.85 + k * 0.15));
     m4.compose(new THREE.Vector3(x, y + h * 0.12, z), new THREE.Quaternion(), new THREE.Vector3(h * 0.5, h * 0.3, h * 0.5));
     trunks.setMatrixAt(i, m4);
   });
+  if (leaves.instanceColor) leaves.instanceColor.needsUpdate = true;
   group.add(leaves, trunks);
 
   // --- 海 ------------------------------------------------------------------------

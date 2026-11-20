@@ -373,9 +373,10 @@ function grass(size) {
     const shade = 0.78 + (blade - 0.5) * 0.30;
 
     // 芝のアルベドは思っているより暗い。明るい緑にすると途端に人工芝になる
-    out.r = clamp01((0.22 + (1 - life) * 0.16) * shade);
-    out.g = clamp01((0.36 + life * 0.14) * shade);
-    out.b = clamp01((0.16 + (1 - life) * 0.05) * shade);
+    // 少し黄みへ寄せ、彩度を下げる（青みの強い緑は、絵の具の緑に見える）
+    out.r = clamp01((0.27 + (1 - life) * 0.16) * shade);
+    out.g = clamp01((0.37 + life * 0.12) * shade);
+    out.b = clamp01((0.14 + (1 - life) * 0.05) * shade);
 
     out.h = blade * 0.6 + clump * 0.4;
     out.ao = clamp01(0.74 + clump * 0.26);
@@ -621,7 +622,7 @@ export function createTextures(renderer, { quality = 1 } = {}) {
 
   // 遠景の生垣と木立。1 枚が数メートルになるので、房ではなく塊を貼る
   const foliageDark = toTexture(
-    leafMass(res(256), ['#2f4a26', '#37552c', '#28401f', '#3f5f33', '#22371b']),
+    leafMass(res(256), ['#3f6a2c', '#4a7a34', '#35592a', '#5a8a3c', '#2e4d22']),
     { srgb: true, anisotropy: aniso },
   );
   foliageDark.wrapS = foliageDark.wrapT = THREE.ClampToEdgeWrapping;

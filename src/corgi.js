@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { audioContext, bus, spatial } from './mixer.js';
 
 /**
  * ウェルシュ・コーギー（ペンブローク）の「こむぎ」。庭と公園に放し飼いにしてある。
@@ -25,14 +26,12 @@ function createBark() {
   let ctx = null;
   function ensure() {
     if (ctx) return ctx;
-    if (typeof navigator !== 'undefined' && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
-    if (!AudioContextClass) return null;
-    try { ctx = new AudioContextClass(); } catch { return null; }
+    ctx = audioContext();
+    if (!ctx) return null;
     return ctx;
   }
   /** 「ワン」をひとつ。at は遅らせる秒、volume は距離で小さくした大きさ */
-  function woof(at, volume) {
+  function woof(at, volume, out) {
     const t = ctx.currentTime + at;
     const osc = ctx.createOscillator();
     osc.type = 'sawtooth';
@@ -46,15 +45,17 @@ function createBark() {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(volume, t + 0.012);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
-    osc.connect(formant).connect(g).connect(ctx.destination);
+    osc.connect(formant).connect(g).connect(out);
     osc.start(t);
     osc.stop(t + 0.2);
   }
   return {
-    bark(times, volume) {
+    /** position があれば、その向きから聞こえる（大きさは volume で決める） */
+    bark(times, volume, position = null) {
       if (!ensure()) return;
+      const out = (position && spatial(position)?.node) || bus('sfx');
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-      for (let i = 0; i < times; i++) woof(i * 0.24, volume);
+      for (let i = 0; i < times; i++) woof(i * 0.24, volume, out);
     },
   };
 }
@@ -226,7 +227,7 @@ export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPositi
     if (clock - lastBark < BARK_COOLDOWN) return;
     lastBark = clock;
     const d = playerPosition().distanceTo(pos);
-    barkSound.bark(times, THREE.MathUtils.clamp(0.5 / Math.max(1, d / 2), 0.04, 0.45));
+    barkSound.bark(times, THREE.MathUtils.clamp(0.5 / Math.max(1, d / 2), 0.04, 0.45), pos);
   }
 
   /** なでられた */

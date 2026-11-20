@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { audioContext, bus } from './mixer.js';
 
 /**
  * 馬（乗り物の窓口）。馬場（stable.js の PADDOCK）の中を歩く・走る。
@@ -45,10 +46,8 @@ function createHoofSound() {
   let noise = null;
   function ensure() {
     if (context) return context;
-    if (typeof navigator !== 'undefined' && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
-    if (!AudioContextClass) return null;
-    try { context = new AudioContextClass(); } catch { return null; }
+    context = audioContext();
+    if (!context) return null;
     noise = context.createBuffer(1, Math.floor(context.sampleRate * 0.08), context.sampleRate);
     const data = noise.getChannelData(0);
     for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (context.sampleRate * 0.012));
@@ -67,7 +66,7 @@ function createHoofSound() {
       filter.Q.value = 1.2;
       const gain = context.createGain();
       gain.gain.value = volume;
-      src.connect(filter).connect(gain).connect(context.destination);
+      src.connect(filter).connect(gain).connect(bus('sfx'));
       src.start();
     },
   };

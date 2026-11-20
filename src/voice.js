@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { audioContext, bus } from './mixer.js';
 
 /**
  * 女の子の声。
@@ -463,10 +464,8 @@ function createClips(url, onLoad) {
 
   function ensure() {
     if (context) return context;
-    if (typeof navigator !== 'undefined' && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
-    if (!AudioContextClass) return null;
-    try { context = new AudioContextClass(); } catch { return null; }
+    context = audioContext();
+    if (!context) return null;
     panner = context.createPanner();
     panner.panningModel = 'HRTF';
     // 近くでは普通の大きさ、テニスのネットの向こう（12m）でも聞こえるくらいに落とす
@@ -476,7 +475,7 @@ function createClips(url, onLoad) {
     panner.maxDistance = 60;
     const gain = context.createGain();
     gain.gain.value = 1.1;
-    panner.connect(gain).connect(context.destination);
+    panner.connect(gain).connect(bus('voice'));
     prefetch();
     return context;
   }

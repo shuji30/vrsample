@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createHorseModel, poseHorse } from './horse.js';
+import { audioContext, bus } from './mixer.js';
 
 /**
  * メリーゴーランド。家の左の芝生に置く。
@@ -62,13 +63,11 @@ function createWaltz() {
   const EIGHTH = 0.2;     // 1 拍 0.4 秒（150 拍/分の 3 拍子）
   function ensure() {
     if (ctx) return ctx;
-    if (typeof navigator !== 'undefined' && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
-    if (!AudioContextClass) return null;
-    try { ctx = new AudioContextClass(); } catch { return null; }
+    ctx = audioContext();
+    if (!ctx) return null;
     master = ctx.createGain();
     master.gain.value = 0;
-    master.connect(ctx.destination);
+    master.connect(bus('sfx'));
     return ctx;
   }
   function note(m, at, length, type, level) {

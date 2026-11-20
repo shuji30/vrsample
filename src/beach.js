@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { BEACH, SEA_LEVEL, hillHeight } from './hill.js';
 import { girlName, onGirlNameChange } from './girlname.js';
+import { audioContext, bus } from './mixer.js';
 
 /**
  * 北の崖の下の砂浜。丘の上の柵のところ（厩の東）から崖に沿って木の階段が下りていて、上と下の看板で
@@ -605,10 +606,8 @@ export function createBeach() {
   let waveFilter = null;
   function ensureAudio() {
     if (ctx) return ctx;
-    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AC = window.AudioContext ?? window.webkitAudioContext;
-    if (!AC) return null;
-    try { ctx = new AC(); } catch { return null; }
+    ctx = audioContext();
+    if (!ctx) return null;
     // 波：ずっと鳴っているノイズを、寄せるときに大きく・明るく
     const len = ctx.sampleRate * 4;
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -623,7 +622,7 @@ export function createBeach() {
     waveFilter.frequency.value = 600;
     waveGain = ctx.createGain();
     waveGain.gain.value = 0;
-    src.connect(waveFilter).connect(waveGain).connect(ctx.destination);
+    src.connect(waveFilter).connect(waveGain).connect(bus('ambience'));
     src.start();
     return ctx;
   }
@@ -639,7 +638,7 @@ export function createBeach() {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(gain, t + 0.005);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(c.destination);
+    o.connect(g).connect(bus('sfx'));
     o.start(t);
     o.stop(t + dur + 0.02);
   }

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from './hill.js';
+import { audioContext, bus, spatial } from './mixer.js';
 
 /**
  * 夜の花火。テーマが夜のあいだ、丘の北の沖の海（テニスコートのずっと向こう）から打ち上げる。
@@ -47,22 +48,19 @@ function createBoom() {
   let context = null;
   let noise = null;
   let out = null;
+  let main = null;
   function ensure() {
     if (context) return context;
-    if (typeof navigator !== 'undefined' && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
-    if (!AudioContextClass) return null;
-    try { context = new AudioContextClass(); } catch { return null; }
+    context = audioContext();
+    if (!context) return null;
     noise = context.createBuffer(1, context.sampleRate * 2.5, context.sampleRate);
     const data = noise.getChannelData(0);
     for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-    // 重なって割れないように、まとめて圧縮してから出す
-    const comp = context.createDynamicsCompressor();
-    comp.threshold.value = -14;
-    comp.ratio.value = 6;
-    out = context.createGain();
-    out.gain.value = 1;
-    out.connect(comp).connect(context.destination);
+    // 重なって割れないようにする圧縮は、まとめ役（mixer.js）の 1 つに任せる
+    main = context.createGain();
+    main.gain.value = 1;
+    main.connect(bus('sfx'));
+    out = main;
     return context;
   }
   function envelope(gain, at, peak, attack, decay) {
@@ -84,9 +82,10 @@ function createBoom() {
     src.stop(at + attack + decay + 0.05);
   }
   return {
-    /** delay 秒あとに鳴らす。volume は 0〜1、crackle でパチパチも */
-    play(delay, volume, crackle = false) {
+    /** delay 秒あとに鳴らす。volume は 0〜1、crackle でパチパチも。position があれば、その向きから聞こえる（大きさは volume で決める） */
+    play(delay, volume, crackle = false, position = null) {
       if (!ensure()) return;
+      out = (position && spatial(position)?.node) || main;
       if (context.state === 'suspended') context.resume().catch(() => {});
       const at = context.currentTime + delay;
       // ドン
@@ -194,7 +193,7 @@ export function createFireworks({ scene, onBurst = null } = {}) {
         burst(q.p, q.burst);
         const distance = listener.distanceTo(q.p);
         // 遠いほど小さく。ただし 0.35 より小さくしない（庭から 70m 先でも、ちゃんと聞こえるように）
-        boom.play(distance / 343, THREE.MathUtils.clamp(30 / distance, 0.35, 0.9), q.burst.type !== 'peony');
+        boom.play(distance / 343, THREE.MathUtils.clamp(30 / distance, 0.35, 0.9), q.burst.type !== 'peony', q.p);
         continue;
       }
       if (q.age >= q.life) remove();

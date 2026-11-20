@@ -60,14 +60,18 @@ import { createFlyingFish } from './flyingfish.js';
 import { createJetskiGame } from './jetskigame.js';
 import { createCessna, inAirfield, AIRFIELD_ARRIVAL, HILL_RETURN, APRON, RUNWAY } from './cessna.js';
 import { createCessnaGame } from './cessnagame.js';
-import { AIRFIELD_ZONE, SEA_LEVEL, hillHeight } from './hill.js';
+import { AIRFIELD_ZONE, SEA_LEVEL, hillHeight, circuitFlat } from './hill.js';
 import { createRoad } from './road.js';
-import { F40_PARK, GARAGE } from './roaddata.js';
+import { F40_PARK, GARAGE, nearRoad } from './roaddata.js';
+import { setListener } from './mixer.js';
 import { createF40Game } from './f40game.js';
 import { createTalk } from './talk.js';
 
 /** 地面の高さ：カートコースの起伏と、崖の下の砂浜（そのほかの丘の上は 0） */
 const groundHeight = (x, z) => (onPier(x, z) ? pierDeckY(x, z) : inBeach(x, z) ? beachGround(x, z) : inAirfield(x, z) ? AIRFIELD_ZONE.y : kartGround(x, z));
+/** 屋外の地面の種類（足音を変える）。家の中かどうかは world の中で見る */
+const outdoorSurface = (x, z) => (onPier(x, z) ? 'wood' : inBeach(x, z) ? 'sand'
+  : (inAirfield(x, z) || circuitFlat(x, z) > 0.9 || nearRoad(x, z, 1.5)) ? 'stone' : 'grass');
 
 /**
  * 女の子のカートの性能の倍率（最高速・加速・グリップ）。ふつうのカートの性能では、
@@ -947,6 +951,19 @@ export function createWorld(renderer, scene, {
   /** 目が家の中か（本の部屋・ビリヤードの部屋。壁の外面まで） */
   const eyeInHouse = (p) => (p.x > ROOM.minX - ROOM.wall && p.x < ROOM.maxX + ROOM.wall && p.z > ROOM.minZ - ROOM.wall && p.z < ROOM.maxZ + ROOM.wall && p.y < ROOM.height + 1)
     || (p.x > ANNEX.minX - ANNEX.wall && p.x < ANNEX.maxX + ANNEX.wall && p.z > ANNEX.minZ - ANNEX.wall && p.z < ANNEX.maxZ + ANNEX.wall && p.y < ANNEX.height + 1);
+  /** 足もとの地面の種類：'wood'（家の中・桟橋）| 'grass' | 'sand' | 'stone'（舗装）。足音を変える */
+  const surfaceAt = (x, z) => (eyeInHouse(earPos.set(x, 1, z)) ? 'wood' : outdoorSurface(x, z));
+  const earPos = new THREE.Vector3();
+  const earQ = new THREE.Quaternion();
+  const earF = new THREE.Vector3();
+  const earU = new THREE.Vector3();
+  /** 聞く人（カメラ）の位置と向きを、音のまとめ役へ。向きのある音（声・打球・犬・かもめ・花火・馬）が左右に振り分けられる */
+  function updateListener() {
+    if (!camera) return;
+    camera.getWorldPosition(earPos);
+    camera.getWorldQuaternion(earQ);
+    setListener(earPos, earF.set(0, 0, -1).applyQuaternion(earQ), earU.set(0, 1, 0).applyQuaternion(earQ));
+  }
   function updateShadowFocus() {
     if (!camera) return;
     // 環境マップ：家の中は室内用、外は屋外用（夜の庭が室内灯の色で照らされないように）
@@ -1005,7 +1022,8 @@ export function createWorld(renderer, scene, {
     if (!camera) return;
     camera.getWorldPosition(hearing);
     const falloff = 1 / (1 + hearing.distanceTo(position) / reach);
-    impact.play(kind, strength * falloff);
+    // 大きさは距離で決め、左右の振り分けは音のまとめ役（PannerNode）が向きから決める
+    impact.play(kind, strength * falloff, position);
   }
   const rackets = grabbables.filter((prop) => prop.userData.racket);
   const racketHits = [];
@@ -1347,6 +1365,7 @@ export function createWorld(renderer, scene, {
     }
     character.update(dt);
     tennisGame?.afterPose();
+    updateListener();
     voice?.update(dt);
 
     // --- スイッチの押し込み ------------------------------------------------
@@ -1498,6 +1517,7 @@ export function createWorld(renderer, scene, {
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
   return {
+    surfaceAt,
     billiardGame,
     billiards,
     dolphins,

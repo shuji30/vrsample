@@ -1,3 +1,4 @@
+import { audioContext, bus } from './mixer.js';
 /**
  * BGM。外部の音源は使わず、WebAudio で曲を組み立てて鳴らす。
  *
@@ -185,18 +186,18 @@ export function createMusic({ volume = 0.35, enabled = true } = {}) {
   let scheduledUntil = 0;
   let on = enabled;
   const LOOKAHEAD = 0.3;
+  let duckHold = 0;
 
   /** ユーザー操作のあとで呼ぶ。AudioContext を作る / 再開する */
   function unlock() {
     if (!on) return;
     try {
       if (!ctx) {
-        const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
-        if (!AudioContextClass) return;
-        ctx = new AudioContextClass();
+        ctx = audioContext();
+        if (!ctx) return;
         master = ctx.createGain();
         master.gain.value = 0;
-        master.connect(ctx.destination);
+        master.connect(bus('music'));
         song = createSong(ctx, master, ctx.currentTime + 0.1);
         songStart = ctx.currentTime + 0.1;
         scheduledUntil = 0;
@@ -223,8 +224,11 @@ export function createMusic({ volume = 0.35, enabled = true } = {}) {
       }
     }
     // しゃべっているあいだは下げる。オンオフもここでなめらかに
-    const target = on ? volume * (ducked ? 0.35 : 1) : 0;
-    master.gain.setTargetAtTime(target, ctx.currentTime, 0.25);
+    // 下げるのは速く（-8dB、0.08 秒）、戻すのは 0.3 秒待ってからゆっくり（0.4 秒）。台詞の合間ごとに上下しないように
+    if (ducked) duckHold = 0.3; else duckHold = Math.max(0, duckHold - dt);
+    const low = ducked || duckHold > 0;
+    const target = on ? volume * (low ? 0.4 : 1) : 0;
+    master.gain.setTargetAtTime(target, ctx.currentTime, ducked ? 0.08 : 0.4);
   }
 
   return {

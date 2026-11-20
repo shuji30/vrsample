@@ -8,6 +8,7 @@ import { createDebugPanel } from './debug.js';
 import { createMusic } from './music.js';
 import { givenGirlName, givenGirlNameYomi, setGirlName, girlNameSpoken } from './girlname.js';
 import { createTouchControls, isTouchDevice } from './touch.js';
+import * as mixer from './mixer.js';
 
 const statusEl = document.getElementById('status');
 
@@ -457,6 +458,8 @@ const talkEye = new THREE.Vector3();
       touch?.update(dt);
       updateActionHint(dt);
       kartDrive.update(dt);
+      // 足音は足もとの地面で変える（芝生・砂浜・舗装・木）
+      player.footsteps.setSurface(world.surfaceAt(player.player.position.x, player.player.position.z));
       world.update(dt);
       // 女の子がしゃべっているあいだは BGM を下げる
       music.update(dt, { ducked: Boolean(world.voice?.speaking || world.carousel?.musicPlaying) });
@@ -683,7 +686,7 @@ const talkEye = new THREE.Vector3();
   // VR に入れない端末（スマホのブラウザなど）では、「VR NOT SUPPORTED」のボタンを出さない
   if (touchMode) navigator.xr?.isSessionSupported?.('immersive-vr').then((ok) => { if (!ok) vrButton.style.display = 'none'; }).catch(() => { vrButton.style.display = 'none'; });
   if (touchMode && !navigator.xr) vrButton.style.display = 'none';
-  Object.assign(window.__vrsample, { contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView });
+  Object.assign(window.__vrsample, { mixer, contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する
   const voiceStatusEl = document.getElementById('voice-status');

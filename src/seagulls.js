@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SEA_LEVEL, hillHeight } from './hill.js';
+import { audioContext, bus, spatial } from './mixer.js';
 
 /**
  * カモメ（7 羽）。海辺・桟橋・丘の北の崖の縁・沖の上を、輪を描いて飛ぶ。
@@ -111,13 +112,11 @@ function createCall() {
   let ctx = null;
   function ensure() {
     if (ctx) return ctx;
-    if (typeof navigator !== 'undefined' && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AC = window.AudioContext ?? window.webkitAudioContext;
-    if (!AC) return null;
-    try { ctx = new AC(); } catch { return null; }
+    ctx = audioContext();
+    if (!ctx) return null;
     return ctx;
   }
-  function note(t, f0, f1, dur, vol) {
+  function note(t, f0, f1, dur, vol, out) {
     const osc = ctx.createOscillator();
     osc.type = 'sawtooth';
     osc.frequency.setValueAtTime(f0, t);
@@ -131,20 +130,22 @@ function createCall() {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(vol, t + 0.03);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    osc.connect(band).connect(g).connect(ctx.destination);
+    osc.connect(band).connect(g).connect(out);
     osc.start(t);
     osc.stop(t + dur + 0.05);
   }
   return {
-    play(volume) {
+    /** position があれば、その向きから聞こえる（大きさは volume で決める） */
+    play(volume, position = null) {
       if (volume < 0.01 || !ensure()) return false;
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       if (ctx.state !== 'running') return false;
       const t = ctx.currentTime;
       const v = Math.min(0.3, volume);
       const f = 1500 + Math.random() * 400;
-      note(t, f, f * 0.62, 0.32, v);
-      if (Math.random() < 0.7) note(t + 0.4, f * 0.95, f * 0.6, 0.28, v * 0.8);
+      const out = (position && spatial(position, { to: 'ambience' })?.node) || bus('ambience');
+      note(t, f, f * 0.62, 0.32, v, out);
+      if (Math.random() < 0.7) note(t + 0.4, f * 0.95, f * 0.6, 0.28, v * 0.8, out);
       return true;
     },
   };
@@ -257,7 +258,7 @@ export function createSeagulls({ sound = true } = {}) {
         b.nextCall = rand(6, 22);
         if (call && listener) {
           const d = tmp.set(b.x, b.y, b.z).distanceTo(listener);
-          if (d < 60) call.play(0.25 / (1 + d / 8));
+          if (d < 60) call.play(0.25 / (1 + d / 8), tmp);
         }
       }
     });

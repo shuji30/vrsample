@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { hillHeight } from './hill.js';
+import { audioContext, bus } from './mixer.js';
 
 /**
  * ジェットコースター。家の南の芝生に駅があり、コースは丘の南の斜面へ張り出す。
@@ -330,11 +331,8 @@ function createCoasterSound() {
   let clickAt = 0;
   function ensure() {
     if (ctx) return ctx;
-    if (typeof window === 'undefined') return null;
-    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AC = window.AudioContext ?? window.webkitAudioContext;
-    if (!AC) return null;
-    try { ctx = new AC(); } catch { return null; }
+    ctx = audioContext();
+    if (!ctx) return null;
     return ctx;
   }
   function noiseBuffer(sec) {
@@ -357,7 +355,7 @@ function createCoasterSound() {
         f.frequency.value = 700;
         windGain = ctx.createGain();
         windGain.gain.value = 0;
-        wind.connect(f).connect(windGain).connect(ctx.destination);
+        wind.connect(f).connect(windGain).connect(bus('sfx'));
         wind.start();
       }
       windGain.gain.value = Math.min(0.35, (speed / 22) ** 2 * 0.35);
@@ -372,7 +370,7 @@ function createCoasterSound() {
           f.frequency.value = 1800;
           const gn = ctx.createGain();
           gn.gain.value = 0.25;
-          o.connect(f).connect(gn).connect(ctx.destination);
+          o.connect(f).connect(gn).connect(bus('sfx'));
           o.start();
         }
       }

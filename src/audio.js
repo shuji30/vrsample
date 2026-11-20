@@ -1,3 +1,5 @@
+import { audioContext, bus, spatial, resume } from './mixer.js';
+
 /**
  * 足音の合成。
  *
@@ -22,13 +24,11 @@ export function createFootsteps({ muted = false, volume = 0.5 } = {}) {
   /** AudioContext はユーザー操作のあとでないと鳴らないので、最初の 1 歩で作る。 */
   function ensureContext() {
     if (context) return context;
-    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
-    if (!AudioContextClass) return null;
-
-    context = new AudioContextClass();
+    context = audioContext();
+    if (!context) return null;
     master = context.createGain();
     master.gain.value = volume;
-    master.connect(context.destination);
+    master.connect(bus('sfx'));
 
     // ホワイトノイズは 1 本作って使い回す。毎回作ると歩くたびに GC が走る。
     noiseBuffer = context.createBuffer(1, Math.floor(context.sampleRate * NOISE_SECONDS), context.sampleRate);
@@ -84,23 +84,60 @@ export function createFootsteps({ muted = false, volume = 0.5 } = {}) {
    * 1 歩ぶん鳴らす。
    * @param {number} [intensity] 0〜1。歩く速さに応じて小さくする
    */
+  /** 足もとの地面。world.surfaceAt の値を main.js が毎フレーム入れる */
+  let surface = 'wood';
+  /** 左右の足。1 歩ごとに入れ替えて、音量 ±6%・高さ ±3%・間合い ±10ms をずらす */
+  let foot = 1;
+  let steps = 0;
+
+  /**
+   * 1 歩ぶん鳴らす。地面ごとに作りを変える。
+   *   wood（家の中・桟橋）：低い打撃と、こもったノイズ（板が鳴る）
+   *   grass：打撃はごく弱く、高めのノイズを 2 発（草を踏んで、戻る）
+   *   sand：打撃なし。立ち上がりの遅いこもったノイズ（沈む）と、細かい粒の音
+   *   stone（舗装）：硬く短い打撃と、「カッ」
+   */
   function step(intensity = 1) {
     if (muted || !ensureContext()) return;
-    if (context.state === 'suspended') context.resume();
+    // VR の最中は画面の操作のイベントが無いので、止められたあとはここで再開を試みる
+    resume();
+    if (context.state !== 'running') return;
 
-    const now = context.currentTime;
+    foot = -foot;
+    steps++;
+    const now = context.currentTime + 0.01 + foot * 0.01;
     const strength = Math.max(0.15, Math.min(1, intensity));
-    const variation = 0.85 + Math.random() * 0.3;
+    const variation = (0.85 + Math.random() * 0.3) * (1 + foot * 0.06);
+    const pitch = 1 + foot * 0.03;
+
+    if (surface === 'grass') {
+      thump(now, { frequency: 60 * pitch, gain: 0.08 * strength * variation, decay: 0.06 });
+      for (const offset of [0, 0.03]) {
+        burst(now, { type: 'bandpass', frequency: (2300 + Math.random() * 600) * pitch, Q: 0.5, gain: 0.28 * strength * variation * (offset ? 0.6 : 1), attack: 0.006, decay: 0.11, offset });
+      }
+      return;
+    }
+    if (surface === 'sand') {
+      burst(now, { type: 'lowpass', frequency: (850 + Math.random() * 150) * pitch, Q: 0.7, gain: 0.45 * strength * variation, attack: 0.015, decay: 0.165 });
+      burst(now, { type: 'bandpass', frequency: 3500 * pitch, Q: 0.9, gain: 0.12 * strength, attack: 0.01, decay: 0.09, offset: 0.02 });
+      return;
+    }
+    if (surface === 'stone') {
+      thump(now, { frequency: 140 * pitch, gain: 0.25 * strength * variation, decay: 0.04 });
+      // highpass だと 6kHz より上が多く耳ざわりなので、帯域を絞る
+      burst(now, { type: 'bandpass', frequency: 2600 * pitch, Q: 1.0, gain: 0.3 * strength * variation, attack: 0.002, decay: 0.03 });
+      return;
+    }
 
     thump(now, {
-      frequency: 78 + Math.random() * 26,
+      frequency: (78 + Math.random() * 26) * pitch,
       gain: 0.36 * strength * variation,
       decay: 0.075 + Math.random() * 0.03,
     });
 
     burst(now, {
       type: 'lowpass',
-      frequency: 620 + Math.random() * 380,
+      frequency: (620 + Math.random() * 380) * pitch,
       Q: 1.1,
       gain: 0.30 * strength * variation,
       attack: 0.003,
@@ -121,6 +158,11 @@ export function createFootsteps({ muted = false, volume = 0.5 } = {}) {
 
   return {
     step,
+    /** 足もとの地面：'wood' | 'grass' | 'sand' | 'stone' */
+    setSurface(value) { surface = value; },
+    get surface() { return surface; },
+    /** 検証用：鳴らした歩数 */
+    get steps() { return steps; },
     setMuted(value) { muted = value; },
     get muted() { return muted; },
   };
@@ -137,21 +179,17 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
   let context = null;
   let master = null;
   let noiseBuffer = null;
+  /** いま鳴らす音の出口。位置のある音は、その向きの PannerNode へ */
+  let out = null;
 
   function ensureContext() {
     if (context) return context;
-    // 操作の前に作ると、止まったままの AudioContext ができて警告が出る
-    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
-    if (!AudioContextClass) return null;
-    try {
-      context = new AudioContextClass();
-    } catch {
-      return null;
-    }
+    context = audioContext();
+    if (!context) return null;
     master = context.createGain();
     master.gain.value = volume;
-    master.connect(context.destination);
+    master.connect(bus('sfx'));
+    out = master;
     noiseBuffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.2), context.sampleRate);
     const data = noiseBuffer.getChannelData(0);
     for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
@@ -167,7 +205,7 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
     envelope.gain.setValueAtTime(0.0001, now);
     envelope.gain.exponentialRampToValueAtTime(gain, now + 0.002);
     envelope.gain.exponentialRampToValueAtTime(0.0001, now + decay);
-    oscillator.connect(envelope).connect(master);
+    oscillator.connect(envelope).connect(out);
     oscillator.start(now);
     oscillator.stop(now + decay + 0.02);
   }
@@ -183,7 +221,7 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
     envelope.gain.setValueAtTime(0.0001, now);
     envelope.gain.exponentialRampToValueAtTime(gain, now + 0.002);
     envelope.gain.exponentialRampToValueAtTime(0.0001, now + decay);
-    source.connect(filter).connect(envelope).connect(master);
+    source.connect(filter).connect(envelope).connect(out);
     source.start(now);
     source.stop(now + decay + 0.02);
   }
@@ -191,11 +229,19 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
   /**
    * @param {'racket' | 'bounce' | 'net' | 'ballHit' | 'cushion' | 'pocket' | 'cue' | 'whaleBlow' | 'whaleSplash' | 'regIn' | 'bubbles'} kind
    * @param {number} strength 0〜1
+   * @param {{x,y,z}} [position] 鳴った所。あれば、聞く人から見た向きに振り分ける（大きさは strength で決める）
    */
-  function play(kind, strength = 1) {
+  function play(kind, strength = 1, position = null) {
     if (muted || strength < 0.02 || !ensureContext()) return;
     if (context.state === 'suspended') context.resume().catch(() => {});
     if (context.state !== 'running') return;
+    out = master;
+    const sp = position ? spatial(position) : null;
+    if (sp) {
+      out = context.createGain();
+      out.gain.value = volume;
+      out.connect(sp.node);
+    }
     const now = context.currentTime;
     const s = Math.min(1, strength);
     const vary = 0.92 + Math.random() * 0.16;
@@ -239,7 +285,7 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
       envelope.gain.exponentialRampToValueAtTime(0.9 * s, now + 0.06);
       envelope.gain.exponentialRampToValueAtTime(0.35 * s, now + 0.5);
       envelope.gain.exponentialRampToValueAtTime(0.0001, now + 1.6);
-      source.connect(filter).connect(envelope).connect(master);
+      source.connect(filter).connect(envelope).connect(out);
       source.start(now);
       source.stop(now + 1.7);
       tone(now, 70 * vary, 0.25 * s, 0.6);
@@ -256,7 +302,7 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
       envelope.gain.setValueAtTime(0.0001, now);
       envelope.gain.exponentialRampToValueAtTime(0.18 * s, now + 0.35);
       envelope.gain.exponentialRampToValueAtTime(0.0001, now + 1.3);
-      source.connect(filter).connect(envelope).connect(master);
+      source.connect(filter).connect(envelope).connect(out);
       source.start(now);
       source.stop(now + 1.4);
     } else if (kind === 'bubbles') {
@@ -280,7 +326,7 @@ export function createImpactSound({ muted = false, volume = 0.6 } = {}) {
       envelope.gain.exponentialRampToValueAtTime(1.0 * s, now + 0.03);
       envelope.gain.exponentialRampToValueAtTime(0.25 * s, now + 0.6);
       envelope.gain.exponentialRampToValueAtTime(0.0001, now + 2.0);
-      source.connect(filter).connect(envelope).connect(master);
+      source.connect(filter).connect(envelope).connect(out);
       source.start(now);
       source.stop(now + 2.1);
       tone(now, 55 * vary, 0.5 * s, 0.9);
@@ -305,10 +351,7 @@ export function createEngineSound({ volume = 0.5 } = {}) {
 
   function ensure() {
     if (context) return context;
-    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
-    if (!AudioContextClass) return null;
-    try { context = new AudioContextClass(); } catch { return null; }
+    context = audioContext();
     return context;
   }
 
@@ -318,7 +361,7 @@ export function createEngineSound({ volume = 0.5 } = {}) {
       if (context.state === 'suspended') context.resume().catch(() => {});
       const master = context.createGain();
       master.gain.value = 0;
-      master.connect(context.destination);
+      master.connect(bus('sfx'));
       const filter = context.createBiquadFilter();
       filter.type = 'lowpass';
       filter.frequency.value = 600;
@@ -363,10 +406,7 @@ export function createSignalSound({ volume = 0.35 } = {}) {
   let context = null;
   function ensure() {
     if (context) return context;
-    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
-    if (!AudioContextClass) return null;
-    try { context = new AudioContextClass(); } catch { return null; }
+    context = audioContext();
     return context;
   }
   return {
@@ -383,7 +423,7 @@ export function createSignalSound({ volume = 0.35 } = {}) {
       gain.gain.linearRampToValueAtTime(volume, now + 0.01);
       gain.gain.setValueAtTime(volume, now + length - 0.05);
       gain.gain.linearRampToValueAtTime(0, now + length);
-      osc.connect(gain).connect(context.destination);
+      osc.connect(gain).connect(bus('sfx'));
       osc.start(now);
       osc.stop(now + length + 0.02);
     },

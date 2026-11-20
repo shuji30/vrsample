@@ -4,6 +4,8 @@ import { createRoom, ROOM, ANNEX, EAST_DOOR } from './room.js';
 import { createBilliards, annexBlocks, tableBlocks, HOUSE_EAST, tableToWorld } from './billiards.js';
 import { createBilliardGame } from './billiardgame.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
+import { createGrass } from './grass.js';
+import { PLATEAU } from './hill.js';
 import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
 import { createKart, gridSlot } from './kart.js';
 import { createKartGame } from './kartgame.js';
@@ -1366,6 +1368,7 @@ export function createWorld(renderer, scene, {
     character.update(dt);
     tennisGame?.afterPose();
     updateListener();
+    grass.update(dt);
     voice?.update(dt);
 
     // --- スイッチの押し込み ------------------------------------------------
@@ -1516,8 +1519,12 @@ export function createWorld(renderer, scene, {
   const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, cruiser.body, jetski.body, cessna.body, ...cessna.interactables, gt3.body, f40.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
+  // 芝の草の束：庭の物をすべて置いたあとで、芝の見えている所だけに生やす（grass.js）。軽い設定では数を減らす
+  const grass = createGrass(renderer, scene, { lawnMaterial: park.lawnMaterial, bounds: PLATEAU, count: textureQuality >= 1 ? 30000 : 14000 });
+
   return {
     surfaceAt,
+    grass,
     billiardGame,
     billiards,
     dolphins,

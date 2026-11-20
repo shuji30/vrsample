@@ -146,7 +146,8 @@ function noseBump(y, a) {
 function hairline(a) {
   const f = Math.abs(a);
   // 前髪は、眉のすぐ上でまっすぐ切りそろえる（|a| 0.95 まで）。そこから外は、顔の横を下りる髪
-  return THREE.MathUtils.lerp(0.1385 + Math.sin(a * 40) * 0.0008, 0.02, THREE.MathUtils.smoothstep(f, 0.95, 1.2));
+  // 前髪の端は、目じりの外でほぼまっすぐ下へ折れる（斜めに欠けると、髪が足りないように見える）
+  return THREE.MathUtils.lerp(0.1385 + Math.sin(a * 40) * 0.0008, 0.02, THREE.MathUtils.smoothstep(f, 0.9, 0.98));
 }
 /** 顔を正面から見た横の位置 x（m）での、生えぎわの高さ（顔の絵で使う） */
 function hairlineAtX(x) {
@@ -516,9 +517,9 @@ export function createGirlModel({ camera = null } = {}) {
     // 耳：頭の横（少し後ろ）に、薄いだ円。この髪型では髪に隠れるので、髪から突き出ない大きさに
     for (const s of [1, -1]) {
       const ex = headR(0.098, Math.PI / 2 + 0.12) * HEAD_X;
-      M.compose(V((ex - 0.002) * s, rest.head.y + 0.1, -0.012), Q.setFromEuler(new THREE.Euler(0.12, -0.3 * s, 0.06 * s)), V(0.005, 0.025, 0.0145));
+      M.compose(V((ex - 0.006) * s, rest.head.y + 0.1, -0.016), Q.setFromEuler(new THREE.Euler(0.12, -0.3 * s, 0.06 * s)), V(0.005, 0.025, 0.0145));
       B.add(sphereGeo, M, index.head, SKIN, SKIN_SHADE);
-      ball('head', V((ex - 0.002) * s, rest.head.y + 0.078, -0.008), [0.0045, 0.007, 0.006], SKIN, SKIN_SHADE);
+      ball('head', V((ex - 0.006) * s, rest.head.y + 0.078, -0.012), [0.0045, 0.007, 0.006], SKIN, SKIN_SHADE);
     }
   }
 
@@ -536,7 +537,7 @@ export function createGirlModel({ camera = null } = {}) {
       const f = Math.abs(a);
       // 前は切りそろえた前髪（hairline）。顔の横から後ろは、まっすぐ下ろす：横は肩の上まで、背中は肩甲骨の下まで
       // （横を長くすると、頭に固定した髪が肩の中へ入ってしまう）
-      const side = THREE.MathUtils.smoothstep(f, 1.0, 1.22);
+      const side = THREE.MathUtils.smoothstep(f, 0.9, 1.0);
       const long = THREE.MathUtils.lerp(-0.088, -0.3, THREE.MathUtils.smoothstep(f, 1.75, 2.35)) + Math.sin(a * 17) * 0.003;
       return THREE.MathUtils.lerp(hairline(a), long, side);
     };
@@ -551,7 +552,10 @@ export function createGirlModel({ camera = null } = {}) {
         // ストレート：耳の下からは、ほぼまっすぐ下りる（背中へ向かって、体の厚みのぶんだけ外へ）
         const hang = y < 0.075 ? 0.084 + Math.min(0.075 - y, 0.12) * 0.07 + Math.max(0, -0.1 - y) * 0.09 * Math.max(0, -Math.cos(a)) : 0;
         // 髪の厚み：頭より 1.2cm ほど外（薄いと、地肌に貼り付いて見える）。てっぺんへ向かって閉じる
-        const r = Math.max(0.0005, Math.max(headR(yy, a), hang) * 1.06 + 0.0115 * (1 - THREE.MathUtils.smoothstep(y, 0.195, TOP)));
+        // 頭の丸みから、まっすぐ下りる髪へは、耳の上あたりでなめらかに移る（急に切り替えると、髪に段ができる）
+        const head = headR(yy, a);
+        const body = THREE.MathUtils.lerp(head, Math.max(head, y < 0.075 ? hang : 0.084), THREE.MathUtils.smoothstep(0.125 - y, 0, 0.06));
+        const r = Math.max(0.0005, body * 1.06 + 0.0115 * (1 - THREE.MathUtils.smoothstep(y, 0.195, TOP)));
         pos.push(Math.sin(a) * r * HEAD_X, hy + y, Math.cos(a) * r);
       }
     }
@@ -582,6 +586,40 @@ export function createGirlModel({ camera = null } = {}) {
     };
     B.add(g, new THREE.Matrix4(), index.head, hairColor, HAIR_DARK);
     g.dispose();
+    // 顔の横の髪：こめかみから、肩の前を通って胸まで、まっすぐ下りる帯（左右）。上は頭の髪に重ね、下へ行くほど
+    // 前へ出す（頭の髪と同じ筒のまま下ろすと、肩と胸の中へ入ってしまう）。毛先は少しだけ不ぞろいに
+    for (const s of [1, -1]) {
+      const COLS = 10;
+      const ROWS2 = 30;
+      const p2 = [];
+      const i2 = [];
+      for (let j = 0; j <= ROWS2; j++) {
+        for (let i = 0; i <= COLS; i++) {
+          const u = i / COLS;
+          const ang = THREE.MathUtils.lerp(0.9, 1.7, u);
+          const bottom = -0.335 + Math.sin(u * 9 + s) * 0.006 - u * 0.02;
+          const y = THREE.MathUtils.lerp(0.13, bottom, j / ROWS2);
+          const head = headR(Math.max(0, y) * (HEAD_H / TOP), ang * s);
+          const round = THREE.MathUtils.lerp(head, Math.max(head, 0.084), THREE.MathUtils.smoothstep(0.125 - y, 0, 0.06)) * 1.06 + 0.0135;
+          const down = Math.max(0, -y);
+          const forward = 0.062 * THREE.MathUtils.smoothstep(down, 0, 0.12) + 0.034 * THREE.MathUtils.smoothstep(down, 0.1, 0.26);
+          const out = 0.012 * THREE.MathUtils.smoothstep(down, 0.02, 0.14);
+          p2.push(Math.sin(ang) * (round + out) * HEAD_X * s, hy + y, Math.cos(ang) * round + forward * (1 - u * 0.45));
+        }
+      }
+      for (let j = 0; j < ROWS2; j++) {
+        for (let i = 0; i < COLS; i++) {
+          const k = j * (COLS + 1) + i;
+          i2.push(k, k + 1, k + COLS + 1, k + 1, k + COLS + 2, k + COLS + 1);
+        }
+      }
+      const g2 = new THREE.BufferGeometry();
+      g2.setAttribute('position', new THREE.Float32BufferAttribute(p2, 3));
+      g2.setIndex(i2);
+      g2.computeVertexNormals();
+      B.add(g2, new THREE.Matrix4(), index.head, hairColor, HAIR_DARK);
+      g2.dispose();
+    }
   }
 
   B.pre.identity();

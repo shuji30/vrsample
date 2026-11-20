@@ -692,6 +692,12 @@ const talkEye = new THREE.Vector3();
   // VR に入れない端末（スマホのブラウザなど）では、「VR NOT SUPPORTED」のボタンを出さない
   if (touchMode) navigator.xr?.isSessionSupported?.('immersive-vr').then((ok) => { if (!ok) vrButton.style.display = 'none'; }).catch(() => { vrButton.style.display = 'none'; });
   if (touchMode && !navigator.xr) vrButton.style.display = 'none';
+  // 開始画面の「ハンコンの設定を開く」：説明を閉じて、設定の画面を出す（H キーは気づきにくい）
+  document.getElementById('wheel-settings')?.addEventListener('click', () => {
+    // 閉じたことは覚えない（次に開いたとき、説明はまた出る）
+    overlayEl?.classList.add('closed');
+    kartDrive.openWheelPanel();
+  });
   Object.assign(window.__vrsample, { mixer, contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する

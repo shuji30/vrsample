@@ -666,7 +666,7 @@ export function createWheelInput({ bridge = null } = {}) {
       + 'background:rgba(16,20,28,0.94);color:#eef;font:14px/1.6 sans-serif;border-radius:10px;z-index:20;'
       + 'max-height:calc(100vh - 32px);overflow:auto';
     panel.innerHTML = `
-      <b>ハンコンの設定</b>（H キーで閉じる）<br>
+      <button data-close style="float:right">× 閉じる</button><b>ハンコンの設定</b>（H キーでも開け閉めできます）<br>
       <span data-devices></span><br>
       <span data-map></span>
       <div data-bars style="margin:6px 0"></div>
@@ -700,6 +700,7 @@ export function createWheelInput({ bridge = null } = {}) {
     panel.querySelector('[data-full]').value = config.fullDegrees;
     panel.querySelector('[data-lock]').value = config.lockDegrees;
     panel.addEventListener('click', (event) => {
+      if (event.target.hasAttribute?.('data-close')) { closePanel(); return; }
       const el = event.target;
       if (el.hasAttribute?.('data-wizard')) startWizard();
       if (el.dataset?.only) startWizard(el.dataset.only);

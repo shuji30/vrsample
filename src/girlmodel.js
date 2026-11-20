@@ -20,8 +20,9 @@ import * as THREE from 'three';
  *   置いて 1 つの SkinnedMesh にまとめる（色は頂点色、描画命令は体で 1 回）。関節の前後は 2 つの骨で分け合う
  * - 頭は、前・横・後ろで輪郭の違う立体（headR）。鼻とほおは、頭の面そのものを盛り上げる（別の部品を貼らない）
  * - 顔は、頭の曲面に沿わせた板に、キャンバスで目・眉・唇・生えぎわを描く。表情が変わったときだけ描き直す
- * - 髪は黒のセミロング。センター分けでおでこを出し、耳にかけて後ろへ流す
- * - 服は淡い黄色のノースリーブのワンピース。スカートは腰と左右の腿の骨で分け合う（座ると腿の上に乗る。布の計算はしない）
+ * - 髪は黒のストレートのロング。前髪は眉の上でまっすぐ切りそろえる（横は肩の上まで、背中は長く）
+ * - 服は黒の長そでニット（ハイネック）と、ウエストをリボンで結んだ黒のフレアスカート、黒のパンプス。
+ *   スカートは腰と左右の腿の骨で分け合う（座ると腿の上に乗る。布の計算はしない）
  * - 実在の人の顔には似せない（顔立ちの系統と雰囲気だけを参考にする）
  */
 
@@ -31,11 +32,14 @@ const SKIN_SHADE = 0xd9a88f;
 const HAIR = 0x1d1714;
 const HAIR_LIGHT = 0x4a3528;
 const HAIR_DARK = 0x0d0a09;
-const DRESS = 0xf1eeb4;
-const DRESS_SHADE = 0xcbc586;
-const SLIP = 0xdcd8a4;
-const SHOE = 0xece6cf;
-const SOLE = 0xb9ae88;
+// 服：黒の長そでニット（ハイネック）と、黒のフレアスカート（ウエストをリボンで結ぶ）、黒のパンプス
+const DRESS = 0x1d1d22;
+const DRESS_SHADE = 0x0e0e11;
+const SKIRT = 0x26262c;
+const SKIRT_SHADE = 0x101013;
+const SLIP = 0x17171a;
+const SHOE = 0x18181b;
+const SOLE = 0x0b0b0c;
 
 /** 骨：[名前, 親, 親からの位置]。左は +X（VRM と同じ）。身長 1.62m・7 頭身ほどの、大人の体つき */
 function boneTable() {
@@ -45,7 +49,7 @@ function boneTable() {
     ['chest', 'spine', [0, 0.10, 0]],
     ['upperChest', 'chest', [0, 0.10, 0]],
     ['neck', 'upperChest', [0, 0.115, 0]],
-    ['head', 'neck', [0, 0.075, 0]],
+    ['head', 'neck', [0, 0.052, 0]],
     ['hairL', 'head', [0.072, 0.13, 0.05]],
     ['hairR', 'head', [-0.072, 0.13, 0.05]],
   ];
@@ -136,10 +140,11 @@ function noseBump(y, a) {
   const wing = NOSE.wing * Math.exp(-(((y - 0.0675) / 0.0062) ** 2)) * Math.exp(-((a / NOSE.wingWidth) ** 2));
   return ridge + wing;
 }
-/** 生えぎわの高さ（頭の骨から）。まわりの角度 a（0 が正面）。真ん中がいちばん高く、こめかみへ下がり、耳の上へ */
+/** 顔にかかる髪のふちの高さ（頭の骨から）。まわりの角度 a（0 が正面） */
 function hairline(a) {
   const f = Math.abs(a);
-  return 0.166 - 0.02 * THREE.MathUtils.smoothstep(f, 0.35, 1.0) - 0.036 * THREE.MathUtils.smoothstep(f, 1.0, 1.5);
+  // 前髪は、眉のすぐ上でまっすぐ切りそろえる（|a| 0.95 まで）。そこから外は、顔の横を下りる髪
+  return THREE.MathUtils.lerp(0.1385 + Math.sin(a * 40) * 0.0008, 0.02, THREE.MathUtils.smoothstep(f, 0.95, 1.2));
 }
 /** 顔を正面から見た横の位置 x（m）での、生えぎわの高さ（顔の絵で使う） */
 function hairlineAtX(x) {
@@ -308,8 +313,10 @@ export function createGirlModel({ camera = null } = {}) {
     };
     B.add(g, new THREE.Matrix4(), 0, hex, shade, skin);
     g.dispose();
-    ball(upper, a, [profile[0][1], profile[0][1], profile[0][1]], typeof hex === 'function' ? hex(a) : hex, shade);
-    const rEnd = profile[profile.length - 1][1];
+    // 端のふた：管の端より少し小さくして、中に収める（同じ大きさだと、面が重なってぎざぎざの輪が出る）
+    const rStart = profile[0][1] * 0.94;
+    ball(upper, a, [rStart, rStart, rStart], typeof hex === 'function' ? hex(a) : hex, shade);
+    const rEnd = profile[profile.length - 1][1] * 0.94;
     ball(lower, b, [rEnd, rEnd, rEnd], typeof hex === 'function' ? hex(b) : hex, shade);
   };
 
@@ -348,10 +355,10 @@ export function createGirlModel({ camera = null } = {}) {
   ball('hips', V(0, 0.9, 0), [0.15, 0.105, 0.108], SLIP, DRESS_SHADE);
 
   // 胴：ウエストからえり元まで、1 つのなめらかな形。骨の境目の上下 3cm は、2 つの骨で分け合う。
-  // ワンピースの身ごろ（ノースリーブ）。えりぐりは前が深く、そこから上と肩は肌、肩ひもだけ服の色
+  // 長そでのニット（首まで）
   {
-    const rings = [[0.98, 0.128, 0.089, 0.002], [1.04, 0.113, 0.078, 0.005], [1.1, 0.121, 0.087, 0.012], [1.15, 0.131, 0.097, 0.022], [1.19, 0.134, 0.09, 0.013],
-      [1.235, 0.134, 0.076, 0.003], [1.265, 0.128, 0.068, 0], [1.29, 0.1, 0.06, 0], [1.308, 0.068, 0.053, 0], [1.322, 0.05, 0.05, 0]];
+    const rings = [[0.98, 0.118, 0.084, 0.002], [1.04, 0.099, 0.071, 0.005], [1.1, 0.113, 0.083, 0.012], [1.15, 0.131, 0.097, 0.022], [1.19, 0.134, 0.09, 0.013],
+      [1.235, 0.134, 0.076, 0.003], [1.265, 0.128, 0.068, 0], [1.29, 0.102, 0.062, 0], [1.308, 0.074, 0.058, 0], [1.322, 0.058, 0.055, 0]];
     const joints = [[rest.spine.y, 'hips', 'spine'], [rest.chest.y, 'spine', 'chest'], [rest.upperChest.y, 'chest', 'upperChest']];
     const skin = (p) => {
       for (const [jy, lower, upper] of joints) {
@@ -362,29 +369,13 @@ export function createGirlModel({ camera = null } = {}) {
       }
       return [index.upperChest, 0, 1, 0];
     };
-    const NECKLINE = 1.205;
-    const cloth = (p) => {
-      // えりぐりは、まっすぐ（キャミソールの形）。色の境目を輪切りの段にそろえると、境目がまだらにならない
-      return p.y < NECKLINE ? DRESS : SKIN;
-    };
-    // 輪切りの 1 段が、ちょうどえりぐりの高さに来るように、身ごろと、その上（肌）を分けて積む
-    const lower = rings.filter((r) => r[0] < NECKLINE);
-    const upper = rings.filter((r) => r[0] > NECKLINE);
-    const at = [NECKLINE, spline(rings, NECKLINE, 1), spline(rings, NECKLINE, 2), spline(rings, NECKLINE, 3)];
-    stack([...lower, at], DRESS, null, skin, { seg: 40, rows: 40 });
-    stack([at, ...upper], SKIN, null, skin, { seg: 40, rows: 22 });
-    // 肩ひも：身ごろの上のふちから、肩を越えて背中へ
-    for (const s of [1, -1]) {
-      const top = V(0.088 * s, 1.292, -0.004);
-      limb('upperChest', V(0.07 * s, NECKLINE - 0.004, spline(rings, NECKLINE, 2) * 0.82 + 0.012), top, 0.0065, 0.0065, DRESS, { seg: 8 });
-      limb('upperChest', top, V(0.068 * s, NECKLINE - 0.004, -spline(rings, NECKLINE, 2) * 0.8), 0.0065, 0.0065, DRESS, { seg: 8 });
-    }
+    stack(rings, DRESS, DRESS_SHADE, skin, { seg: 40, rows: 56 });
   }
 
   // スカート：ウエストからひざ上まで広がる。腰と左右の腿の骨で分け合う（下へ行くほど腿に付いていく）ので、
   // 歩けば脚に沿って揺れ、座れば腿の上に乗る。布の計算はしない
   {
-    const rings = [[0.55, 0.25, 0.215, 0], [0.7, 0.222, 0.188, 0], [0.84, 0.19, 0.152, 0], [0.93, 0.163, 0.12, 0], [1.0, 0.13, 0.093, 0.002], [1.06, 0.1135, 0.0795, 0.005]];
+    const rings = [[0.55, 0.25, 0.215, 0], [0.7, 0.222, 0.188, 0], [0.84, 0.19, 0.152, 0], [0.93, 0.16, 0.118, 0], [1.0, 0.122, 0.088, 0.002], [1.06, 0.1, 0.0725, 0.005]];
     const skin = (p) => {
       const leg = THREE.MathUtils.smoothstep(0.95 - p.y, 0, 0.32) * 0.82;
       const left = THREE.MathUtils.smoothstep(p.x, -0.05, 0.05);
@@ -393,35 +384,53 @@ export function createGirlModel({ camera = null } = {}) {
     // すそへ向かって、ゆるいひだ（7 つの波）
     const wave = (a, y) => 1 + Math.sin(a * 7 + 0.6) * 0.035 * THREE.MathUtils.smoothstep(0.98 - y, 0, 0.4);
     const pleat = new THREE.Color();
-    const fold = new THREE.Color(DRESS_SHADE);
+    const fold = new THREE.Color(SKIRT_SHADE);
     const cloth = (p) => {
       const a = Math.atan2(p.x, p.z);
       const k = (0.5 - 0.5 * Math.sin(a * 7 + 0.6)) * THREE.MathUtils.smoothstep(0.98 - p.y, 0, 0.4);
-      return pleat.setHex(DRESS).lerp(fold, k * 0.55).getHex();
+      return pleat.setHex(SKIRT).lerp(fold, k * 0.6).getHex();
     };
     stack(rings, cloth, null, skin, { seg: 56, rows: 40, wave });
+    // ウエストのリボン：帯を 1 周まわし、前の左寄りでちょう結び（輪 2 つ・結び目・短い垂れ 2 本）
+    stack([[1.03, 0.107, 0.0775, 0.005], [1.048, 0.103, 0.0745, 0.0055], [1.066, 0.1035, 0.075, 0.006]], SKIRT_SHADE, null, () => [index.spine, index.hips, 0.6, 0.4], { seg: 40, rows: 4 });
+    const kx = 0.04;
+    const kz = 0.081;
+    ball('spine', V(kx, 1.048, kz), [0.011, 0.011, 0.008], SKIRT_SHADE);
+    for (const d of [1, -1]) {
+      const g = new THREE.SphereGeometry(1, 12, 8);
+      M.compose(V(kx + 0.027 * d, 1.052, kz - 0.003 * d), Q.setFromEuler(new THREE.Euler(0, 0.25 * d, 0.28 * d)), V(0.027, 0.014, 0.006));
+      B.add(g, M, index.spine, SKIRT, SKIRT_SHADE);
+      g.dispose();
+      limb('hips', V(kx + 0.004 * d, 1.042, kz), V(kx + 0.022 * d, 0.93, kz + 0.022), 0.0075, 0.0085, SKIRT_SHADE, { seg: 6 });
+    }
   }
 
   // 首：付け根は太く、上は細く。頭の中まで入れて、あごの下の面とつなぐ。少し前へ傾ける
-  limb('neck', V(0, 1.295, -0.006), V(0, 1.36, 0), 0.046, 0.0345, SKIN, { caps: false, shade: SKIN_SHADE, seg: 20 });
+  // 首の太さは、あごの幅の 7 割ほど（細いと、頭が棒の上に乗って見える）
+  // 首は、あご先より後ろに立つ（前へ出ると、あごの下の影が無くなり、あごが首に埋もれる）。頭の中まで入れる
+  stack([[1.292, 0.06, 0.056, -0.008], [1.32, 0.053, 0.05, -0.011], [1.338, 0.0455, 0.0455, -0.013], [rest.head.y, 0.0425, 0.044, -0.013], [rest.head.y + 0.05, 0.042, 0.044, -0.012]],
+    SKIN, SKIN_SHADE, () => [index.neck, 0, 1, 0], { seg: 24, rows: 24 });
+  // ハイネックのえり（首の下半分）
+  stack([[1.29, 0.064, 0.06, -0.008], [1.315, 0.057, 0.054, -0.011], [1.337, 0.05, 0.0495, -0.013]], DRESS, DRESS_SHADE, () => [index.neck, index.upperChest, 0.7, 0.3], { seg: 24, rows: 8 });
   // 首の付け根から肩へ下る線（僧帽筋）。これが無いと、首が肩の上に立てた棒に見える
-  for (const s of [1, -1]) limb('upperChest', V(0.028 * s, 1.318, -0.012), V(0.112 * s, 1.288, -0.006), 0.027, 0.03, SKIN, { shade: SKIN_SHADE, seg: 12 });
-  limb('neck', V(0, 1.36, 0), V(0, 1.425, 0.004), 0.0345, 0.034, SKIN, { caps: false, shade: SKIN_SHADE, seg: 20 });
+  for (const s of [1, -1]) limb('upperChest', V(0.028 * s, 1.318, -0.012), V(0.112 * s, 1.288, -0.006), 0.029, 0.032, DRESS, { shade: DRESS_SHADE, seg: 12 });
 
   for (const [side, s] of [['left', 1], ['right', -1]]) {
     const sh = rest[`${side}UpperArm`];
     const el = rest[`${side}LowerArm`];
     const wr = rest[`${side}Hand`];
-    // 肩：胴の中から肩を通って二の腕へ。肩の関節の前後は、肩の骨と腕の骨で分け合う（ノースリーブなので肌）
+    // 肩：胴の中から肩を通って二の腕へ。肩の関節の前後は、肩の骨と腕の骨で分け合う（長そで）
     tube(`${side}Shoulder`, `${side}UpperArm`, V(0.07 * s, sh.y - 0.012, 0), sh, V(sh.x + 0.07 * s, sh.y, 0),
-      [[0, 0.043], [0.4, 0.043], [0.7, 0.04], [1, 0.037]], SKIN, { shade: SKIN_SHADE, seg: 18, rows: 18, blend: 0.035 });
+      [[0, 0.045], [0.4, 0.045], [0.7, 0.042], [1, 0.0395]], DRESS, { shade: DRESS_SHADE, seg: 18, rows: 18, blend: 0.035 });
     {
       const a = V(sh.x + 0.05 * s, sh.y, 0);
       const tj = Math.abs(el.x - a.x) / Math.abs(wr.x - a.x);
-      tube(`${side}UpperArm`, `${side}LowerArm`, a, el, wr, [[0, 0.038], [0.2, 0.0355], [tj, 0.0295], [tj + 0.15, 0.031], [0.9, 0.0262], [1, 0.0258]], SKIN, { shade: SKIN_SHADE, seg: 14, blend: 0.035 });
+      tube(`${side}UpperArm`, `${side}LowerArm`, a, el, wr, [[0, 0.0405], [0.2, 0.038], [tj, 0.032], [tj + 0.15, 0.0335], [0.88, 0.028], [1, 0.0265]], DRESS, { shade: DRESS_SHADE, seg: 14, blend: 0.035 });
     }
     // 手のひらと指
-    ball(`${side}Hand`, V(wr.x + 0.04 * s, wr.y, 0.001), [0.046, 0.0135, 0.033], SKIN, SKIN_SHADE);
+    // 手首から手のひらへ：丸い腕から、平たい手へ、段をつけずにつなぐ（付け根のふくらみ → 手のひら）
+    ball(`${side}Hand`, V(wr.x + 0.012 * s, wr.y, 0.0005), [0.024, 0.0185, 0.0265], SKIN, SKIN_SHADE);
+    ball(`${side}Hand`, V(wr.x + 0.042 * s, wr.y, 0.001), [0.044, 0.0138, 0.033], SKIN, SKIN_SHADE);
     for (const [finger] of FINGERS) {
       const names = ['Proximal', 'Intermediate', 'Distal'].map((j) => `${side}${finger}${j}`);
       names.forEach((name, i) => {
@@ -443,16 +452,26 @@ export function createGirlModel({ camera = null } = {}) {
     const hip = rest[`${side}UpperLeg`];
     const knee = rest[`${side}LowerLeg`];
     const ankle = rest[`${side}Foot`];
-    limb(`${side}UpperLeg`, V(hip.x, hip.y + 0.03, 0), V(hip.x, hip.y - 0.1, 0), 0.076, 0.072, SLIP, { caps: false, shade: DRESS_SHADE, seg: 16 });
+    limb(`${side}UpperLeg`, V(hip.x, hip.y + 0.03, 0), V(hip.x, hip.y - 0.1, 0), 0.076, 0.072, SLIP, { caps: false, shade: SKIRT_SHADE, seg: 16 });
     {
       const a = V(hip.x, hip.y - 0.01, 0);
       const b = V(ankle.x, ankle.y + 0.005, 0);
       const tj = (a.y - knee.y) / (a.y - b.y);
-      tube(`${side}UpperLeg`, `${side}LowerLeg`, a, knee, b, [[0, 0.073], [0.2, 0.067], [tj - 0.06, 0.05], [tj, 0.0465], [tj + 0.14, 0.0485], [0.86, 0.034], [1, 0.0305]],
+      tube(`${side}UpperLeg`, `${side}LowerLeg`, a, knee, b, [[0, 0.073], [0.2, 0.067], [tj - 0.06, 0.05], [tj, 0.0465], [tj + 0.14, 0.0485], [0.84, 0.034], [0.95, 0.0295], [1, 0.03]],
         SKIN, { shade: SKIN_SHADE, seg: 18, rows: 40, blend: 0.045 });
     }
     // 足と、かかとの低い靴
-    ball(`${side}Foot`, V(ankle.x, 0.05, 0.03), [0.036, 0.04, 0.085], SKIN, SKIN_SHADE);
+    // 足首から足へ：くるぶし・かかと・足の甲をつなぐ（すねの管をそのまま足に刺すと、棒に見える）
+    ball(`${side}Foot`, V(ankle.x, ankle.y - 0.004, -0.002), [0.031, 0.032, 0.036], SKIN, SKIN_SHADE);
+    ball(`${side}Foot`, V(ankle.x, 0.045, -0.014), [0.028, 0.038, 0.03], SKIN, SKIN_SHADE);
+    for (const k of [1, -1]) ball(`${side}Foot`, V(ankle.x + 0.0245 * k, ankle.y - 0.002, -0.004), [0.009, 0.011, 0.011], SKIN, SKIN_SHADE);
+    {
+      // 足の甲：足首から つま先へ下る
+      const g = new THREE.SphereGeometry(1, 14, 10);
+      M.compose(V(ankle.x, 0.052, 0.04), Q.setFromEuler(new THREE.Euler(0.42, 0, 0)), V(0.034, 0.026, 0.082));
+      B.add(g, M, index[`${side}Foot`], SKIN, SKIN_SHADE);
+      g.dispose();
+    }
     ball(`${side}Foot`, V(ankle.x, 0.03, 0.045), [0.041, 0.028, 0.108], SHOE, SOLE);
     ball(`${side}Foot`, V(ankle.x, 0.012, 0.04), [0.04, 0.012, 0.1], SOLE);
   }
@@ -488,26 +507,34 @@ export function createGirlModel({ camera = null } = {}) {
     B.add(g, new THREE.Matrix4(), index.head, SKIN, SKIN_SHADE);
     g.dispose();
     // あごの下の面（あご先から首へ）・耳
-    ball('head', V(0, rest.head.y + 0.006, 0.006), [0.022, 0.009, 0.03], SKIN_SHADE);
-    for (const s of [1, -1]) ball('head', V((headR(0.1, Math.PI / 2) * HEAD_X - 0.002) * s, rest.head.y + 0.1, -0.008), [0.008, 0.022, 0.014], SKIN, SKIN_SHADE);
+    // あごの下の面：あご先から首へ向かう、影になる面
+    ball('head', V(0, rest.head.y + 0.007, 0.01), [0.03, 0.009, 0.036], SKIN_SHADE);
+    // 耳：頭の横（少し後ろ）に、薄いだ円。この髪型では髪に隠れるので、髪から突き出ない大きさに
+    for (const s of [1, -1]) {
+      const ex = headR(0.098, Math.PI / 2 + 0.12) * HEAD_X;
+      M.compose(V((ex - 0.002) * s, rest.head.y + 0.1, -0.012), Q.setFromEuler(new THREE.Euler(0.12, -0.3 * s, 0.06 * s)), V(0.005, 0.025, 0.0145));
+      B.add(sphereGeo, M, index.head, SKIN, SKIN_SHADE);
+      ball('head', V((ex - 0.002) * s, rest.head.y + 0.078, -0.008), [0.0045, 0.007, 0.006], SKIN, SKIN_SHADE);
+    }
   }
 
   // 髪：黒のセミロング。前は生えぎわまで、横と後ろは肩の上まで下ろす（ゆるい波）
   {
     const hy = rest.head.y;
     const SEG = 72;
-    const ROWS = 26;
-    const TOP = HEAD_H + 0.007;
+    const ROWS = 40;
+    const TOP = HEAD_H + 0.014;
     const HAIRLINE = 0.172;
     const pos = [];
     const idx = [];
     /** まわりの角度（0 が正面）での、髪のすその高さ */
     const hem = (a) => {
       const f = Math.abs(a);
-      // 耳にかけて後ろへ流す：髪が下りるのは耳の後ろ（|a| 1.5 より後ろ）から。前は生えぎわ（hairline）
-      const side = THREE.MathUtils.smoothstep(f, 1.42, 1.78);
-      // 横と後ろのすそは、房ごとに少し上下させる（まっすぐ切りそろえると、ヘルメットに見える）
-      return THREE.MathUtils.lerp(hairline(a), -0.095 + Math.sin(a * 9) * 0.009 + Math.sin(a * 23) * 0.004, side);
+      // 前は切りそろえた前髪（hairline）。顔の横から後ろは、まっすぐ下ろす：横は肩の上まで、背中は肩甲骨の下まで
+      // （横を長くすると、頭に固定した髪が肩の中へ入ってしまう）
+      const side = THREE.MathUtils.smoothstep(f, 1.0, 1.22);
+      const long = THREE.MathUtils.lerp(-0.088, -0.3, THREE.MathUtils.smoothstep(f, 1.75, 2.35)) + Math.sin(a * 17) * 0.003;
+      return THREE.MathUtils.lerp(hairline(a), long, side);
     };
     for (let i = 0; i <= SEG; i++) {
       const a = (i / SEG) * Math.PI * 2 - Math.PI;
@@ -517,8 +544,10 @@ export function createGirlModel({ camera = null } = {}) {
         const y = THREE.MathUtils.lerp(TOP, bottom, t * t * 0.35 + t * 0.65);
         // てっぺんは、頭の丸みに沿って閉じる。耳より下は、頭がすぼまっても髪はそのまま下ろし、すそへ少し広がって波打つ
         const yy = Math.max(0, y) * (HEAD_H / TOP);
-        const hang = y < 0.075 ? 0.083 + (0.075 - y) * 0.11 + Math.sin(a * 8 + y * 42) * 0.004 * THREE.MathUtils.smoothstep(0.075 - y, 0, 0.08) : 0;
-        const r = Math.max(0.0005, Math.max(headR(yy, a), hang) * 1.045 + 0.0065 * (1 - THREE.MathUtils.smoothstep(y, 0.2, TOP)));
+        // ストレート：耳の下からは、ほぼまっすぐ下りる（背中へ向かって、体の厚みのぶんだけ外へ）
+        const hang = y < 0.075 ? 0.084 + Math.min(0.075 - y, 0.12) * 0.07 + Math.max(0, -0.1 - y) * 0.09 * Math.max(0, -Math.cos(a)) : 0;
+        // 髪の厚み：頭より 1.2cm ほど外（薄いと、地肌に貼り付いて見える）。てっぺんへ向かって閉じる
+        const r = Math.max(0.0005, Math.max(headR(yy, a), hang) * 1.06 + 0.0115 * (1 - THREE.MathUtils.smoothstep(y, 0.195, TOP)));
         pos.push(Math.sin(a) * r * HEAD_X, hy + y, Math.cos(a) * r);
       }
     }
@@ -541,11 +570,10 @@ export function createGirlModel({ camera = null } = {}) {
     const hairColor = (p) => {
       const ang = Math.atan2(p.x - rest.head.x, p.z - rest.head.z);
       const h = (p.y - rest.head.y) / HEAD_SCALE;
-      const strand = 0.5 + 0.5 * Math.sin(ang * 31 + Math.sin(ang * 5) * 2);
+      const strand = 0.5 + 0.5 * Math.sin(ang * 47 + Math.sin(ang * 5) * 2);
       const ring = Math.exp(-(((h - 0.178) / 0.016) ** 2)) * (0.5 + 0.5 * Math.sin(ang * 37));
-      hc.setHex(HAIR).lerp(hl, strand * 0.3 + ring * 0.8).lerp(hd, THREE.MathUtils.clamp((0.0 - h) / 0.1, 0, 0.5));
+      hc.setHex(HAIR).lerp(hl, strand * 0.22 + ring * 0.8).lerp(hd, THREE.MathUtils.clamp((-0.05 - h) / 0.25, 0, 0.4));
       // 分け目：頭の真ん中の前半分に、細い明るい線（地肌）
-      if (Math.abs(ang) < 0.022 && h > 0.17 && p.z > rest.head.z + 0.01) hc.lerp(part, 0.55);
       return hc.getHex();
     };
     B.add(g, new THREE.Matrix4(), index.head, hairColor, HAIR_DARK);
@@ -834,20 +862,6 @@ function createFace() {
       ctx.lineTo(px(FACE.x1), py(FACE.y1));
       ctx.closePath();
       ctx.fill();
-      ctx.lineCap = 'round';
-      for (let i = 0; i < 90; i++) {
-        const jitter = Math.sin(i * 12.9898) * 43758.5453;
-        const rnd = jitter - Math.floor(jitter);
-        const x = ((i / 89) * 2 - 1) * 0.072;
-        const y = hairlineAtX(x) + 0.002;
-        const out = (x > 0 ? 1 : -1) * (0.002 + rnd * 0.004);     // 分け目から外へ流れる
-        ctx.strokeStyle = `rgba(24,19,17,${0.35 + rnd * 0.5})`;
-        ctx.lineWidth = 1.2 + rnd * 1.6;
-        ctx.beginPath();
-        ctx.moveTo(px(x), py(y));
-        ctx.lineTo(px(x + out), py(y - 0.004 - rnd * 0.007));
-        ctx.stroke();
-      }
     }
     // 目のまわりの影（まぶたのくぼみ）
     for (const s of [1, -1]) {
@@ -872,11 +886,11 @@ function createFace() {
       const x0 = px(0.012 * s);
       const x1 = px(0.034 * s);
       const x2 = px(0.052 * s);
-      ctx.fillStyle = 'rgba(38,28,24,0.86)';
+      ctx.fillStyle = 'rgba(38,28,24,0.78)';
       ctx.beginPath();
       ctx.moveTo(x0, py(by - 0.0022));
       ctx.quadraticCurveTo(x1, py(by + 0.0052 + surprised * 0.002), x2, py(by + 0.0005));
-      ctx.quadraticCurveTo(x1, py(by + 0.0018), x0, py(by - 0.0058));
+      ctx.quadraticCurveTo(x1, py(by + 0.0026), x0, py(by - 0.0048));
       ctx.closePath();
       ctx.fill();
     }

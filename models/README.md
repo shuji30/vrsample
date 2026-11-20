@@ -5,7 +5,9 @@
 部屋はそのまま動きます。
 
 ```
-models/character.vrm    このリポジトリのオーナーが自作した VRM 1.0 モデル
+models/character.vrm    このリポジトリのオーナーが自作した VRM 1.0 モデル（VRoid Studio。既定）
+models/girl-swim.vrm    Blender で作った自前のモデル・水着コーデ（VRM 1.0）
+models/girl-street.vrm  Blender で作った自前のモデル・ストリートコーデ（VRM 1.0）
 ```
 
 別のファイルを試したいときは URL で差し替えられます。

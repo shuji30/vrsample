@@ -10,16 +10,24 @@
 
 MCP for Blender（旧名 blender-mcp。MIT ライセンス）を使います。以下は公式の README で確認した内容です（2026-11-20）。
 
-1. **必要な物**：Blender 3.0 以降、Python 3.10 以降、uv。あとで使う MPFB は Blender 4.2 以降が要るので、**Blender は 4.2 以降**にする
-2. **uv を入れる**：公式のインストーラーで入れる（`pip install uv` は使わない、と README にある）
+1. **Claude Code を入れる**（`claude` と打って「認識されていません」と出るなら、まだ入っていない）。公式の手順（2026-11-20 に確認）：
+   - Windows の PowerShell：`irm https://claude.ai/install.ps1 | iex`
+   - Windows のコマンドプロンプト：`curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd`
+   - WinGet：`winget install Anthropic.ClaudeCode`
+   - 入れたら**ターミナルを開き直して** `claude --version`。見つからなければ、`%USERPROFILE%\.local\bin` を PATH に足す
+   - `claude` を実行してサインインする（有料プランのアカウントが要る）
+2. **必要な物**：Blender 3.0 以降、Python 3.10 以降、uv。あとで使う MPFB は Blender 4.2 以降が要るので、**Blender は 4.2 以降**にする
+3. **uv を入れる**：公式のインストーラーで入れる（`pip install uv` は使わない、と README にある）
    - macOS：`brew install uv`
    - Linux：`curl -LsSf https://astral.sh/uv/install.sh | sh`
-   - Windows：uv の公式サイトの手順で
-3. **Blender にアドオンを入れる**：ターミナルで `uvx mcp-for-blender install-addon`
+   - Windows：uv の公式サイト（astral.sh）の手順で
+4. **Blender にアドオンを入れる**：ターミナルで `uvx mcp-for-blender install-addon`
    - Blender の「編集 → プリファレンス → アドオン」で「Interface: MCP for Blender」を有効にする
    - 3D ビューで N キー →「MCP for Blender」タブ →「Start MCP Server」（または「Connect to Claude」）
-4. **Claude Code につなぐ**：このリポジトリのフォルダで `claude mcp add blender uvx mcp-for-blender`
-5. Claude Code を起動して、「docs/girl-blender.md を読んで、女の子のモデルを作って」と頼む
+5. **Claude Code につなぐ**：このリポジトリのフォルダで `claude mcp add blender -- uvx mcp-for-blender`
+   （名前のあとに `--` が要る）。`claude mcp list` でつながったか確かめる。「Failed to connect」なら、
+   `uvx mcp-for-blender` を単独で実行してエラーを見る（Windows で `cmd /c` で包む必要があるかは、公式の説明に無く未確認）
+6. Claude Code を起動して、「docs/girl-blender.md を読んで、女の子のモデルを作って」と頼む
 
 つながると、Claude は Blender の中で Python を実行でき（`execute_blender_code`）、ビューポートの画面を見られます（`look`）。
 

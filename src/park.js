@@ -208,8 +208,25 @@ function makeRandom(seed) {
  * 「暗い板の束」に見える。法線を上向きへ寄せ（板の向きは 40% 残す）、どの板も空と太陽から同じように
  * 照らされるようにする。instanceColor で、上の葉を明るい黄緑・下の葉を影の色にして、明暗 2 段にする
  */
+/** 葉を揺らす時刻（秒）。空の onBeforeRender が毎フレーム入れる */
+const foliageTime = { value: 0 };
+
 function roundFoliage(material) {
   material.onBeforeCompile = (shader) => {
+    // 風：葉の板を、ゆっくり左右と上下に揺らす。板ごとに、置いた場所から決めた位相でずらす（そろって揺れない）。
+    // 板の下（枝の側）は動かさず、上ほど大きく。影は揺らさない（影の計算は別のシェーダーなので、そのまま）
+    shader.uniforms.foliageTime = foliageTime;
+    shader.vertexShader = shader.vertexShader
+      .replace('void main() {', 'uniform float foliageTime;\nvoid main() {')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+      #ifdef USE_INSTANCING
+        float foliagePhase = instanceMatrix[3].x * 0.71 + instanceMatrix[3].z * 0.93 + instanceMatrix[3].y * 1.7;
+      #else
+        float foliagePhase = 0.0;
+      #endif
+      float foliageLift = position.y + 0.5;
+      transformed.x += sin( foliageTime * 1.3 + foliagePhase ) * 0.03 * foliageLift;
+      transformed.y += sin( foliageTime * 1.9 + foliagePhase * 1.3 ) * 0.012 * foliageLift;`);
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <normal_fragment_begin>',
       `#include <normal_fragment_begin>
@@ -376,6 +393,7 @@ function createSky() {
   sky.name = 'sky';
   sky.frustumCulled = false;
   sky.onBeforeRender = (renderer, scene, camera) => {
+    foliageTime.value = performance.now() / 1000;
     // 位置は matrixWorld から読むだけにする。getWorldPosition は親から行列を計算し直すので、VR の最中の
     // 片目のカメラ（親の無い XR のカメラ）に使うと、その目の行列が「リグ抜き」（XR の部屋の中の頭の姿勢だけ）に
     // 書き換わってしまう。すると空より後に描く物（家具・景色）はリグ抜きで、前に描く物（家の壁）はリグ込みで描かれ、
@@ -830,6 +848,9 @@ function createBackdrop(tex, seed = 11) {
   // 乱数は置かない所でも同じだけ引く（ほかの木の位置が変わらないように）
   const onRoad = (x, z) => x > GARAGE.maxX - 1 && x < 40 && Math.abs(z - F40_PARK.z) < 9;
 
+  /** ふさふさにするために足す板の、位置と向きを決める乱数（元の rand とは別） */
+  const fluff = makeRandom(seed * 7 + 3);
+
   /** 生垣を 1 辺ぶん並べる。dir は辺に沿った向き。 */
   function hedgeRow(from, to, count) {
     for (let i = 0; i < count; i++) {
@@ -841,7 +862,18 @@ function createBackdrop(tex, seed = 11) {
         z: from.z + (to.z - from.z) * t + (rand() - 0.5) * 1.0,
         sx: size, sy: size * 0.8, ry: rand() * Math.PI,
       };
-      if (!onRoad(leaf.x, leaf.z) && !atStairs(leaf.x, leaf.z, size)) leaves.push(leaf);
+      if (!onRoad(leaf.x, leaf.z) && !atStairs(leaf.x, leaf.z, size)) {
+        leaves.push(leaf);
+        // こんもりさせる：まわりに、向きと傾きの違う小さめの板を足す（1 枚の板だと、横から見ると線になる）。
+        // 足す分は別の乱数で決める（元の乱数の並びを変えると、ほかの木の位置が変わってしまう）
+        for (let k = 0; k < 4; k++) {
+          const s2 = size * (0.55 + fluff() * 0.3);
+          leaves.push({
+            x: leaf.x + (fluff() - 0.5) * 0.9, y: 0.45 + fluff() * 0.75, z: leaf.z + (fluff() - 0.5) * 0.9,
+            sx: s2, sy: s2 * 0.85, ry: fluff() * Math.PI, rx: (fluff() - 0.5) * 0.9, rz: (fluff() - 0.5) * 0.5,
+          });
+        }
+      }
     }
   }
   /** 浜辺へ降りる階段の前（北の生け垣を横切る所）。しげみで道がふさがれていたので空ける（rand の並びは変えない） */
@@ -864,7 +896,26 @@ function createBackdrop(tex, seed = 11) {
           z: z + (rand() - 0.5) * 0.9,
           sx: size, sy: size, ry: rand() * Math.PI,
         };
+        // 大きな板 3 枚は、樹冠の芯として少し小さくして残す
+        leaf.sx *= 0.8;
+        leaf.sy *= 0.8;
         if (!skip) leaves.push(leaf);
+      }
+      if (skip) continue;
+      // 樹冠：だ円体の中に、向きと傾きのばらばらな小さな板を 26 枚。外側ほど小さく。
+      // 大きな板 3 枚だけだと、見る向きによって板の形がそのまま見え、葉の量も足りない
+      for (let k = 0; k < 26; k++) {
+        const a = fluff() * Math.PI * 2;
+        const up = fluff() * 2 - 1;
+        const rr = Math.cbrt(fluff());
+        const flat = Math.sqrt(1 - up * up);
+        const size = h * (0.3 - rr * 0.1) * (0.85 + fluff() * 0.4);
+        leaves.push({
+          x: x + Math.cos(a) * flat * rr * h * 0.27,
+          y: h * 0.7 + up * rr * h * 0.21,
+          z: z + Math.sin(a) * flat * rr * h * 0.27,
+          sx: size, sy: size, ry: fluff() * Math.PI, rx: (fluff() - 0.5) * 1.3, rz: (fluff() - 0.5) * 0.7,
+        });
       }
     }
   }
@@ -888,10 +939,11 @@ function createBackdrop(tex, seed = 11) {
   const scale = new THREE.Vector3();
 
   const backdropTint = new THREE.Color();
+  const leafEuler = new THREE.Euler();
   const leafMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), leafMaterial, leaves.length);
   leaves.forEach((leaf, i) => {
     position.set(leaf.x, leaf.y, leaf.z);
-    quaternion.setFromAxisAngle(UP, leaf.ry);
+    quaternion.setFromEuler(leafEuler.set(leaf.rx ?? 0, leaf.ry, leaf.rz ?? 0, 'YXZ'));
     scale.set(leaf.sx, leaf.sy, 1);
     leafMesh.setMatrixAt(i, matrix.compose(position, quaternion, scale));
     // 明暗 2 段：高い板は日の当たる明るい黄緑、低い板は影の色（青みの暗い緑）。1 枚ずつ少しずらす。
@@ -1321,5 +1373,5 @@ export function createPark(scene, tex) {
   group.add(createKartCourse({ grass: lawn.material }));
   group.add(createBikeCourse());
 
-  return { group, sky, skyUniforms, hill };
+  return { group, sky, skyUniforms, hill, lawnMaterial: lawn.material };
 }

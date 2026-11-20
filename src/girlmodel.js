@@ -93,7 +93,7 @@ const HEAD_TOP = [[0.19, 0.073], [0.208, 0.05], [0.219, 0.03], [HEAD_H, 0.0]];
 //   前：あごの先が前へ出て（あごの下は首へ向かって引っ込む）、口もと・ほおがふくらみ、目のあたりが少しくぼんで、おでこが丸い
 //   横：あごの線は細く、ほお骨から耳の高さでいちばん広い（大人の顔は、子どもより面長で幅が狭い）
 //   後ろ：首のつけ根は細く、後頭部が大きく丸く張り出す
-const HEAD_FRONT = [[0.0, 0.022], [0.004, 0.042], [0.012, 0.0565], [0.03, 0.0725], [0.058, 0.0845], [0.09, 0.0875], [0.125, 0.094], [0.16, 0.09], ...HEAD_TOP];
+const HEAD_FRONT = [[0.0, 0.028], [0.005, 0.05], [0.013, 0.0605], [0.03, 0.0725], [0.058, 0.0795], [0.09, 0.0815], [0.125, 0.0885], [0.16, 0.0915], ...HEAD_TOP];
 const HEAD_SIDE = [[0.0, 0.018], [0.012, 0.033], [0.03, 0.052], [0.055, 0.068], [0.085, 0.0765], [0.12, 0.079], [0.16, 0.073], [0.19, 0.06], [0.208, 0.042], [0.219, 0.025], [HEAD_H, 0.0]];
 const HEAD_BACK = [[0.0, 0.022], [0.02, 0.045], [0.045, 0.075], [0.08, 0.095], [0.12, 0.102], [0.16, 0.097], [0.19, 0.079], [0.208, 0.055], [0.219, 0.033], [HEAD_H, 0.0]];
 /** 頭の左右の倍率と、頭・髪・顔の拡大率（写実寄りの等身なので、どちらも 1。絵としての頭身にするときは変える） */
@@ -127,17 +127,17 @@ function spline(points, x, col = 1) {
  * 鼻：頭の面そのものを盛り上げる（別の部品を貼ると、継ぎ目と玉が見えて不自然になる）。
  * 目のあいだの鼻筋からゆるやかに高くなり、鼻先（NOSE.tip の高さ）でいちばん出て、その下はすぐ引っ込む。小鼻は鼻先の左右に低く広く
  */
-const NOSE = { top: 0.104, tip: 0.0715, bottom: 0.0625, height: 0.0098, width: 0.05, wing: 0.003, wingWidth: 0.135 };
+const NOSE = { top: 0.112, tip: 0.0705, bottom: 0.0632, height: 0.0128, width: 0.044, wing: 0.003, wingWidth: 0.125 };
 function noseBump(y, a) {
   if (y < NOSE.bottom - 0.004 || y > NOSE.top || Math.abs(a) > 0.6) return 0;
   // 鼻筋：上から鼻先へ、なめらかに高くなる。鼻先の下は、短い距離で 0 へ
   const up = y >= NOSE.tip
-    ? (1 - THREE.MathUtils.smoothstep(y, NOSE.tip, NOSE.top)) ** 1.5
+    ? (1 - THREE.MathUtils.smoothstep(y, NOSE.tip, NOSE.top)) ** 2.3   // 鼻筋は、眉間から鼻先へゆるく反る（まっすぐだと柱に見える）
     : THREE.MathUtils.smoothstep(y, NOSE.bottom - 0.004, NOSE.tip);
   // 鼻筋は細く、鼻先へ向かって少し広く
   const w = NOSE.width * (0.62 + 0.38 * (1 - THREE.MathUtils.smoothstep(y, NOSE.tip, NOSE.top)));
   // 鼻先は、鼻筋より少し丸く出す
-  const tip = 0.0032 * Math.exp(-(((y - NOSE.tip) / 0.0065) ** 2)) * Math.exp(-((a / 0.075) ** 2));
+  const tip = 0.0026 * Math.exp(-(((y - NOSE.tip - 0.001) / 0.0055) ** 2)) * Math.exp(-((a / 0.065) ** 2));
   const ridge = NOSE.height * up * Math.exp(-((a / w) ** 2)) + tip;
   const wing = NOSE.wing * Math.exp(-(((y - 0.0675) / 0.0062) ** 2)) * Math.exp(-((a / NOSE.wingWidth) ** 2));
   return ridge + wing;
@@ -147,11 +147,23 @@ function hairline(a) {
   const f = Math.abs(a);
   // 前髪は、眉のすぐ上でまっすぐ切りそろえる（|a| 0.95 まで）。そこから外は、顔の横を下りる髪
   // 前髪の端は、目じりの外でほぼまっすぐ下へ折れる（斜めに欠けると、髪が足りないように見える）
-  return THREE.MathUtils.lerp(0.1385 + Math.sin(a * 40) * 0.0008, 0.02, THREE.MathUtils.smoothstep(f, 0.9, 0.98));
+  return THREE.MathUtils.lerp(0.1355 + Math.sin(a * 40) * 0.0006, 0.02, THREE.MathUtils.smoothstep(f, 0.9, 0.98));
 }
 /** 顔を正面から見た横の位置 x（m）での、生えぎわの高さ（顔の絵で使う） */
 function hairlineAtX(x) {
   return hairline(Math.asin(THREE.MathUtils.clamp(x / 0.084, -1, 1)));
+}
+/**
+ * 口もととあご：横顔の線を作る盛り上がり。上唇と下唇をわずかに前へ（合わせ目は少しくぼむ）、下唇の下はくぼみ、
+ * あご先は丸く前へ出る。正面の幅は狭く（口の幅くらい）、横へはすぐ消える
+ */
+function mouthChin(y, a) {
+  if (y > 0.062 || Math.abs(a) > 0.9) return 0;
+  const g = (c, w) => Math.exp(-(((y - c) / w) ** 2));
+  const lips = (0.0036 * g(0.0505, 0.0042) + 0.0034 * g(0.0395, 0.0045) - 0.0012 * g(0.0448, 0.0016)) * Math.exp(-((a / 0.27) ** 2));
+  const dip = -0.0022 * g(0.029, 0.005) * Math.exp(-((a / 0.3) ** 2));
+  const chin = 0.0068 * g(0.0145, 0.0095) * Math.exp(-((a / 0.36) ** 2));
+  return lips + dip + chin;
 }
 /** 頭の半径：頭の骨からの高さ y、まわりの角度 a（0 が正面、±π/2 が横、π が後ろ）。前・横・後ろの輪郭を、向きでなめらかに混ぜる */
 function headR(y, a = 0) {
@@ -162,7 +174,7 @@ function headR(y, a = 0) {
   const r = spline(HEAD_FRONT, y) * wf + spline(HEAD_BACK, y) * wb + spline(HEAD_SIDE, y) * (1 - wf - wb);
   // ほお：口の横から目の下にかけて、少しふくらませる（丸みのある顔に）
   const cheek = 0.0042 * Math.exp(-(((Math.abs(a) - 0.62) / 0.3) ** 2)) * Math.exp(-(((y - 0.062) / 0.03) ** 2));
-  return Math.max(0, r) + cheek + noseBump(y, a);
+  return Math.max(0, r) + cheek + noseBump(y, a) + mouthChin(y, a);
 }
 
 // --- 部品を 1 つのジオメトリへ集める -----------------------------------------------------

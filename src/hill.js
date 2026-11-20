@@ -117,11 +117,12 @@ function axis(denseMin, denseMax, step, limit, ratio, must) {
  * 頂点色で、段の先（外側の下の縁）を明るい緑、段の付け根と内側を影の色にする
  */
 function coniferGeometry() {
-  const tiers = [[-0.5, 0.05, 1.0], [-0.22, 0.3, 0.74], [0.06, 0.5, 0.46]];   // [下の高さ, 上の高さ, 半径]
+  // 5 段：下ほど広く、段どうしを深く重ねる（3 段だと、すきまから積み木の形が見える）
+  const tiers = [[-0.5, -0.12, 1.0], [-0.36, 0.06, 0.86], [-0.2, 0.24, 0.7], [-0.03, 0.4, 0.52], [0.14, 0.5, 0.33]];   // [下の高さ, 上の高さ, 半径]
   const pos = [];
   const col = [];
   const idx = [];
-  const SEG = 9;
+  const SEG = 13;
   const light = new THREE.Color(0x5d9440);
   const dark = new THREE.Color(0x27492a);
   const c = new THREE.Color();
@@ -134,8 +135,9 @@ function coniferGeometry() {
     for (let k = 0; k < SEG; k++) {
       const a = (k / SEG) * Math.PI * 2;
       // すそを交互に少し上下させて、まっすぐな縁にしない
-      const wob = k % 2 ? 0.94 : 1.0;
-      pos.push(Math.cos(a) * r * wob, y0 + (k % 2 ? 0.03 : 0), Math.sin(a) * r * wob);
+      // すそは 1 つおきに引っ込めて上げ、枝先がぎざぎざに垂れるように
+      const wob = k % 2 ? 0.78 : 1.0;
+      pos.push(Math.cos(a) * r * wob, y0 + (k % 2 ? 0.07 : 0), Math.sin(a) * r * wob);
       c.copy(light).lerp(dark, k % 2 ? 0.35 : 0.0);
       col.push(c.r, c.g, c.b);
     }

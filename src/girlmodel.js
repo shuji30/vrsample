@@ -113,7 +113,8 @@ function createBuilder() {
   /** このあと足す部品にかける行列（頭の部品を、頭の骨を中心に広げるのに使う） */
   const pre = new THREE.Matrix4();
   /**
-   * geometry を matrix で置き、bone に付ける。shade を渡すと、下向きの面をその色へ寄せる（服のひだ・あごの下）。
+   * geometry を matrix で置き、bone に付ける。hex は色、または (置いたあとの位置) => 色。
+   *shade を渡すと、下向きの面をその色へ寄せる（服のひだ・あごの下）。
    * skin(位置) を渡すと、頂点ごとに 2 つの骨へ分ける（[骨, 骨, 重み, 重み]。胴をなめらかに曲げる）
    */
   function add(geometry, matrix0, bone, hex, shade = null, skin = null) {
@@ -127,7 +128,7 @@ function createBuilder() {
       n.fromBufferAttribute(nn, i).applyMatrix3(nm).normalize();
       position.push(v.x, v.y, v.z);
       normal.push(n.x, n.y, n.z);
-      c.setHex(hex);
+      c.setHex(typeof hex === 'function' ? hex(v) : hex);
       if (shade !== null) c.lerp(SHADE.setHex(shade), THREE.MathUtils.clamp(-n.y * 0.9, 0, 1));
       color.push(c.r, c.g, c.b);
       if (skin) {
@@ -206,6 +207,57 @@ export function createGirlModel({ camera = null } = {}) {
     }
   };
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  /**
+   * 関節をまたぐ 1 本の管（腕・脚）。a → b のまっすぐな管で、途中の joint の前後 blend（m）は、上の骨と下の骨で
+   * 分け合う（曲げても折れ目ができず、ひじ・ひざが丸く曲がる）。profile は [位置 0..1, 半径] の並び
+   */
+  const tube = (upper, lower, a, joint, b, profile, hex, { seg = 16, rows = 26, blend = 0.04, shade = null } = {}) => {
+    const axis = new THREE.Vector3().subVectors(b, a);
+    const len = axis.length();
+    axis.normalize();
+    const side1 = new THREE.Vector3(0, 0, 1);
+    const side2 = new THREE.Vector3().crossVectors(axis, side1).normalize();
+    const radius = (t) => {
+      let i = 1;
+      while (i < profile.length - 1 && profile[i][0] < t) i++;
+      const p = profile[i - 1];
+      const q = profile[i];
+      return p[1] + (q[1] - p[1]) * THREE.MathUtils.smoothstep(t, p[0], q[0]);
+    };
+    const pos = [];
+    const idx = [];
+    for (let j = 0; j <= rows; j++) {
+      const t = j / rows;
+      const r = radius(t);
+      for (let i = 0; i <= seg; i++) {
+        const ang = (i / seg) * Math.PI * 2;
+        const cx = Math.cos(ang) * r;
+        const sx = Math.sin(ang) * r;
+        pos.push(a.x + axis.x * len * t + side1.x * cx + side2.x * sx, a.y + axis.y * len * t + side1.y * cx + side2.y * sx, a.z + axis.z * len * t + side1.z * cx + side2.z * sx);
+      }
+    }
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < seg; i++) {
+        const k = j * (seg + 1) + i;
+        idx.push(k, k + seg + 1, k + 1, k + 1, k + seg + 1, k + seg + 2);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const jointAt = new THREE.Vector3().subVectors(joint, a).dot(axis);
+    const rel = new THREE.Vector3();
+    const skin = (p) => {
+      const w = THREE.MathUtils.smoothstep(rel.subVectors(p, a).dot(axis), jointAt - blend, jointAt + blend);
+      return [index[upper], index[lower], 1 - w, w];
+    };
+    B.add(g, new THREE.Matrix4(), 0, hex, shade, skin);
+    g.dispose();
+    ball(upper, a, [profile[0][1], profile[0][1], profile[0][1]], typeof hex === 'function' ? hex(a) : hex, shade);
+    const rEnd = profile[profile.length - 1][1];
+    ball(lower, b, [rEnd, rEnd, rEnd], typeof hex === 'function' ? hex(b) : hex, shade);
+  };
 
   // 胴：腰（ショートパンツ）・おなか・胸・肩まわり（ブラウス）
   ball('hips', V(0, 0.785, 0), [0.124, 0.092, 0.098], NAVY, 0x1c2742);
@@ -271,8 +323,11 @@ export function createGirlModel({ camera = null } = {}) {
     // 肩（ふくらんだ袖）・二の腕・ひじ・前腕
     ball(`${side}UpperArm`, sh, [0.046, 0.044, 0.044], BLOUSE, 0xcdd2dc);
     limb(`${side}UpperArm`, sh, V(sh.x + 0.08 * s, sh.y, 0), 0.044, 0.041, BLOUSE, { caps: false, shade: 0xcdd2dc });
-    limb(`${side}UpperArm`, V(sh.x + 0.07 * s, sh.y, 0), el, 0.035, 0.03, SKIN, { shade: SKIN_SHADE });
-    limb(`${side}LowerArm`, el, wr, 0.03, 0.022, SKIN, { shade: SKIN_SHADE });
+    {
+      const a = V(sh.x + 0.06 * s, sh.y, 0);
+      const tj = Math.abs(el.x - a.x) / Math.abs(wr.x - a.x);
+      tube(`${side}UpperArm`, `${side}LowerArm`, a, el, wr, [[0, 0.036], [0.2, 0.0345], [tj, 0.0295], [tj + 0.16, 0.0305], [1, 0.0215]], SKIN, { shade: SKIN_SHADE, seg: 14, blend: 0.035 });
+    }
     // 手のひらと指
     ball(`${side}Hand`, V(wr.x + 0.04 * s, wr.y, 0.001), [0.042, 0.012, 0.031], SKIN, SKIN_SHADE);
     for (const [finger] of FINGERS) {
@@ -298,9 +353,17 @@ export function createGirlModel({ camera = null } = {}) {
     const ankle = rest[`${side}Foot`];
     limb(`${side}UpperLeg`, V(hip.x, hip.y + 0.03, 0), V(hip.x, hip.y - 0.14, 0), 0.07, 0.069, NAVY, { caps: false, shade: 0x1c2742, seg: 16 });
     ball(`${side}UpperLeg`, V(hip.x, hip.y + 0.01, 0), [0.07, 0.06, 0.07], NAVY, 0x1c2742);
-    limb(`${side}UpperLeg`, V(hip.x, hip.y - 0.02, 0), knee, 0.06, 0.045, SKIN, { shade: SKIN_SHADE, seg: 16 });
-    limb(`${side}LowerLeg`, knee, V(ankle.x, ankle.y + 0.02, 0), 0.044, 0.03, SKIN, { shade: SKIN_SHADE, seg: 16 });
-    limb(`${side}LowerLeg`, V(ankle.x, ankle.y + 0.12, 0), V(ankle.x, ankle.y + 0.01, 0), 0.036, 0.033, SOCK, { caps: false });
+    {
+      // 腿 → ひざ → ふくらはぎ → 足首。足首から 12cm は靴下の色
+      const a = V(hip.x, hip.y - 0.02, 0);
+      const b = V(ankle.x, ankle.y + 0.005, 0);
+      const tj = (a.y - knee.y) / (a.y - b.y);
+      const sockTop = ankle.y + 0.12;
+      tube(`${side}UpperLeg`, `${side}LowerLeg`, a, knee, b, [[0, 0.061], [0.25, 0.056], [tj, 0.0455], [tj + 0.15, 0.048], [0.86, 0.035], [1, 0.033]],
+        (p) => (p.y < sockTop ? SOCK : SKIN), { shade: null, seg: 18, rows: 34, blend: 0.045 });
+      // 靴下のふち
+      limb(`${side}LowerLeg`, V(ankle.x, sockTop + 0.004, 0), V(ankle.x, sockTop - 0.012, 0), 0.0395, 0.0385, SOCK, { caps: false });
+    }
     ball(`${side}Foot`, V(ankle.x, 0.04, 0.035), [0.043, 0.04, 0.095], SHOE, 0xb9b2a8);
     ball(`${side}Foot`, V(ankle.x, 0.014, 0.035), [0.045, 0.014, 0.098], SOLE);
     ball(`${side}Foot`, V(ankle.x, 0.07, 0.0), [0.037, 0.03, 0.045], SHOE);
@@ -319,6 +382,8 @@ export function createGirlModel({ camera = null } = {}) {
     M.compose(rest.head, Q.identity(), V(HEAD_X, 1, 1));
     B.add(g, M, index.head, SKIN, SKIN_SHADE);
     g.dispose();
+    // 鼻：小さなふくらみ（顔の絵は平らなので、横から見たときの手がかりになる）
+    ball('head', V(0, rest.head.y + 0.051, headR(0.051) - 0.0035), [0.0065, 0.0075, 0.008], SKIN, SKIN_SHADE);
     // あごの下をふさぐ・耳
     ball('head', V(0, rest.head.y + 0.004, 0), [0.03, 0.012, 0.03], SKIN_SHADE);
     for (const s of [1, -1]) ball('head', V(0.092 * s, rest.head.y + 0.078, -0.006), [0.012, 0.022, 0.016], SKIN, SKIN_SHADE);
@@ -327,8 +392,8 @@ export function createGirlModel({ camera = null } = {}) {
   // 髪：頭を包むボブ。前は生えぎわまで、横と後ろはあごの下まで下ろす
   {
     const hy = rest.head.y;
-    const SEG = 36;
-    const ROWS = 12;
+    const SEG = 66;
+    const ROWS = 14;
     const TOP = 0.218;
     const pos = [];
     const idx = [];
@@ -337,7 +402,8 @@ export function createGirlModel({ camera = null } = {}) {
       const f = Math.abs(a);
       const side = THREE.MathUtils.smoothstep(f, 0.95, 1.3);         // 0 = 前髪の生えぎわ、1 = 横・後ろ
       const back = THREE.MathUtils.smoothstep(f, 1.5, 2.6);
-      return THREE.MathUtils.lerp(0.128, THREE.MathUtils.lerp(-0.012, -0.04, back), side);
+      // 横と後ろのすそは、房ごとに少し上下させる（まっすぐ切りそろえると、ヘルメットに見える）
+      return THREE.MathUtils.lerp(0.128, THREE.MathUtils.lerp(-0.012, -0.04, back) + Math.sin(a * 11) * 0.006 * side, side);
     };
     for (let i = 0; i <= SEG; i++) {
       const a = (i / SEG) * Math.PI * 2 - Math.PI;
@@ -362,7 +428,19 @@ export function createGirlModel({ camera = null } = {}) {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setIndex(idx);
     g.computeVertexNormals();
-    B.add(g, new THREE.Matrix4(), index.head, HAIR, 0x4a2f20);
+    // 色：縦の筋（房ごとに明るさを変える）と、頭のてっぺんの少し下の明るい輪（つやの帯）。すそは暗く
+    const hc = new THREE.Color();
+    const hl = new THREE.Color(HAIR_LIGHT);
+    const hd = new THREE.Color(0x4f3222);
+    const hairColor = (p) => {
+      const ang = Math.atan2(p.x - rest.head.x, p.z - rest.head.z);
+      const h = (p.y - rest.head.y) / HEAD_SCALE;
+      const strand = 0.5 + 0.5 * Math.sin(ang * 11 + Math.sin(ang * 3) * 1.5);
+      const ring = Math.exp(-(((h - 0.172) / 0.014) ** 2)) * (0.55 + 0.45 * Math.sin(ang * 23));
+      hc.setHex(HAIR).lerp(hl, strand * 0.45 + ring * 0.75).lerp(hd, THREE.MathUtils.clamp((0.03 - h) / 0.07, 0, 0.6));
+      return hc.getHex();
+    };
+    B.add(g, new THREE.Matrix4(), index.head, hairColor, 0x4a2f20);
     g.dispose();
     // 前髪：生えぎわから眉の上へ下がる房。1 つおきに色を明るく
     // 薄く、下がとがった房を、少しずつ重ねて並べる（丸い玉を並べると、ソーセージに見える）
@@ -686,10 +764,10 @@ function createFace() {
       ctx.quadraticCurveTo(px(EYE.x * s), py(by + 0.005 + surprised * 0.003), px((EYE.x + 0.02) * s), py(by - 0.001));
       ctx.stroke();
     }
-    // 鼻：小さな影
-    ctx.fillStyle = 'rgba(200,130,110,0.55)';
+    // 鼻は立体（頭の部品）。絵では、下に小さな影だけ
+    ctx.fillStyle = 'rgba(200,130,110,0.4)';
     ctx.beginPath();
-    ctx.ellipse(px(0.002), py(0.052), 3.2, 2.4, 0, 0, Math.PI * 2);
+    ctx.ellipse(px(0), py(0.0445), 5, 1.8, 0, 0, Math.PI * 2);
     ctx.fill();
     // 口。開きは「あ・お・え・い・う」の重みから、幅と高さを決める。閉じているときは笑みの弧
     const mx = px(0);

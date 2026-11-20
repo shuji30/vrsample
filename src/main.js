@@ -9,6 +9,7 @@ import { createMusic } from './music.js';
 import { givenGirlName, givenGirlNameYomi, setGirlName, girlNameSpoken } from './girlname.js';
 import { createTouchControls, isTouchDevice } from './touch.js';
 import * as mixer from './mixer.js';
+import { VERSION, RELEASED } from './version.js';
 
 const statusEl = document.getElementById('status');
 
@@ -27,6 +28,10 @@ window.addEventListener('keydown', (event) => {
 });
 const perfEl = document.getElementById('perf');
 const creditEl = document.getElementById('credit');
+// バージョン（開始画面の題の下）。いま開いているのが最新かどうかを確かめられるように
+const versionEl = document.getElementById('version');
+if (versionEl) versionEl.textContent = `バージョン ${VERSION}（${RELEASED}）`;
+console.info(`[vrsample] version ${VERSION} (${RELEASED})`);
 const params = new URLSearchParams(location.search);
 
 /**
@@ -235,7 +240,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-window.__vrsample = { renderer, scene, camera, THREE, safeMode, touchMode };
+window.__vrsample = { renderer, scene, camera, THREE, safeMode, touchMode, version: VERSION };
 
 async function start() {
   // テクスチャを CPU で焼くあいだ画面が止まるので、先に一度描画させる

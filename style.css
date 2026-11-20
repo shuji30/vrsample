@@ -349,3 +349,6 @@ body.touch #overlay { z-index: 20; }
   z-index: 11;
   display: none;
 }
+
+/* バージョン（開始画面の題の下） */
+.version { margin: 2px 0 6px; font-size: 11px; opacity: 0.6; letter-spacing: 0.04em; }

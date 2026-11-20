@@ -37,9 +37,11 @@ const DRESS = 0x1d1d22;
 const DRESS_SHADE = 0x0e0e11;
 const SKIRT = 0x26262c;
 const SKIRT_SHADE = 0x101013;
-const SLIP = 0x17171a;
+const SLIP = 0x1f1f24;
 const SHOE = 0x18181b;
 const SOLE = 0x0b0b0c;
+/** スカートのすその高さ（立った姿勢。m） */
+const SKIRT_HEM = 0.55;
 
 /** 骨：[名前, 親, 親からの位置]。左は +X（VRM と同じ）。身長 1.62m・7 頭身ほどの、大人の体つき */
 function boneTable() {
@@ -377,7 +379,8 @@ export function createGirlModel({ camera = null } = {}) {
   {
     const rings = [[0.55, 0.25, 0.215, 0], [0.7, 0.222, 0.188, 0], [0.84, 0.19, 0.152, 0], [0.93, 0.16, 0.118, 0], [1.0, 0.122, 0.088, 0.002], [1.06, 0.1, 0.0725, 0.005]];
     const skin = (p) => {
-      const leg = THREE.MathUtils.smoothstep(0.95 - p.y, 0, 0.32) * 0.82;
+      // 腰のすぐ下から腿に付きはじめ、下のほうはほぼ腿といっしょに動く（弱いと、足を組んだとき腿が突き抜ける）
+      const leg = THREE.MathUtils.smoothstep(0.97 - p.y, 0, 0.2) * 0.96;
       const left = THREE.MathUtils.smoothstep(p.x, -0.05, 0.05);
       return [index.hips, index.leftUpperLeg, 1 - leg, leg * left, index.rightUpperLeg, leg * (1 - left)];
     };
@@ -458,7 +461,9 @@ export function createGirlModel({ camera = null } = {}) {
       const b = V(ankle.x, ankle.y - 0.012, 0);
       const tj = (a.y - knee.y) / (a.y - b.y);
       tube(`${side}UpperLeg`, `${side}LowerLeg`, a, knee, b, [[0, 0.073], [0.2, 0.067], [tj - 0.06, 0.05], [tj, 0.0465], [tj + 0.14, 0.0485], [0.84, 0.034], [0.94, 0.0292], [1, 0.0288]],
-        SKIN, { shade: SKIN_SHADE, seg: 18, rows: 40, blend: 0.045 });
+        // スカートに隠れる範囲（すその少し上まで）は、スカートの裏地の色にする。足を組む・またがるなどで
+        // 腿がスカートを突き抜けても、肌ではなく布に見える（スカートが透けて見えるのを防ぐ）
+        (p) => (p.y > SKIRT_HEM + 0.025 ? SLIP : SKIN), { shade: null, seg: 18, rows: 60, blend: 0.045 });
     }
     // 足と、かかとの低い靴
     // 足首から足へ：くるぶし・かかと・足の甲をつなぐ（すねの管をそのまま足に刺すと、棒に見える）

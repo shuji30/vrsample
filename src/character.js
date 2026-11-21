@@ -278,8 +278,8 @@ const REACTIONS = {
   nikkori: { face: { happy: 0.9 }, tilt: 0.06 },
   // 目は開けたまま、やわらかく微笑む
   hohoemi: { face: { relaxed: 0.75, happy: 0.25 }, tilt: -0.08, nod: 0.05 },
-  // 口を開けて大よろこび。少し顔を上げる
-  yorokobi: { face: { happy: 1.0, aa: 0.55 }, tilt: 0.04, nod: -0.10 },
+  // 少し口を開けて大よろこび。少し顔を上げる（口を大きく開けると、笑顔と重なって不自然に見える）
+  yorokobi: { face: { happy: 0.5, aa: 0.1 }, tilt: 0.04, nod: -0.10 },
   // ウインク
   wink: { face: { blinkRight: 1.0, happy: 0.35, ee: 0.25 }, tilt: 0.16 },
   // えへへ（照れ笑い）。首をかしげる

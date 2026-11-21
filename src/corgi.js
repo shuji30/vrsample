@@ -1,10 +1,13 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { audioContext, bus, spatial } from './mixer.js';
+import { VERSION } from './version.js';
 
 /**
  * ウェルシュ・コーギー（ペンブローク）の「こむぎ」。庭と公園に放し飼いにしてある。
  *
- * 見た目：胴長で脚が短い。大きな立ち耳、きつね顔、赤茶に白（胸・口のまわり・脚・おなか・額の筋）、
+ * 見た目（Blender で作ったモデル models/corgi.glb）：胴長で脚が短い。大きな立ち耳、トライカラー（背中・頭の上は黒、ほお・わき腹・お尻は茶、
+ * 口先・額の筋・胸・おなか・足先は白。目の上に白いまゆ）。読めないときに出る、コードで組んだ模型は、赤茶に白（胸・口のまわり・脚・おなか・額の筋）、
  * ふわふわのお尻（しっぽは短い）。体高 0.3m・体長 0.6m。
  *
  * ふるまい（ひとつずつ切り替える）
@@ -140,6 +143,47 @@ function createModel() {
 }
 
 /**
+ * Blender で作ったこむぎ（models/corgi.glb。作り方は blender/corgi/）。骨が入っていて、ここで骨を回して動かす。
+ * +Z が前、原点は足元。骨のローカル X は、どれも犬の左（+X）を向けてある（ローカル X で回す = 前後に振る）。
+ * 読めなければ、上のコードで組んだ模型のまま動く。
+ */
+async function loadRiggedModel(url) {
+  const gltf = await new GLTFLoader().loadAsync(url);
+  const root = gltf.scene;
+  const bones = {};
+  root.traverse((o) => {
+    if (o.isBone) bones[o.name] = o;
+    if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; }
+  });
+  const need = ['hips', 'spine', 'neck', 'head', 'tail', 'earL', 'earR'];
+  for (const leg of ['front', 'hind']) for (const s of ['L', 'R']) need.push(`${leg}Upper${s}`, `${leg}Lower${s}`, `${leg}Paw${s}`);
+  for (const n of need) if (!bones[n]) throw new Error(`corgi.glb に骨 ${n} がありません`);
+  // 骨の「元の向き」を親（新しく挟むグループ）へ移して、骨そのものの回転は 0 から始める（rotation.x = 角度、と書けるように）
+  for (const n of need) {
+    const b = bones[n];
+    const rest = new THREE.Group();
+    rest.position.copy(b.position);
+    rest.quaternion.copy(b.quaternion);
+    b.parent.add(rest);
+    rest.add(b);
+    b.position.set(0, 0, 0);
+    b.quaternion.identity();
+  }
+  const bodyPivot = new THREE.Group();
+  bodyPivot.add(root);
+  const outer = new THREE.Group();
+  outer.add(bodyPivot);
+  const legs = [['front', 'L'], ['front', 'R'], ['hind', 'L'], ['hind', 'R']].map(([leg, s]) => ({
+    hip: bones[`${leg}Upper${s}`], lower: bones[`${leg}Lower${s}`], paw: bones[`${leg}Paw${s}`], front: leg === 'front', side: s === 'L' ? 1 : -1,
+  }));
+  return {
+    rigged: true, root: outer, bodyPivot, legs,
+    hips: bones.hips, spine: bones.spine, neck: bones.neck, head: bones.head, tail: bones.tail, ears: [bones.earL, bones.earR],
+    tongue: root.getObjectByName('CorgiTongue'), mouth: root.getObjectByName('CorgiMouth'),
+  };
+}
+
+/**
  * @param {object} o
  * @param {THREE.Scene} o.scene
  * @param {(x: number, z: number, inset: number, from?: {x,z}) => {x,z}} o.clamp 歩ける範囲へ寄せる
@@ -152,11 +196,17 @@ function createModel() {
  */
 export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPosition, girlPosition, ball, boomerang = null, voice = null, areas }) {
   let hands = () => [];
-  const model = createModel();
+  let model = createModel();
   const group = new THREE.Group();
   group.name = 'corgi';
   group.add(model.root);
   scene.add(group);
+  // Blender で作ったモデルが読めたら、入れ替える（版を付けて読む：作り直しても名前が同じなので、ブラウザが古いファイルを出さないように）
+  loadRiggedModel(`./models/corgi.glb?v=${encodeURIComponent(VERSION)}`).then((rigged) => {
+    group.remove(model.root);
+    model = rigged;
+    group.add(model.root);
+  }).catch((err) => console.warn('[corgi] models/corgi.glb を読めませんでした。コードで組んだ模型のまま動かします', err));
   // なでるときにつかめる所（体のまわりの見えない箱。PC はクリック、VR はトリガー）
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.45, 0.75), new THREE.MeshBasicMaterial({ visible: false }));
   body.position.y = 0.25;
@@ -437,7 +487,8 @@ export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPositi
   /** くわえたブーメラン：口先に、腕を左右へ張り出して水平に */
   function carryBoomerang() {
     group.updateMatrixWorld(true);
-    model.head.localToWorld(mouthWorld.copy(MOUTH));
+    if (model.mouth) model.mouth.getWorldPosition(mouthWorld);
+    else model.head.localToWorld(mouthWorld.copy(MOUTH));
     const m = boomerang.mesh;
     m.position.copy(mouthWorld);
     // 模型の面は local XY。肘（local -y 側）を口に、腕の先を左右へ
@@ -446,7 +497,62 @@ export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPositi
     m.position.addScaledVector(tmp.set(Math.sin(yaw), 0, Math.cos(yaw)), 0.07);
   }
 
+  /** Blender のモデル（骨入り）を動かす。考え方は下の animate と同じで、ひざ・足先・耳・腰も使う */
+  function animateRigged(dt) {
+    const running = speed > 2.2;
+    phase += (speed / (running ? 0.62 : 0.34)) * dt;      // 脚が短いので、歩幅を小さく・回転を速く
+    const w = Math.PI * 2 * phase;
+    const amp = Math.min(1, speed / 1.2);
+    const sit = pose === 'sit' ? 1 : 0;
+    const lie = pose === 'lie' ? 1 : 0;
+    const sniff = pose === 'sniff' ? 1 : 0;
+    const bob = Math.abs(Math.sin(w)) * (running ? 0.022 : 0.008) * amp;
+    const bodyPitch = running ? Math.sin(w) * 0.10 * amp : 0;
+    // 座るときは、後ろ脚の付け根（高さ 0.16・z -0.17）を中心に体を起こす
+    const a = bodyPitch - sit * 0.6;
+    const py = 0.16;
+    const pz = -0.17;
+    model.bodyPivot.rotation.x = a;
+    model.bodyPivot.position.set(0, py - (py * Math.cos(a) - pz * Math.sin(a)) + bob - lie * 0.075 - sit * 0.045, pz - (py * Math.sin(a) + pz * Math.cos(a)));
+    model.legs.forEach((leg, i) => {
+      // 歩く：対角の脚がいっしょ。走る：前の 2 本・後ろの 2 本がそろう（跳ねる）
+      const off = running ? (leg.front ? 0 : Math.PI) : (i === 0 || i === 3 ? 0 : Math.PI);
+      const s = Math.sin(w + off);
+      let upper = s * (running ? 0.85 : 0.5) * amp;
+      // 前へ運ぶあいだ（振り出し）は、ひざを曲げて足を浮かせる
+      let lower = Math.max(0, Math.cos(w + off)) * (running ? 1.0 : 0.6) * amp * (leg.front ? 1 : -0.6);
+      let paw = 0;
+      if (sit) {
+        // 後ろ脚は前へたたみ、前脚は地面へまっすぐ（体を起こしたぶん戻す）
+        if (leg.front) { upper = -a; lower = 0; } else { upper = -1.2 - a; lower = 1.3; paw = -0.3; }
+      } else if (lie) {
+        // 前脚は前へ、後ろ脚は後ろへ投げ出す（コーギーの「へそ天」ならぬ「おしり開き」）
+        // 足先は、脚を倒したぶん戻して、地面に沿わせる
+        if (leg.front) { upper = -1.35; lower = 0; paw = 1.15; } else { upper = 1.2; lower = 0.5; paw = 0.8; }
+      }
+      leg.hip.rotation.x = upper;
+      leg.lower.rotation.x = lower;
+      leg.paw.rotation.x = paw;
+    });
+    // 首：においをかぐときは下げる。座る・伏せるときは、体の傾きのぶんを戻して前を見る
+    model.neck.rotation.x = sniff * 0.9 * (0.8 + 0.2 * Math.sin(clock * 9)) + sit * 0.25 - lie * 0.2 + (running ? 0.12 : 0);
+    // 頭：止まっているときは、ゆっくりかしげる
+    model.head.rotation.z = Math.sin(clock * 0.9) * 0.08 * (1 - amp) + (sit ? 0.14 * Math.sin(clock * 0.5) : 0);
+    // お尻としっぽを振る（うれしいとき・走っているとき）。腰を振ったぶん、背で戻して、前半分は動かさない
+    wag = Math.max(0, wag - dt * 0.2);
+    const wagging = Math.max(wag, running ? 0.6 : 0.15);
+    const swing = Math.sin(clock * 16) * wagging;
+    model.tail.rotation.z = swing * 0.9;
+    model.hips.rotation.z = swing * 0.10;
+    model.spine.rotation.z = -swing * 0.10;
+    // 耳：走っているときは後ろへ寝かせ、ときどきぴくっと動かす
+    const twitch = Math.max(0, Math.sin(clock * 1.7) - 0.93) * 6;
+    model.ears.forEach((ear, i) => { ear.rotation.x = (running ? -0.45 : 0) - (i === 0 ? twitch : 0) * 0.25; });
+    if (model.tongue) model.tongue.visible = running || mode === 'happy' || mode === 'greet';
+  }
+
   function animate(dt) {
+    if (model.rigged) { animateRigged(dt); return; }
     const running = speed > 2.2;
     phase += (speed / (running ? 0.7 : 0.4)) * dt;
     const w = Math.PI * 2 * phase;
@@ -506,5 +612,9 @@ export function createCorgi({ scene, clamp, groundHeight = () => 0, playerPositi
     /** 検証用 */
     debugZoomies() { nextZoomies = 0; setMode('wander'); },
     debugPlace(x, z) { pos.set(x, groundHeight(x, z), z); target.set(x, z); },
+    /** 検証用：その場で、決めた姿勢（stand / sit / lie / sniff）を seconds 秒とらせる */
+    debugPose(p, seconds = 10) { setMode('wander'); target.set(pos.x, pos.z); speed = 0; pose = p; poseFor = seconds; lastGreet = clock; nextZoomies = clock + 999; nextFollow = clock + 999; },
+    /** 検証用：Blender のモデルに入れ替わったか */
+    get rigged() { return !!model.rigged; },
   };
 }

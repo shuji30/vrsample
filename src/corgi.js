@@ -7,7 +7,8 @@ import { VERSION } from './version.js';
  * ウェルシュ・コーギー（ペンブローク）の「こむぎ」。庭と公園に放し飼いにしてある。
  *
  * 見た目（Blender で作ったモデル models/corgi.glb）：胴長で脚が短い。大きな立ち耳、トライカラー（背中・頭の上は黒、ほお・わき腹・お尻は茶、
- * 口先・額の筋・胸・おなか・足先は白。目の上に白いまゆ）。読めないときに出る、コードで組んだ模型は、赤茶に白（胸・口のまわり・脚・おなか・額の筋）、
+ * 口先・額の筋・胸・おなか・足先は白。目の上に白いまゆ）。女の子なので、左耳の前にピンクのリボン、ピンクの首輪に金のハートの札、
+ * まつ毛とほおの桃色を付けてある。体の毛並みはここで重ねる殻（addFur）で描く。読めないときに出る、コードで組んだ模型は、赤茶に白（胸・口のまわり・脚・おなか・額の筋）、
  * ふわふわのお尻（しっぽは短い）。体高 0.3m・体長 0.6m。
  *
  * ふるまい（ひとつずつ切り替える）
@@ -143,6 +144,83 @@ function createModel() {
 }
 
 /**
+ * 毛並み（シェルファー）。体のメッシュを、法線の向きへ少しずつふくらませた殻として何枚も重ねて描く。
+ * 殻ごとに「毛の根元から見て、その高さまで伸びている毛」だけを残し、ほかは捨てる（discard）。
+ * 毛は、体の元の位置（骨で動かす前）を細かい升に分けて、升ごとに長さを決める。だから動いても毛はずれない。
+ * 半透明を使わないので、描く順番を気にしなくてよい。?fur=0 で切れる（?fur=12 のように枚数も変えられる）。
+ */
+const FUR_SHELLS = (() => {
+  const v = new URLSearchParams(globalThis.location?.search ?? '').get('fur');
+  return v === null ? 8 : Math.max(0, Math.min(24, Number(v) | 0));
+})();
+const FUR_LENGTH = 0.010;    // 毛の長さ（m）。胸のえり巻きとお尻は長め、口先・耳・足先は短い
+const FUR_DENSITY = 480;     // 1m あたりの毛の升の数（2.1mm 間隔）
+function addFur(mesh) {
+  if (!FUR_SHELLS || !mesh.isSkinnedMesh) return;
+  for (let i = 1; i <= FUR_SHELLS; i++) {
+    const mat = mesh.material.clone();
+    const shell = i / FUR_SHELLS;
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uShell = { value: shell };
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+          uniform float uShell;
+          varying vec3 vFurP;
+          varying float vFurM;
+          // 毛の長さの倍率（座標は Y が上・+Z が前・原点は足元）
+          float furMask(vec3 p) {
+            float m = 1.0;
+            m *= mix(1.0, 0.3, smoothstep(0.33, 0.37, p.z));                                // 口先
+            m *= 1.0 - smoothstep(0.37, 0.39, p.y) * smoothstep(0.025, 0.035, abs(p.x));    // 耳（毛を付けない。内側の桃色がぶつぶつになる）
+            m *= mix(0.35, 1.0, smoothstep(0.03, 0.08, p.y));                               // 足先
+            m += 0.8 * clamp(1.0 - length((p - vec3(0.0, 0.23, 0.215)) / vec3(0.11, 0.10, 0.07)), 0.0, 1.0);   // 胸のえり巻き
+            m += 0.6 * clamp(1.0 - length((vec3(abs(p.x), p.yz) - vec3(0.05, 0.16, -0.27)) / vec3(0.08, 0.09, 0.07)), 0.0, 1.0);   // お尻
+            return m;
+          }`)
+        .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n vec3 furN = objectNormal;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          vFurP = position;
+          vFurM = furMask(position);
+          vec3 fn = normalize(furN);
+          // 背中・腰の上は短く、なでつけた毛（立てるととげとげに見える）
+          float back = smoothstep(0.3, 0.8, fn.y) * smoothstep(0.17, 0.21, position.y) * (1.0 - smoothstep(0.24, 0.30, position.z));   // 首の付け根まで
+          vFurM *= mix(1.0, 0.6, back);
+          float furLen = ${FUR_LENGTH.toFixed(4)} * vFurM * uShell;
+          // 毛は体に沿って後ろ・下へ寝かせる（毛先ほど大きく。根元の升はそのままなので、毛が傾く）
+          vec3 comb = vec3(0.0, -0.45, -1.0);
+          comb = comb - fn * dot(comb, fn);
+          transformed += fn * furLen * 0.75 + comb * furLen * uShell * mix(0.8, 1.6, back);`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+          uniform float uShell;
+          varying vec3 vFurP;
+          varying float vFurM;
+          float furHash(vec3 c) { return fract(sin(dot(c, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }`)
+        .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+          // 升の格子は斜めに回し、ゆるく波打たせる（まっすぐな格子を背中の面で切ると、等高線のような縞が出る）
+          const mat3 FUR_ROT = mat3(0.36, 0.48, -0.80, -0.80, 0.60, 0.00, 0.48, 0.64, 0.60);
+          vec3 fp = FUR_ROT * vFurP * ${FUR_DENSITY.toFixed(1)};
+          fp += 0.9 * sin(fp.yzx * 0.37 + sin(fp.zxy * 0.23) * 2.0);
+          vec3 cell = floor(fp);
+          float h = 0.55 + 0.45 * furHash(cell);                                            // この升の毛の長さ（0〜1）。そろえると輪郭がなめらか
+          vec3 off = vec3(furHash(cell + 1.7), furHash(cell + 3.1), furHash(cell + 5.3)) - 0.5;
+          float r = length(fract(fp) - 0.5 - off * 0.3);
+          if (vFurM < 0.15 || uShell > h || r > 0.52 * (1.0 - 0.4 * uShell / h)) discard;   // 毛先は少しだけ細く（とがらせない）`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          diffuseColor.rgb *= mix(0.72, 1.06, uShell);                                      // 根元は暗く、毛先は明るく`);
+    };
+    mat.customProgramCacheKey = () => 'corgi-fur';
+    const s = new THREE.SkinnedMesh(mesh.geometry, mat);
+    s.name = `${mesh.name}_fur${i}`;
+    s.position.copy(mesh.position); s.quaternion.copy(mesh.quaternion); s.scale.copy(mesh.scale);
+    s.bind(mesh.skeleton, mesh.bindMatrix);
+    s.bindMode = mesh.bindMode;
+    s.castShadow = false; s.receiveShadow = true; s.frustumCulled = false;
+    mesh.parent.add(s);
+  }
+}
+
+/**
  * Blender で作ったこむぎ（models/corgi.glb。作り方は blender/corgi/）。骨が入っていて、ここで骨を回して動かす。
  * +Z が前、原点は足元。骨のローカル X は、どれも犬の左（+X）を向けてある（ローカル X で回す = 前後に振る）。
  * 読めなければ、上のコードで組んだ模型のまま動く。
@@ -155,6 +233,9 @@ async function loadRiggedModel(url) {
     if (o.isBone) bones[o.name] = o;
     if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; }
   });
+  const furBody = [];
+  root.traverse((o) => { if (o.isSkinnedMesh && o.material?.name === 'CorgiFur') furBody.push(o); });
+  for (const m of furBody) addFur(m);
   const need = ['hips', 'spine', 'neck', 'head', 'tail', 'earL', 'earR'];
   for (const leg of ['front', 'hind']) for (const s of ['L', 'R']) need.push(`${leg}Upper${s}`, `${leg}Lower${s}`, `${leg}Paw${s}`);
   for (const n of need) if (!bones[n]) throw new Error(`corgi.glb に骨 ${n} がありません`);

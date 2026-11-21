@@ -10,6 +10,7 @@ models/girl-swim.vrm    Blender で作った自前のモデル・水着コーデ
 models/girl-street.vrm  Blender で作った自前のモデル・ストリートコーデ（VRM 1.0）
 models/girl-knit.vrm    Blender で作った自前のモデル・ニットコーデ（VRM 1.0。作り方は blender/girl-knit/）
 models/corgi.glb        Blender で作った自前のモデル・コーギーの「こむぎ」（GLB。骨入り。作り方は blender/corgi/）
+models/sarusuberi.glb   Blender で作った自前のモデル・さるすべりの木（GLB。満開のピンク。作り方は blender/sarusuberi/）
 ```
 
 別のファイルを試したいときは URL で差し替えられます。

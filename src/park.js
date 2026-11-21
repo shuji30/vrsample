@@ -5,6 +5,8 @@ import { createKartCourse } from './karttrack.js';
 import { createBikeCourse } from './biketrack.js';
 import { createHill, PLATEAU } from './hill.js';
 import { STAIRS, STAIRS_GATE_HALF } from './beach.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { VERSION } from './version.js';
 
 /**
  * 窓の外の公園。さるすべりの木と滑り台がある。
@@ -1326,6 +1328,34 @@ export function createPark(scene, tex) {
   smallTree.position.set(PARK.smallTree.x, 0, PARK.smallTree.z);
   smallTree.rotation.y = 1.1;
   group.add(smallTree);
+
+  // Blender で作ったさるすべり（models/sarusuberi.glb。作り方は blender/sarusuberi/）が読めたら、上の 2 本と入れ替える。
+  // 樹皮・葉・花穂の絵（テクスチャ）は中に入っている。読めなければ、コードで作った木のまま
+  new GLTFLoader().loadAsync(`./models/sarusuberi.glb?v=${encodeURIComponent(VERSION)}`).then((gltf) => {
+    const model = gltf.scene;
+    model.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = true;
+      o.receiveShadow = o.name === 'SaruBark';
+      // 葉と花の板は、つやのない材質に替える。見上げると、浅い角度の照り返しで葉が白く光ってしまった
+      if (o.name !== 'SaruBark') {
+        const m = o.material;
+        o.material = new THREE.MeshLambertMaterial({ map: m.map, alphaTest: m.alphaTest || 0.5, side: THREE.DoubleSide });
+        m.dispose();
+      }
+    });
+    const modelHeight = new THREE.Box3().setFromObject(model).max.y;      // 元の高さ（約 4m）。作り直すと少し変わるので、測って合わせる
+    for (const [old, height] of [[tree, 4.0], [smallTree, 3.2]]) {
+      const fresh = old === tree ? model : model.clone();
+      fresh.name = 'sarusuberi';
+      fresh.position.copy(old.position);
+      fresh.rotation.y = old.rotation.y;
+      fresh.scale.setScalar(height / modelHeight);
+      group.add(fresh);
+      group.remove(old);
+      old.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+    }
+  }).catch((err) => console.warn('[park] models/sarusuberi.glb を読めませんでした。コードで作った木のままにします', err));
 
   // --- 滑り台 -------------------------------------------------------------
   const slide = createSlide();

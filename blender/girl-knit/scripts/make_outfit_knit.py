@@ -3,7 +3,7 @@
 #   Knit_Skirt … 黒のひざ下丈のフレアスカート。黒地にグレーのリボン柄（ジャカード風）。リボンの垂れ 2 本も、この中に入れる
 #                （スカートと同じ骨の付け方になり、座ったときにスカートと一緒に動く）
 #   Knit_Sash  … ウエストのリボンベルトと、前の少し右寄りのちょう結び（布はスカートと同じ）
-#   Knit_Inner … 白のインナーパンツ（スカートの中）
+#   Knit_Inner … 白のショーツ（スカートの中。股から腰へ斜めのすそ・縁取り・前に小さなリボン）
 #   Knit_Shoes … 黒のパンプス。底は薄く、かかとに太めのブロックヒール
 # 服の寸法は、足が平らで靴底 2.2cm（heel_shift = (0, 0, 0.022)）のときの体の位置で書いてある。
 # ヒールで体が動いたぶん（heel_shift との差 T0）は、作る間だけ体を戻して作り、できた服をそのぶん動かす。
@@ -335,16 +335,50 @@ def mat(name, col, rough, **kw):
     return mt
 # ── 白のインナーパンツ（スカートの中。座る・乗り物に乗るときに見えてもよいように）──
 #   名前を Knit_Inner にすると、bind_rig.py がスカートのめり込み防止の相手に入れる
-ZLEG = 0.80                                              # すその高さ（股より下。太ももを一周する）
-def inner_sel(c): return abs(c.x) < 0.22 and ZLEG <= c.z <= 1.03 and not (abs(c.x) > 0.17 and c.z > 0.95)
+#   形はショーツ：すそ（脚の穴）は股から腰の横へ斜めに上がる。股は布で覆う（股の下 0.787 より低い所まで取る）。
+#   後ろは前より深く、おしりを覆う。ふちに縁取り（少し厚く）、前のまん中に小さなリボン
+def _leg_cut(c):
+    u = abs(c.x); back = ss((c.y+0.01)/0.05)
+    return 0.780+0.125*ss((u-0.035)/0.120)-0.040*back*ss((u-0.03)/0.08)
+def _waist(c): return 1.008+0.006*ss((c.y+0.02)/0.06)      # 上のふちはニットのすそ（1.000）の下へ 8mm 入れる（すき間に地肌がのぞいた。深く入れると腰の横でニットから突き出た）
+def inner_sel(c): return abs(c.x) < 0.22 and _leg_cut(c) <= c.z <= _waist(c)
 bm, isel = from_body(inner_sel)
 bm.normal_update()
 for v in bm.verts: v.co += v.normal*0.0028
-# すそ（脚の穴）を、体の面の段々ではなく、まっすぐな線にそろえる：すそのふちの頂点だけを、すその高さまで下ろす
-# （太ももはほぼ垂直なので、肌から離れない）。下から押し上げてそろえると、すそに上向きの水平な面ができて、
-# スカートのめり込み防止がそれを表面と見て、7cm 離れたスカートまで内側へ引き込んでしまった
-for v in bm.verts:
-    if v.is_boundary and v.co.z < ZLEG+0.035: v.co.z = ZLEG
+# すそのふちを、体の面の段々ではなく、なめらかな線にそろえる（ふちに沿ってならし、肌の上へ戻す）
+_ipolys = [tuple(p.vertices) for p in me.polygons if all(inb[v] for v in p.vertices)]
+_ibvh = BVHTree.FromPolygons(co, _ipolys)
+_rim = [v for v in bm.verts if v.is_boundary]
+for _ in range(10):
+    _nw = {}
+    for v in _rim:
+        nb = [e.other_vert(v) for e in v.link_edges if e.is_boundary]
+        if len(nb) == 2: _nw[v] = v.co*0.5+(nb[0].co+nb[1].co)*0.25
+    for v, c_ in _nw.items(): v.co = c_
+# 股：体のくぼみに沿わせず、ならして平らな布で覆う（形が出ないように）。ならしたあと、肌より内へ入った所は外へ出す
+_crotch = [v for v in bm.verts if not v.is_boundary and abs(v.co.x) < 0.06 and v.co.z < 0.875]
+for _ in range(25): bmesh.ops.smooth_vert(bm, verts=_crotch, factor=0.6, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+for v in _crotch:
+    loc, nor, idx, dist = _ibvh.find_nearest(v.co)
+    if loc is not None and ((v.co-loc).dot(nor) < 0.003): v.co = loc+nor*0.003
+for v in _rim:                                           # 縁取り：ふちは少し厚く浮かせる
+    loc, nor, idx, dist = _ibvh.find_nearest(v.co)
+    if loc is not None: v.co = loc+nor*0.0042
+# 前のまん中の小さなリボン（輪 2 つと結び目）
+_top = max((v.co for v in bm.verts if abs(v.co.x) < 0.01 and v.co.y < -0.05), key=lambda p: p.z)
+def _blob(c, rx, ry, rz):
+    rings = []
+    for i in range(1, 5):
+        a = math.pi*i/5
+        rings.append([bm.verts.new(c+Vector((rx*math.sin(a)*math.cos(k*math.pi/4), ry*math.sin(a)*math.sin(k*math.pi/4), rz*math.cos(a)))) for k in range(8)])
+    for i in range(3):
+        for k in range(8): bm.faces.new((rings[i][k], rings[i][(k+1) % 8], rings[i+1][(k+1) % 8], rings[i+1][k]))
+    for ring, z in ((rings[0], rz), (rings[-1], -rz)):
+        cv = bm.verts.new(c+Vector((0, 0, z)))
+        for k in range(8): bm.faces.new((ring[k], ring[(k+1) % 8], cv) if z > 0 else (ring[(k+1) % 8], ring[k], cv))
+_bc = Vector((0.0, _top.y-0.0035, _top.z-0.010))
+_blob(_bc+Vector((0.0055, 0, 0.0015)), 0.0050, 0.0018, 0.0030); _blob(_bc+Vector((-0.0055, 0, 0.0015)), 0.0050, 0.0018, 0.0030)
+_blob(_bc, 0.0020, 0.0022, 0.0022)
 innerw = newobj("Knit_Inner", bm, mat("Inner_White", (0.90, 0.89, 0.87), 0.75, **{"Sheen Weight": 0.2}))
 to_hide |= erode(isel, 2)
 

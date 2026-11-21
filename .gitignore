@@ -3,3 +3,5 @@ package-lock.json
 .DS_Store
 *.log
 voices/samples/
+*.blend1
+blender/girl-knit/export/

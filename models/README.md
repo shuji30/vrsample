@@ -8,6 +8,7 @@
 models/character.vrm    このリポジトリのオーナーが自作した VRM 1.0 モデル（VRoid Studio。既定）
 models/girl-swim.vrm    Blender で作った自前のモデル・水着コーデ（VRM 1.0）
 models/girl-street.vrm  Blender で作った自前のモデル・ストリートコーデ（VRM 1.0）
+models/girl-knit.vrm    Blender で作った自前のモデル・ニットコーデ（VRM 1.0。作り方は blender/girl-knit/）
 models/corgi.glb        Blender で作った自前のモデル・コーギーの「こむぎ」（GLB。骨入り。作り方は blender/corgi/）
 ```
 

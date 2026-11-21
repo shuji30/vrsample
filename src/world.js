@@ -40,7 +40,7 @@ import { createGT3Race } from './gt3race.js';
 import { createCorgi } from './corgi.js';
 import { createBoomerang } from './boomerang.js';
 import { createFireworks } from './fireworks.js';
-import { createBeach, inBeach, beachGround, BEACH_AREA, STAIRS_TOP_AREA } from './beach.js';
+import { createBeach, inBeach, beachGround, BEACH_AREA, STAIRS_TOP_AREA, STAIRS, STAIRS_GATE_HALF } from './beach.js';
 import { createBeachGame } from './beachgame.js';
 import { createSeats } from './seats.js';
 import { createCoaster, COASTER } from './coaster.js';
@@ -1095,8 +1095,25 @@ export function createWorld(renderer, scene, {
     prop.userData.spin.set(0, 0, 0);
   }
 
+  // 崖の階段の門：丘の上で門まで歩いて行くと砂浜へ、砂浜で階段の下まで歩いて行くと丘の上へ（看板を選ぶのと同じ）。
+  // 着いた所（看板の前・階段の下から 2〜3m）は門から離れているので、すぐに戻ってしまうことはない。念のため少し待つ
+  let gateWait = 0;
+  function checkStairsGate(dt) {
+    if (!camera) return;
+    gateWait = Math.max(0, gateWait - dt);
+    if (gateWait > 0 || fade > 0) return;
+    camera.getWorldPosition(beachEye);
+    const { x, z } = beachEye;
+    if (Math.abs(x - STAIRS.x) < STAIRS_GATE_HALF && z < STAIRS_TOP_AREA.minZ + 0.35 && z > STAIRS_TOP_AREA.minZ - 1) {
+      gateWait = 2; travel('beach');
+    } else if (Math.abs(x - STAIRS.x) < 1.2 && z > BEACH_AREA.maxZ - 0.35 && z < BEACH_AREA.maxZ + 1) {
+      gateWait = 2; travel('hill');
+    }
+  }
+
   function update(dt) {
     updateShadowFocus();
+    checkStairsGate(dt);
     // 暗くした幕を、少し待ってから明ける
     if (fade > 0) {
       fade = Math.max(0, fade - dt / 0.9);
@@ -1720,6 +1737,11 @@ export function createWorld(renderer, scene, {
       if (!beachGame?.wanted) return null;
       cam.getWorldPosition(beachEye);
       return beach.canUse(beachEye);
+    },
+    /** 近くに砂浜の行き来の看板があれば { dest, label }（E キー・スペースで選ぶため） */
+    signNear(cam) {
+      cam.getWorldPosition(beachEye);
+      return beach.nearSign(beachEye);
     },
     beachUse(cam) {
       if (!beachGame?.wanted) return false;

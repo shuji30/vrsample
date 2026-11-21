@@ -5,7 +5,8 @@ import { audioContext, bus } from './mixer.js';
 
 /**
  * 北の崖の下の砂浜。丘の上の柵のところ（厩の東）から崖に沿って木の階段が下りていて、上と下の看板で
- * 行き来する（E / トリガー / クリック。暗くしてから移る。30m の崖を歩いて下りると、VR では酔うため）。
+ * 行き来する（E / トリガー / クリック。門・階段の下まで歩いて行っても移る（world.js の checkStairsGate）。
+ * 暗くしてから移る。30m の崖を歩いて下りると、VR では酔うため）。
  *
  * 砂浜には、パラソルとレジャーシート、クーラーボックス、バケツ、小さな砂の城。波打ちぎわには
  * 寄せては返す泡（7 秒ごと）と波の音。
@@ -760,6 +761,17 @@ export function createBeach() {
     court: COURT,
     setHands(fn) { hands = fn; },
     /** 丘の上の、階段の上の看板の前（戻ってきたときに立つ所）と、砂浜の階段の下 */
+    /**
+     * 近くの看板（目の位置から水平に 3m 以内）。{ dest: 'beach' | 'hill', label } か null。
+     * E キー（ハンコンに割り当てた「乗る / 降りる」ボタン）とスペースでも看板を選べるようにするため（main.js）
+     */
+    nearSign(eye) {
+      const SIGN_REACH = 3.0;
+      for (const [g, dest, label] of [[topSign, 'beach', '海辺へ'], [bottomSign, 'hill', '丘の上へ']]) {
+        if (Math.hypot(eye.x - g.position.x, eye.z - g.position.z) < SIGN_REACH && Math.abs(eye.y - g.position.y) < 3) return { dest, label };
+      }
+      return null;
+    },
     topPoint(out = new THREE.Vector3()) { return out.set(STAIRS.x + 0.2, 0, STAIRS.topZ + 3.0); },
     bottomPoint(out = new THREE.Vector3()) { const z = STAIRS.bottomZ - 2.6; return out.set(STAIRS.x + 0.4, gy(STAIRS.x + 0.4, z), z); },
     parasol: PARASOL,

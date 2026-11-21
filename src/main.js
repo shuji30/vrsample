@@ -586,8 +586,18 @@ const talkEye = new THREE.Vector3();
       const k = near.kind;
       return btn('KeyE', 'e', k === 'seat' ? '座る' : k === 'diver' ? 'もぐる' : k === 'fishing' ? '釣る' : '乗る');
     }
+    const sign = world.signNear?.(camera);
+    if (sign) return btn('KeyE', 'e', sign.label);
     return null;
   }
+  // 砂浜の行き来の看板：近くで E（ハンコンに割り当てた「乗る / 降りる」ボタンも E として届く）を押すと、看板を選んだのと同じ。
+  // 乗り物の E（kartdrive.js）より先に見るため capture で受ける。乗っているとき・乗り物が近いときは何もしない
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'KeyE' || e.repeat || e.target?.tagName === 'INPUT') return;
+    if (kartDrive.driving || kartDrive.nearby()) return;
+    const sign = world.signNear?.(camera);
+    if (sign) world.travel(sign.dest);
+  }, true);
   /**
    * やめる（PC の Esc・スマホの左上の「やめる」）。乗り物を降りる・席を立つ・潜るのをやめる、
    * ビリヤード・パットゴルフ・テニスをやめる。やめられるものが無ければ null

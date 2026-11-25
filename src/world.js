@@ -5,6 +5,7 @@ import { createBilliards, annexBlocks, tableBlocks, HOUSE_EAST, tableToWorld } f
 import { createBilliardGame } from './billiardgame.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { createGrass } from './grass.js';
+import { dressLawn } from './lawn.js';
 import { createHouseExterior } from './houseexterior.js';
 import { PLATEAU } from './hill.js';
 import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
@@ -1553,6 +1554,8 @@ export function createWorld(renderer, scene, {
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
   // 芝の草の束：庭の物をすべて置いたあとで、芝の見えている所だけに生やす（grass.js）。軽い設定では数を減らす
+  // 芝の色むら・刈り跡・際の土（草の束より前。束の色もこのむらに合わせる）
+  dressLawn(renderer, scene, { lawnMaterial: park.lawnMaterial, bounds: PLATEAU });
   const grass = createGrass(renderer, scene, { lawnMaterial: park.lawnMaterial, bounds: PLATEAU, count: textureQuality >= 1 ? 30000 : 14000 });
 
   return {

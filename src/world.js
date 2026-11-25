@@ -126,6 +126,13 @@ const NET_RESTITUTION = 0.12;
  * @param {boolean} [options.wander] キャラクターを歩きまわらせるか
  * @param {boolean} [options.sit] ときどきソファに座らせるか
  */
+/** 女の子のリムライト（縁の光）の色と強さ。テーマごと */
+const RIM_LIGHT = {
+  day: { color: 0xbcd6ff, strength: 0.12 },
+  sunset: { color: 0xff9a5c, strength: 0.38 },
+  night: { color: 0x8fa6e8, strength: 0.26 },
+};
+
 export function createWorld(renderer, scene, {
   textureQuality = 1,
   shadowMapSize = 4096,
@@ -1381,6 +1388,9 @@ export function createWorld(renderer, scene, {
     if (jetskiWait > 3) jetski.hold = false;
     ferris.setNight(themeKey === 'night');
     carousel?.setNight?.(themeKey === 'night' ? 1 : themeKey === 'sunset' ? 0.3 : 0);
+    // 女の子の縁に、空の色を薄く足す（昼は空の青、夕方は夕焼け、夜は月明かり）。家の中では消す
+    const rim = RIM_LIGHT[themeKey] ?? RIM_LIGHT.day;
+    character.setRim?.(rim.color, lighting?.inside ? 0 : rim.strength);
     kartRace?.update(dt, { driving: Boolean(kartGame?.wanted), seated: Boolean(kartGame?.driving) });
     // カートコースの起伏の上を歩くときは、足元を地面の高さに（カートに乗り降りしているあいだは除く）
     if (character.body.loaded && !['getIn', 'drive', 'stopKart', 'getOut'].includes(kartGame?.state)) {

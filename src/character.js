@@ -476,6 +476,42 @@ function buildContactShadow() {
   return mesh;
 }
 
+/**
+ * MeshStandardMaterial（と Physical）に、縁だけ光る項を足す。
+ *
+ * three の標準の光だけだと、逆光や夜に体の縁が背景と同じ暗さになり、
+ * 輪郭が消える（特に黒いニットと黒髪）。映像でいうリムライトの代わりに、
+ * 視線と法線の角度（フレネル）で縁を空の色に持ち上げる。
+ * MToon（VRoid のモデル）は自前のリムを持つので触らない。
+ */
+function addRimLight(root, uniform) {
+  const done = new Set();
+  root.traverse((object) => {
+    if (!object.isMesh) return;
+    for (const material of [].concat(object.material)) {
+      if (!material?.isMeshStandardMaterial || done.has(material)) continue;
+      done.add(material);
+      const before = material.onBeforeCompile;
+      material.onBeforeCompile = (shader, renderer) => {
+        before?.call(material, shader, renderer);
+        shader.uniforms.uGirlRim = uniform;
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', '#include <common>\nuniform vec3 uGirlRim;')
+          .replace('#include <opaque_fragment>', `{
+            float rimF = 1.0 - saturate( dot( normal, normalize( vViewPosition ) ) );
+            rimF = rimF * rimF * rimF;
+            // 黒い布でも縁が見えるよう、素の色に下駄をはかせる
+            outgoingLight += uGirlRim * rimF * ( 0.35 + 0.65 * diffuseColor.rgb );
+          }
+          #include <opaque_fragment>`);
+      };
+      const key = material.customProgramCacheKey?.bind(material);
+      material.customProgramCacheKey = () => `${key ? key() : ''}|girlRim`;
+      material.needsUpdate = true;
+    }
+  });
+}
+
 export function createCharacter(scene, { url = CHARACTER.url, camera = null, wander = true, sit = true } = {}) {
   const group = new THREE.Group();
   group.name = 'character';
@@ -497,6 +533,16 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   loader.register((parser) => new VRMLoaderPlugin(parser));
 
   let vrm = null;
+  /** 足もとの影を置く、足の骨（読み込み後） */
+  let footNodes = [];
+  // リムライト（輪郭の光）。空の色を、体の縁にだけ薄く足す。夕方と夜に、
+  // 黒い服や髪が背景に溶けて見えなくなるのを防ぐ（売り物の水準 A2）
+  const rimUniform = { value: new THREE.Color(0, 0, 0) };
+  const rimWant = new THREE.Color(0, 0, 0);
+  function updateRim(dt) {
+    const k = 1 - Math.exp(-dt * 3);
+    rimUniform.value.lerp(rimWant, k);
+  }
   /** @type {Record<string, THREE.Object3D>} */
   let bones = {};
   let hipsRestY = 0;      // 腰のボーンの、足元からの高さ
@@ -645,6 +691,8 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       });
 
       cacheBones(vrm.humanoid);
+      footNodes = ['leftFoot', 'rightFoot'].map((n) => vrm.humanoid?.getRawBoneNode(n) ?? null);
+      addRimLight(vrm.scene, rimUniform);
       curlFingers(vrm.humanoid);
       relaxSkirtWeights(vrm);
 
@@ -1647,6 +1695,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
    * 体の向きから直に出す。update はレンダリングの前に走るのでボーンの
    * ワールド行列がまだ更新されておらず、わざわざ更新するより安い。
    */
+  const footWorld = new THREE.Vector3();
   function updateFootShadows() {
     const amount = gait * (1 - sitAmount);
     const sin = Math.sin(yaw);
@@ -1661,12 +1710,22 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       const lift = plan.lift * amount;
       const lateral = side * hipWidth;
 
+      // 影は実際の足（骨）の真下に置く。腰幅から計算すると、脚を内へ寄せた
+      // （narrowStance）モデルでは影が足の外へずれていた（2026-11-25）
+      const foot = footNodes[index];
+      let fx = group.position.x + lateral * cos + forward * sin;
+      let fz = group.position.z - lateral * sin + forward * cos;
+      if (foot) {
+        foot.getWorldPosition(footWorld);
+        fx = footWorld.x;
+        fz = footWorld.z;
+      }
       shadow.position.set(
-        group.position.x + lateral * cos + forward * sin,
+        fx,
         // ラグ（y = 0.006）と同じ高さに置くと Z ファイティングで消える。足元（体の根元）の高さに置く
         // （以前は 0.014 のままで、砂浜では宙に浮いていた）
         group.position.y + 0.014,
-        group.position.z - lateral * sin + forward * cos,
+        fz,
       );
 
       // 浮くほど大きく薄くなる。接地の瞬間がいちばん濃い
@@ -2366,11 +2425,13 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     applySwim(dt);
     applyFingers(dt);
     onPosed?.();
-    updateFootShadows();
     // スプリングボーン（髪・服）、視線、表情をまとめて進める
     vrm.update(dt);
     // 足が地面に沈まないように（vrm.update で骨が決まったあとで測る）
     keepFeetAboveGround();
+    // 影は足の骨の位置から置くので、骨が決まってから
+    updateFootShadows();
+    updateRim(dt);
 
     // 座っているあいだはスカートの揺れを毎フレーム初期状態へ戻す。
     //
@@ -2425,6 +2486,11 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     update,
     /** 投げられたら目で追う対象（野球ボールなど）を登録する */
     watch(object) { watched = object; },
+    /**
+     * 体の縁に足す光（リムライト）。空の色と強さ（0〜1 ほど）。0 で消える。
+     * 屋外では空の色、夜は月明かりの青で、背景から体の輪郭を浮かせる
+     */
+    setRim(color, strength = 1) { rimWant.set(color).multiplyScalar(strength); },
     get vrm() { return vrm; },
     /** ライセンス表記用。読み込み前は null */
     get meta() { return vrm?.meta ?? null; },

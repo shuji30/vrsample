@@ -240,7 +240,7 @@ export function createRoom(scene, tex) {
   });
   const floorMaterial = tex.material('oakFloor', {
     sizeX: ROOM.width, sizeY: ROOM.depth,
-    normalScale: new THREE.Vector2(0.7, 0.7),
+    normalScale: new THREE.Vector2(0.45, 0.45),
   });
   // 塗装した木部（枠・幅木・ドア枠）。テクスチャは板目を弱く効かせる
   const trimMaterial = tex.material('walnut', {

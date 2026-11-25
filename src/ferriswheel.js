@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { addBulbGlow, addLightPool } from './nightglow.js';
 
 /**
  * 観覧車。家の左の芝生の奥（池とメリーゴーランドのあいだの南）に立つ、高さ 30m の観覧車。
@@ -153,6 +154,12 @@ export function createFerrisWheel() {
     bulbs.setMatrixAt(i, m4);
   }
   wheel.add(bulbs);
+  // 夜の灯り：ふちの電球の光ぼけ（車輪といっしょに回る）と、乗り場の光だまり
+  const bulbGlow = addBulbGlow(wheel, Array.from({ length: 128 }, (_, i) => {
+    const a = (i / 64) * Math.PI * 2;
+    return new THREE.Vector3((i < 64 ? -1 : 1) * F.rimGap, Math.sin(a) * (F.radius + 0.2), Math.cos(a) * (F.radius + 0.2));
+  }), { size: 2.0 });
+  const pool = addLightPool(group, { x: 0, y: 0.09, z: 0, rx: 9, rz: 7, strength: 0.6 });
 
   // ゴンドラ（回る部分の子にせず、位置だけ合わせる。いつも真下を向く）
   const COLORS = [0xe8573a, 0xf2b33a, 0x4fb06a, 0x3a8ad8, 0x9a5ad0, 0xf06aa8, 0x3ac0c0, 0xe0e050];
@@ -245,7 +252,12 @@ export function createFerrisWheel() {
     pose();
   }
   pose();
-  const glow = () => { bulbMat.emissiveIntensity = night ? 1.6 + 0.6 * Math.sin(performance.now() * 0.004) : 0.4; };
+  const glow = () => {
+    const tw = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
+    bulbMat.emissiveIntensity = night ? 2.2 + 0.8 * tw : 0.4;
+    bulbGlow.set(night ? 1 : 0, tw);
+    pool.set(night ? 1 : 0, 1);
+  };
 
   return {
     group,

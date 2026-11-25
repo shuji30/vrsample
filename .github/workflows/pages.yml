@@ -1,5 +1,9 @@
 # GitHub Pages に静的サイトとして公開する。
 # 使うにはリポジトリの Settings > Pages で Source を "GitHub Actions" にする。
+#
+# 作る（アーティファクトを上げる）手順と、公開する手順を、別のジョブに分ける（GitHub 公式のひな形と同じ形）。
+# 1 つのジョブで続けて行うと、上げた直後のアーティファクトを公開の手順が見つけられず
+# （"No artifacts named github-pages were found"）、ときどき失敗していた（2026-11-25）。
 name: Deploy to GitHub Pages
 
 on:
@@ -14,19 +18,24 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4

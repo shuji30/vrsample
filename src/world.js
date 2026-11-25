@@ -1380,6 +1380,7 @@ export function createWorld(renderer, scene, {
     jetskiWait = jetskiRidden && jetski.hold && !jetskiGame?.active ? jetskiWait + dt : 0;
     if (jetskiWait > 3) jetski.hold = false;
     ferris.setNight(themeKey === 'night');
+    carousel?.setNight?.(themeKey === 'night' ? 1 : themeKey === 'sunset' ? 0.3 : 0);
     kartRace?.update(dt, { driving: Boolean(kartGame?.wanted), seated: Boolean(kartGame?.driving) });
     // カートコースの起伏の上を歩くときは、足元を地面の高さに（カートに乗り降りしているあいだは除く）
     if (character.body.loaded && !['getIn', 'drive', 'stopKart', 'getOut'].includes(kartGame?.state)) {

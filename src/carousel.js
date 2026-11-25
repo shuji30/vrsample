@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { addBulbGlow, addLightPool } from './nightglow.js';
 import { createHorseModel, poseHorse } from './horse.js';
 import { audioContext, bus } from './mixer.js';
 
@@ -194,6 +195,14 @@ export function createCarousel() {
     bulbs.setMatrixAt(i, m4);
   }
   rotor.add(bulbs);
+  // 夜の灯り：電球の光ぼけ（回転台といっしょに回る）と、足もとの光だまり（回らない）
+  const bulbGlow = addBulbGlow(rotor, Array.from({ length: 40 }, (_, i) => {
+    const a = (i / 40) * Math.PI * 2;
+    return new THREE.Vector3(Math.cos(a) * (C.radius + 0.34), roofY - 0.17, Math.sin(a) * (C.radius + 0.34));
+  }), { size: 0.9 });
+  // 台の上と、まわりの芝。台の上は少し強く
+  const pool = addLightPool(group, { x: 0, y: C.height + 0.02, z: 0, rx: C.radius + 2.6, strength: 0.75 });
+  let night = 0;
 
   // 木馬（支柱ごとに上下）。0 番がプレイヤーの馬
   const horses = [];
@@ -293,7 +302,10 @@ export function createCarousel() {
       poseHorse(h.model, { phase: 0.15, gait: 3, amount: 0.7, time, headDown: 0 });
     });
     const lit = 0.5 + 0.5 * Math.max(0, Math.sin(time * 6));
-    bulbMat.emissiveIntensity = running ? 0.8 + 0.6 * lit : 0.5;
+    // 夜はいつも灯す（回っているあいだは、またたく）
+    bulbMat.emissiveIntensity = running ? 0.8 + 0.6 * lit + night * 1.6 : 0.5 + night * 2.2;
+    bulbGlow.set(night, running ? lit : 1);
+    pool.set(night, running ? lit : 1);
     group.updateMatrixWorld(true);
     // 木馬の向き（ワールド）：回転台の角度の分だけ回る
     const w = new THREE.Vector3();
@@ -314,6 +326,15 @@ export function createCarousel() {
   const eyeOffset = new THREE.Vector3(0, 0.3 + 1.52 * 0.62 + 0.78, -HORSE_BACK - 0.05);
   return {
     group,
+    /** 夜の濃さ（0..1）。電球を灯し、光ぼけと光だまりを出す */
+    setNight(level) {
+      if (level === night) return;
+      night = level;
+      // 切り替えたその場で灯す（次に回るまで待たない）
+      bulbMat.emissiveIntensity = 0.5 + night * 2.2;
+      bulbGlow.set(night);
+      pool.set(night);
+    },
     body,
     state,
     steering,

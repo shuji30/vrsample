@@ -196,7 +196,8 @@ function oakFloor(size) {
     // 板ごとの色ムラ。オークの範囲内で明度と赤みを振る
     const tone = hash2(row, col, 991);
     const warm = hash2(row, col, 5501);
-    const lift = 0.86 + tone * 0.30;
+    // 板ごとの明暗は控えめに（強いと市松のように見え、床だけが騒がしくなっていた。売り物の水準 A4）
+    const lift = 0.92 + tone * 0.16;
     const red = 0.98 + warm * 0.08;
 
     // 木目。板に沿って伸びる（u 方向は低周波、v 方向は高周波）
@@ -204,7 +205,7 @@ function oakFloor(size) {
     const grain = fbm(u + rowSeed, v, 6, 96, 3, grainSeed);
     const pores = fbm(u + rowSeed, v, 24, 320, 2, grainSeed + 77);
     const figure = Math.abs(grain - 0.5) * 2;       // 芯に近いほど濃い筋
-    const dark = 1 - (figure * 0.30 + pores * 0.12);
+    const dark = 1 - (figure * 0.17 + pores * 0.08);
 
     const base = 0.56 * lift * dark;
     out.r = clamp01(base * 1.00 * red);
@@ -213,14 +214,14 @@ function oakFloor(size) {
 
     // 目地は暗く落とす
     const joint = smoothstep(0, BEVEL, edge);
-    out.r *= 0.35 + joint * 0.65;
-    out.g *= 0.35 + joint * 0.65;
-    out.b *= 0.35 + joint * 0.65;
+    out.r *= 0.55 + joint * 0.45;
+    out.g *= 0.55 + joint * 0.45;
+    out.b *= 0.55 + joint * 0.45;
 
     out.h = joint * 0.85 + (1 - figure) * 0.10 + pores * 0.05;
     out.ao = 0.55 + smoothstep(0, AO_WIDTH, edge) * 0.45;
     // サテン塗装。木目の導管は少しだけ荒れる
-    out.rough = clamp01(0.30 + figure * 0.10 + pores * 0.06 + (1 - joint) * 0.25);
+    out.rough = clamp01(0.45 + figure * 0.08 + pores * 0.05 + (1 - joint) * 0.25);
     out.metal = 0;
   }, 26);
 }
@@ -253,14 +254,15 @@ function walnut(size) {
     const pores = fbm(u, v, 14, 220, 2, 181);
     const figure = Math.pow(Math.abs(streak - 0.5) * 2, 0.7);
 
-    const dark = 1 - (figure * 0.34 + pores * 0.13);
+    // 縞は控えめに（強いと椅子や天板に波の縞が目立った。売り物の水準 A4）
+    const dark = 1 - (figure * 0.17 + pores * 0.09);
     const base = 0.26 * dark;
     out.r = clamp01(base * 1.00);
     out.g = clamp01(base * 0.60);
     out.b = clamp01(base * 0.38);
 
     // 導管の凹凸を高さに強く入れると、光沢のある面で箔のように潰れて見える
-    out.h = (1 - figure) * 0.72 + (1 - pores) * 0.28;
+    out.h = 0.5 + (1 - figure) * 0.3 + (1 - pores) * 0.2;
     out.ao = 1;
     out.rough = clamp01(0.42 + pores * 0.11 + figure * 0.05);
     out.metal = 0;

@@ -1301,10 +1301,16 @@ export function createPark(scene, tex) {
   lawn.receiveShadow = true;
   group.add(lawn);
 
-  // 窓の外すぐのテラス。室内の床と芝生をつなぐ層
+  // 窓の外すぐのウッドデッキ。室内の床と芝生をつなぐ層（以前は塗り壁のテクスチャの灰色の板で、
+  // コンクリートの土間に見えた。売り物の水準 A4）。板は床と同じテクスチャ（12.5cm 幅・1m 長さの板が
+  // 継ぎ目をずらして並ぶ）を、雨ざらしの木の色にして使う。板は壁と平行（x 方向）に走る
   const terrace = new THREE.Mesh(
     new THREE.BoxGeometry(11, 0.12, 2.0),
-    tex.material('plaster', { sizeX: 11, sizeY: 2, color: 0xa9a49b, roughness: 0.95 }),
+    tex.material('oakFloor', {
+      sizeX: 11, sizeY: 2,
+      color: 0xd8d6d4, roughness: 0.9,
+      normalScale: new THREE.Vector2(0.9, 0.9),
+    }),
   );
   terrace.position.set(0, -0.06, ROOM.minZ - ROOM.wall - 1.0);
   terrace.receiveShadow = true;

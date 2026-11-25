@@ -5,6 +5,7 @@ import { createBilliards, annexBlocks, tableBlocks, HOUSE_EAST, tableToWorld } f
 import { createBilliardGame } from './billiardgame.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { createGrass } from './grass.js';
+import { createHouseExterior } from './houseexterior.js';
 import { PLATEAU } from './hill.js';
 import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
 import { createKart, gridSlot } from './kart.js';
@@ -140,6 +141,8 @@ export function createWorld(renderer, scene, {
   const room = createRoom(scene, tex);
   // 本の部屋の東へ建て増ししたビリヤードの部屋と、台・球
   const billiards = createBilliards({ scene, tex });
+  // 家の外装（板張り・基礎・窓の枠・外灯・雨どい）。本の部屋のグループに入れる（屋外用の環境マップを焼くとき、家といっしょに隠れる）
+  const houseExterior = createHouseExterior(room.group);
   const park = createPark(scene, tex);
 
   let lighting = null;
@@ -154,6 +157,8 @@ export function createWorld(renderer, scene, {
     park?.hill?.setNight(key === 'night');
     // 高速道路の街灯（夕方から灯す）と、F40 のヘッドライト（夜）
     road?.setNight(key === 'night' ? 1 : key === 'sunset' ? 0.5 : 0);
+    // 家の外灯（夕方から灯す）
+    houseExterior?.setNight(key === 'night' ? 1 : key === 'sunset' ? 0.35 : 0);
     updateHeadlights?.();
   }
   let road = null;

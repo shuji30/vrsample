@@ -508,6 +508,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
   let shinLen = 0.34;     // 膝から足首
   let legLength = 0.67;   // 腰の付け根から足首までの、立ちポーズでの高さ
   let ankleRestY = 0.06;  // 足首の床からの高さ（実測）
+  let footShape = null;   // 足（靴）の形：足首から見た頂点の [高さ, 前後] の並び（measureFootShape）
+  let footRestLow = 0;    // 立ち姿勢での、足首から足の裏までの深さ（負）
+  let footSoleDepth = FOOT_SOLE.ankle;
   let legTopOffset = -0.05; // 腰のボーンから見た脚の付け根の高さ（負）
   let hipWidth = 0.06;    // 左右の脚の間隔（片側）
 
@@ -789,7 +792,102 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     // 腰がちょうど元の高さに戻るので、歩いても中腰にならない
     legLength = Math.min(legTop.y - ankle.y, thighLen + shinLen - 0.001);
     stride = Math.min(stride, legLength * 0.5);
+    measureFootShape(ankle);
+    // 足の頂点は、採寸とは別に必ず覚える（採寸は条件に合う点が少ないと途中で戻る）
+    collectFootVertices();
   }
+
+  /**
+   * 足（靴）の形を測る：左足の足首より下の頂点を、足首から見た位置（高さ dy・前後 dz。モデルの前が +z）として残す。
+   * ヒールのある靴は、かかとが足首より後ろへ長く、下へ深い。足首を回して歩く（かかとを上げる・つま先を上げる）と、
+   * かかとやつま先が地面の下へ入る。前は前のモデル（ヒールなし）で測った値を全員に使っていて、歩くと沈んでいた
+   */
+  function measureFootShape(ankle) {
+    const pts = [];
+    const p = new THREE.Vector3();
+    const toLocal = new THREE.Matrix4().copy(group.matrixWorld).invert();
+    vrm.scene.traverse((m) => {
+      if (!m.isSkinnedMesh) return;
+      const pos = m.geometry.attributes.position;
+      const step = Math.max(1, Math.floor(pos.count / 40000));
+      for (let i = 0; i < pos.count; i += step) {
+        m.getVertexPosition(i, p);
+        p.applyMatrix4(m.matrixWorld).applyMatrix4(toLocal);
+        // 左足（+x の側）の、足首より下で、足首から 25cm 以内
+        if (p.x < 0.02 || p.y > ankle.y + 0.01) continue;
+        const dy = p.y - ankle.y;
+        const dz = p.z - ankle.z;
+        if (Math.hypot(p.x - ankle.x, dz) > 0.25) continue;
+        pts.push(dy, dz);
+      }
+    });
+    if (pts.length < 20) return;
+    // 多すぎると毎フレームの計算が重いので、間引く（最大 300 点）
+    const keep = Math.max(1, Math.floor(pts.length / 2 / 300));
+    footShape = new Float32Array(Math.ceil(pts.length / 2 / keep) * 2);
+    let k = 0;
+    for (let i = 0; i < pts.length; i += 2 * keep) { footShape[k++] = pts[i]; footShape[k++] = pts[i + 1]; }
+    footShape = footShape.subarray(0, k);
+    footRestLow = footLowest(0);
+    // 座ったときの足の裏の見積もり（soleY）も、測った深さを使う
+    footSoleDepth = -footRestLow;
+  }
+
+  /**
+   * 両足（靴）の頂点を、足ごとに 300 個ほど選んで覚える（足首・つま先の骨に重みがいちばん大きい頂点）。
+   * 毎フレーム、この頂点の実際の位置から足のいちばん低い所を測り、地面より下なら体を持ち上げる（keepFeetAboveGround）
+   */
+  let footVerts = [];
+  function collectFootVertices() {
+    footVerts = [];
+    const want = new Set(['leftFoot', 'rightFoot', 'leftToes', 'rightToes'].map((n) => vrm.humanoid?.getRawBoneNode(n)).filter(Boolean));
+    vrm.scene.traverse((m) => {
+      if (!m.isSkinnedMesh || !m.skeleton) return;
+      const idx = m.geometry.attributes.skinIndex;
+      const wt = m.geometry.attributes.skinWeight;
+      if (!idx || !wt) return;
+      const picked = [];
+      for (let i = 0; i < idx.count; i++) {
+        let best = 0;
+        let bi = -1;
+        for (let k = 0; k < 4; k++) { const w = wt.getComponent(i, k); if (w > best) { best = w; bi = idx.getComponent(i, k); } }
+        if (bi >= 0 && want.has(m.skeleton.bones[bi])) picked.push(i);
+      }
+      const step = Math.max(1, Math.floor(picked.length / 600));
+      for (let i = 0; i < picked.length; i += step) footVerts.push([m, picked[i]]);
+    });
+  }
+  const _footP = new THREE.Vector3();
+  /** 足のいちばん低い所が地面（体の根もとの高さ）より下なら、その分だけモデルを持ち上げる（ヒールのある靴で沈まないように） */
+  function keepFeetAboveGround() {
+    if (!footVerts.length) return;
+    vrm.scene.position.y = 0;
+    // 座っている・泳いでいる・乗り物で体を任されているあいだは、足が床の上にあるとは限らないので、しない
+    if (sitAmount > 0.2 || swimAmount > 0.05 || kartSeat > 0) return;
+    group.updateMatrixWorld(true);
+    let lo = Infinity;
+    for (const [m, i] of footVerts) {
+      m.getVertexPosition(i, _footP).applyMatrix4(m.matrixWorld);
+      if (_footP.y < lo) lo = _footP.y;
+    }
+    const sink = group.position.y - lo;
+    if (sink > 0.002) {
+      vrm.scene.position.y = Math.min(sink, 0.08);
+      vrm.scene.updateMatrixWorld(true);
+    }
+  }
+  /** 足を角度 g（rotation.x。+ でつま先が下がる）だけ回したときの、足首から見たいちばん低い所 */
+  function footLowest(g) {
+    const c = Math.cos(g);
+    const s = Math.sin(g);
+    let lo = 0;
+    for (let i = 0; i < footShape.length; i += 2) {
+      const y = footShape[i] * c - footShape[i + 1] * s;
+      if (y < lo) lo = y;
+    }
+    return lo;
+  }
+
 
   /** 腿の長さ（腰から膝まで）を実体のボーンから測る */
   function measureThigh(model) {
@@ -1297,6 +1395,26 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     upper.rotation.x += (-thigh - pitch - upper.rotation.x) * amount;
     lower.rotation.x += (knee - lower.rotation.x) * amount;
     if (foot) foot.rotation.x += (ankle - foot.rotation.x) * amount;
+  }
+
+  /**
+   * 足を体の中心寄りに置く。腰の骨の幅が広いモデル（Blender の 3 人は脚の付け根の間が 18.8cm）は、脚をまっすぐ下ろすと
+   * 足を左右に大きく開いたまま立ち・歩き、ガニ股に見えた（スカートだと特に）。腿を少し内へ回し（足首を中心へ寄せる）、
+   * 足の裏が傾かないよう足首で戻す。歩いているときは、足を 1 本の線の近くに運ぶ（女性の歩き方）
+   */
+  function narrowStance() {
+    const weight = (1 - sitAmount) * (1 - swimAmount);
+    if (weight < 0.01 || !legLength) return;
+    // 足首の、体の中心からの目標の距離：立つと 6.5cm、歩くと 5cm
+    const target = lerp(0.065, 0.05, gait);
+    const angle = clamp(Math.atan2(hipWidth - target, legLength), 0, 0.14) * weight;
+    if (angle < 0.002) return;
+    for (const [side, sign] of [['left', 1], ['right', -1]]) {
+      const upper = bones[`${side}UpperLeg`];
+      const foot = bones[`${side}Foot`];
+      if (upper) upper.rotation.z -= sign * angle;
+      if (foot) foot.rotation.z += sign * angle;
+    }
   }
 
   /**
@@ -1933,7 +2051,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     const foot = bones[`${side}Foot`];
     const toes = bones[`${side}Toes`];
     foot.getWorldPosition(_floorA);
-    let y = _floorA.y - FOOT_SOLE.ankle;
+    let y = _floorA.y - footSoleDepth;
     if (toes) { toes.getWorldPosition(_floorA); y = Math.min(y, _floorA.y - FOOT_SOLE.toes); }
     return y;
   }
@@ -2238,6 +2356,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     else if (wander) updateBehavior(dt);
     applyPose();
     applyGait();
+    narrowStance();
     applyIdle(dt);
     applyGaze(dt);
     applyCrouch(dt);
@@ -2250,6 +2369,8 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     updateFootShadows();
     // スプリングボーン（髪・服）、視線、表情をまとめて進める
     vrm.update(dt);
+    // 足が地面に沈まないように（vrm.update で骨が決まったあとで測る）
+    keepFeetAboveGround();
 
     // 座っているあいだはスカートの揺れを毎フレーム初期状態へ戻す。
     //

@@ -59,6 +59,30 @@ xb.shape_key_clear(); xb.data.vertices.foreach_set("co", mix.ravel()); xb.data.u
 xb.shape_key_add(name="Basis", from_mix=False)
 for e in EXPS: xb.shape_key_add(name="exp-"+e, from_mix=False).data.foreach_set("co", (mix+deltas[e]).ravel())
 for g in [g for g in xb.vertex_groups if g.name not in arm.bones]: xb.vertex_groups.remove(g)
+# 体を細分化（Subdivision）してから書き出す：Blender では細分化して見ているが、書き出しでは外れていて、ゲームでは粗いポリゴンの
+# 折れ目が影になり、目の下・口元にしわ、ほおがこけたように見えて、年上に見えた。
+# シェイプキーは細分化を通せないので、基本の形と表情ごとに、その形で細分化した頂点の位置を取り、細分化した体に付け直す
+SUBDIV = globals().get("SUBDIV", next((m.levels for m in src_body.modifiers if m.type == 'SUBSURF'), 0))
+if SUBDIV > 0:
+    def _subdiv_co(co):
+        t = bpy.data.objects.new("_subdiv_tmp", xb.data.copy()); col.objects.link(t)
+        t.shape_key_clear(); t.data.vertices.foreach_set("co", co.ravel()); t.data.update()
+        md = t.modifiers.new("Subdivision", 'SUBSURF'); md.levels = SUBDIV; md.render_levels = SUBDIV
+        bpy.context.view_layer.update(); dg_ = bpy.context.evaluated_depsgraph_get()
+        me_ = bpy.data.meshes.new_from_object(t.evaluated_get(dg_), preserve_all_data_layers=True, depsgraph=dg_)
+        tmp_me = t.data; bpy.data.objects.remove(t, do_unlink=True); bpy.data.meshes.remove(tmp_me)
+        return me_
+    base_me = _subdiv_co(mix)
+    sub_keys = {}
+    for e in EXPS:
+        me_ = _subdiv_co(mix+deltas[e]); a = np.zeros(len(me_.vertices)*3); me_.vertices.foreach_get("co", a); sub_keys[e] = a
+        bpy.data.meshes.remove(me_)
+    old_me = xb.data; xb.data = base_me; base_me.name = "X_Body"; bpy.data.meshes.remove(old_me)
+    xb.shape_key_add(name="Basis", from_mix=False)
+    for e in EXPS: xb.shape_key_add(name="exp-"+e, from_mix=False).data.foreach_set("co", sub_keys[e])
+    for p in xb.data.polygons: p.use_smooth = True
+    for g in [g for g in xb.vertex_groups if g.name not in arm.bones]: xb.vertex_groups.remove(g)
+    print("body subdivided:", n, "->", len(xb.data.vertices), "verts")
 others = {}
 for o in list(bpy.data.objects):
     if o.type != 'MESH' or o is src_body or o.name.startswith("X_") or o.hide_viewport or o.parent is not rig or o.parent_type == 'BONE': continue
@@ -143,7 +167,11 @@ _spread_uv(("Eye",)); _spread_uv(LASH)
 bake(xb, tg); bake(xb, {nm: lash_a for nm in LASH}, alpha=True)
 merge(skin_i, None, OUT+"skin.png"); merge(eye_i, None, OUT+"eye.png"); merge(lash_i, lash_a, OUT+"lash.png")
 M = [texmat("X_Skin", skin_i), texmat("X_Eye", eye_i), texmat("X_Lash", lash_i, True)]
-grp = [0 if nm in SKIN else (1 if nm == "Eye" else (2 if nm in LASH else 0)) for nm in names]
+# 唇は肌と同じ画像のまま、つやのある別の材質にする（つやのあるルージュ。肌と同じ材質だと、ゲームでつやが出ない）
+_lips = texmat("X_Lips", skin_i); _lb = next(x for x in _lips.node_tree.nodes if x.type == "BSDF_PRINCIPLED")
+_lb.inputs["Roughness"].default_value = 0.22; _lb.inputs["Specular IOR Level"].default_value = 0.7
+M.append(_lips)
+grp = [3 if nm == "Lips" else (0 if nm in SKIN else (1 if nm == "Eye" else (2 if nm in LASH else 0))) for nm in names]
 pm = [grp[p.material_index] for p in xb.data.polygons]
 xb.data.materials.clear()
 for mt in M: xb.data.materials.append(mt)

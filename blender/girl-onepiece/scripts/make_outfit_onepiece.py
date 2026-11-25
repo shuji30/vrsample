@@ -170,8 +170,31 @@ CHIN_L = (float(ob["head_small"][2])-T0.z)/HS            # あご先の高さ（
 COLLAR_GAP = 0.045                                       # えりの上のふち（前）を、あご先の何 m 下にするか
 ZN = CHIN_L-COLLAR_GAP-0.030                             # ここより上が首（スタンドカラー）
 def NECK(c): return CHIN_L-COLLAR_GAP+max(0.0, c.y+0.05)*0.25       # スタンドカラーの上のふち（後ろが少し高い）
+# 肩出し（OFF_SHOULDER）：えりを作らず、肩の関節の少し下を、胸・二の腕・背中まで横一直線に通る襟ぐりにする。
+#   袖は、襟ぐりから下の短いパフスリーブになる。OFF_DROP … 肩の関節の上から、襟ぐりまで下げる量（m）
+OFF_SHOULDER = bool(globals().get("OFF_SHOULDER", ob.get("off_shoulder", False)))
+OFF_DROP = float(globals().get("OFF_DROP", ob.get("off_drop", 0.035)))
+def ZOFF(c): return shoulder.z-OFF_DROP-0.006*(1-ss(abs(c.x)/0.12))*(c.y < 0)      # 前のまん中だけ、ほんの少し下げる
+# 肩出しの袖（OFF_CAP）：袖は肩の先の丸みの上だけを包み（肩の首寄りは出す）、脇の下は布を付けない（脇が見える）。
+#   OFF_XN … ここより首寄り（|x| が小さい所）は襟ぐりの線まで出す。OFF_ARM … 脇の上の、布を付けない高さ（肩の関節から下へ）
+#   OFF_CAP … 袖の長さ（肩の関節から腕に沿って）。袖は腕の上側だけ（腕の上から ±OFF_CAPA 度）
+OFF_XN = 0.112; OFF_ARM = 0.070; OFF_CAP = 0.075; OFF_CAPA = 80.0
+# ホルターネック（OFF_HALTER）：肩の先の袖を付けず、胸元の左右から 2 本のひもを首に沿わせて、首の後ろで結ぶ（OP_Strap）
+OFF_HALTER = OFF_SHOULDER and bool(globals().get("OFF_HALTER", ob.get("off_halter", False)))
+def off_sel(c):
+    ax = abs(c.x)
+    if ax <= OFF_XN: return c.z <= ZOFF(c)
+    if OFF_HALTER: return ax < 0.165 and c.z <= shoulder.z-OFF_ARM      # ホルターネック：袖は付けず、わきは脇の下より下だけ
+    if ax < 0.165:                                        # 肩の上（布）と、その下の脇（出す）
+        return c.z >= shoulder.z-0.004 or c.z <= shoulder.z-OFF_ARM
+    p = Vector((ax, c.y, c.z))-shoulder; t = p.dot(ua)
+    if t > OFF_CAP: return False
+    q = p-ua*t
+    if q.length < 1e-6: return True
+    return q.normalized().dot((Vector((0, 0, 1))-ua*ua.z).normalized()) > math.cos(math.radians(OFF_CAPA))
 def dress_sel(c):
     ax = abs(c.x)
+    if OFF_SHOULDER and not off_sel(c): return False
     if ax > 0.165:
         if c.z < 1.10: return False                      # 腰の横（腕ではない）
         p = Vector((ax, c.y, c.z)); return (p-shoulder).dot(ua) < SLEEVE
@@ -188,7 +211,9 @@ for v in bm.verts:
     puff = math.sin(math.pi*min(1.0, max(0.0, (ts+0.02)/(SLEEVE+0.02))))**0.8 if ts > -0.02 else 0.0
     neck = ss((c.z-ZN)/0.02) if ax < 0.09 else 0.0
     if v.is_boundary:
-        if ax > 0.165 and c.z > HEM+0.05:               # 袖口：しぼって、ふちは少し浮かせる（肩幅を狭めると袖口が 0.20 より内へ入り、すそと取り違えて腰まで垂れた）
+        if OFF_SHOULDER and c.z > HEM+0.08:            # 肩出しの襟ぐり・袖口・脇：体から少し浮かせる
+            v.co += v.normal*0.006
+        elif ax > 0.165 and c.z > HEM+0.05:               # 袖口：しぼって、ふちは少し浮かせる（肩幅を狭めると袖口が 0.20 より内へ入り、すそと取り違えて腰まで垂れた）
             v.co += v.normal*0.007
         elif c.z > 1.30:                                # えり（首のまわりに、ゆるく）
             v.co.z = NECK(c); v.co += Vector((v.normal.x, v.normal.y, 0))*0.007
@@ -291,6 +316,75 @@ for v in bm.verts:
 dress = newobj("OP_Dress", bm, FAB)
 sd = dress.modifiers.new("Solidify", 'SOLIDIFY'); sd.thickness = 0.002; sd.offset = 1.0
 to_hide |= erode(dsel, 2)
+
+# ── ホルターネックのひも（OP_Strap）：胸元の左右から首に沿って上がり、首の後ろで結ぶ。結び目と短い垂れ ──
+_old = bpy.data.objects.get("OP_Strap")
+if _old: bpy.data.objects.remove(_old, do_unlink=True)
+# NO_STRAP … ひもを付けない（ベアトップ）。体のカスタムプロパティ no_strap で決める
+NO_STRAP = bool(globals().get("NO_STRAP", ob.get("no_strap", False)))
+if OFF_HALTER and not NO_STRAP:
+    _bp = [tuple(p.vertices) for p in me.polygons if all(inb[v] for v in p.vertices)]
+    _bv = BVHTree.FromPolygons(co, _bp)
+    neckj = joint("joint-neck"); NC = Vector((0.0, neckj.y, 0.0))
+    SW = 0.011; SOFF = 0.0035                             # ひもの幅・肌から浮かせる量
+    def on_skin(p, out):
+        """p の近くの肌の上（out の向きから当てる）に置く"""
+        h = _bv.ray_cast(p+out*0.08, -out, 0.16)
+        if h[0] is None:
+            loc, nor, i_, d_ = _bv.find_nearest(p); return loc+nor*SOFF, nor
+        return h[0]+h[1]*SOFF, h[1]
+    ZB = shoulder.z+0.045                                 # 首のつけ根の高さ
+    def strap_path(sg):
+        """胸元から首の横を通って首の後ろまで。どの点も、首の中心の軸から外へ向けて肌に置く（置く向きを途中で変えると、首元で「く」の字に折れた）"""
+        x0 = 0.058                                        # 胸元のひもの付け根（まん中から）
+        z0 = ZOFF(Vector((x0, -0.1, 0)))-0.035          # 身ごろの上のふちより下（身ごろの中）から出す。ふちで止めると、すき間が見えた
+        A = Vector((sg*x0, NC.y-0.13, z0))                # 胸元（首の軸から前へ離れた所）
+        a1 = math.radians(62.0); r1 = 0.050
+        B = Vector((sg*math.sin(a1)*r1, NC.y-math.cos(a1)*r1, ZB))     # 首の横（少し前寄り）
+        pts = []; N = 44
+        for i in range(N+1):
+            s = i/N
+            if s <= 0.5:                                  # 胸元から首の横へ、まっすぐ
+                R = A.lerp(B, s/0.5)
+            else:                                         # 首のまわりを後ろへ（首の付け根に沿って少し上がる）
+                t = (s-0.5)/0.5; ang = a1+(math.radians(172.0)-a1)*t
+                R = Vector((sg*math.sin(ang)*r1, NC.y-math.cos(ang)*r1, ZB+0.012*sstep_(t)))
+            d = Vector((R.x, R.y-NC.y, 0)).normalized()
+            h = _bv.ray_cast(Vector((0, NC.y, R.z))+d*0.30, -d, 0.30)
+            if h[0] is None: q, nor = on_skin(R, d)
+            else: q, nor = h[0]+h[1]*SOFF, h[1]
+            pts.append((q, nor))
+        # 折れが残らないよう、線をならす（両端は動かさない）
+        for _ in range(4):
+            pts = [pts[0]]+[((pts[k-1][0]+pts[k][0]*2+pts[k+1][0])/4, pts[k][1]) for k in range(1, len(pts)-1)]+[pts[-1]]
+        return pts
+    def sstep_(t): t = max(0, min(1, t)); return t*t*(3-2*t)
+    bmS = bmesh.new()
+    def ribbon(pts, w=SW):
+        rows = []
+        for i, (q, nor) in enumerate(pts):
+            tg = (pts[min(i+1, len(pts)-1)][0]-pts[max(i-1, 0)][0]).normalized()
+            side = tg.cross(nor).normalized()
+            rows.append((bmS.verts.new(q-side*w/2), bmS.verts.new(q+side*w/2)))
+        for a, b in zip(rows, rows[1:]): bmS.faces.new((a[0], a[1], b[1], b[0]))
+    for sg in (1, -1): ribbon(strap_path(sg))
+    # 結び目と垂れ（首の後ろ）
+    hk = _bv.ray_cast(NC+Vector((0, 0.20, ZB+0.012)), Vector((0, -1, 0)), 0.3)
+    K = (hk[0]+Vector((0, 0.010, 0))) if hk[0] else NC+Vector((0, 0.07, ZB))
+    kn = bmesh.ops.create_uvsphere(bmS, u_segments=10, v_segments=6, radius=0.009)
+    for v in kn["verts"]: v.co = Vector((v.co.x*1.3, v.co.y*0.8, v.co.z))+K
+    for sg in (1, -1):                                    # 垂れ：結び目から下へ、少し外へ開く
+        tail = []
+        for i in range(9):
+            t = i/8; q = K+Vector((sg*(0.006+0.012*t), 0.003+0.004*t, -0.065*t))
+            hq = _bv.find_nearest(q)
+            nor = Vector((0, 1, 0))
+            if hq[0] is not None and (q-hq[0]).dot(hq[1]) < SOFF+0.004: q = hq[0]+hq[1]*(SOFF+0.004)
+            tail.append((q, nor))
+        ribbon(tail, 0.010)
+    STRAP_M = mat("OP_Strap", (0.02, 0.018, 0.02), 0.5, **{"Sheen Weight": 0.3})
+    strap = newobj("OP_Strap", bmS, STRAP_M)
+    strap.data.materials[0].use_backface_culling = False
 
 # ── スカート部分（ひざ丈のフレア）と、リボンの垂れ ──────────────────
 _armg = {g.index for g in ob.vertex_groups if g.name in ("leftUpperArm", "rightUpperArm", "leftLowerArm", "rightLowerArm", "leftHand", "rightHand")}
@@ -510,7 +604,7 @@ to_hide |= {i for i in range(len(cr)) if inb[i] and abs(cr[i].x) > 0.04 and cr[i
 
 # ── 肌を隠す・ほかのコーデを隠す ──
 body.remove(list(to_hide)); hid.add(list(to_hide), 1.0, 'REPLACE')
-KEEP = {"Girl_Body", "Girl_Brows", "Girl_MouthBag", "Girl_Teeth", "Girl_Hair", "OP_Dress", "OP_Skirt", "OP_Belt", "OP_Shoes", "OP_Inner"}
+KEEP = {"Girl_Body", "Girl_Brows", "Girl_MouthBag", "Girl_Teeth", "Girl_Hair", "Girl_LashStrands", "Girl_LashLowerStrands", "OP_Dress", "OP_Strap", "OP_Skirt", "OP_Belt", "OP_Shoes", "OP_Inner"}
 for o in bpy.data.objects:
     if o.type == 'MESH' and o.parent is rig or o.name in KEEP:
         h = o.name not in KEEP

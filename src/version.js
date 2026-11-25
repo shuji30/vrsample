@@ -6,4 +6,4 @@
  * package.json の version を上げ、日付を変える。
  */
 export const VERSION = '0.114.0';
-export const RELEASED = '2026-11-25';
+export const RELEASED = '2026-11-26';

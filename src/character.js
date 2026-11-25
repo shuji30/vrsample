@@ -850,10 +850,13 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
    * ヒールのある靴は、かかとが足首より後ろへ長く、下へ深い。足首を回して歩く（かかとを上げる・つま先を上げる）と、
    * かかとやつま先が地面の下へ入る。前は前のモデル（ヒールなし）で測った値を全員に使っていて、歩くと沈んでいた
    */
-  function measureFootShape(ankle) {
+  function measureFootShape(ankleWorld) {
     const pts = [];
     const p = new THREE.Vector3();
     const toLocal = new THREE.Matrix4().copy(group.matrixWorld).invert();
+    // 足首も、頂点と同じく体（group）から見た位置にして比べる。部屋の中の位置のまま比べていたので、女の子が部屋の
+    // 原点以外に立っていると頂点が 1 つも拾えず、足の形が測れていなかった（歩くとヒールのつま先が 3cm もぐっていた）
+    const ankle = ankleWorld.clone().applyMatrix4(toLocal);
     vrm.scene.traverse((m) => {
       if (!m.isSkinnedMesh) return;
       const pos = m.geometry.attributes.position;
@@ -906,12 +909,16 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     });
   }
   const _footP = new THREE.Vector3();
-  /** 足のいちばん低い所が地面（体の根もとの高さ）より下なら、その分だけモデルを持ち上げる（ヒールのある靴で沈まないように） */
-  function keepFeetAboveGround() {
+  let footLift = 0;       // いま体を持ち上げている量（m）
+  /**
+   * 足のいちばん低い所が地面（体の根もとの高さ）より下なら、その分だけモデルを持ち上げる（ヒールのある靴で沈まないように）。
+   * 持ち上げは、要るときはすぐ上げ、要らなくなったら 1 コマで戻さずにゆっくり下ろす（一気に戻すと体がストンと落ちて見える）
+   */
+  function keepFeetAboveGround(dt) {
     if (!footVerts.length) return;
     vrm.scene.position.y = 0;
     // 座っている・泳いでいる・乗り物で体を任されているあいだは、足が床の上にあるとは限らないので、しない
-    if (sitAmount > 0.2 || swimAmount > 0.05 || kartSeat > 0) return;
+    if (sitAmount > 0.2 || swimAmount > 0.05 || kartSeat > 0) { footLift = 0; return; }
     group.updateMatrixWorld(true);
     let lo = Infinity;
     for (const [m, i] of footVerts) {
@@ -919,8 +926,10 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       if (_footP.y < lo) lo = _footP.y;
     }
     const sink = group.position.y - lo;
-    if (sink > 0.002) {
-      vrm.scene.position.y = Math.min(sink, 0.08);
+    const want = sink > 0.002 ? Math.min(sink, 0.08) : 0;
+    footLift = want >= footLift ? want : Math.max(want, footLift - 0.06 * dt);
+    if (footLift > 0.0005) {
+      vrm.scene.position.y = footLift;
       vrm.scene.updateMatrixWorld(true);
     }
   }
@@ -1412,7 +1421,21 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     // これを無視すると、傾いたぶんだけ足が床にめり込んだり浮いたりする。
     const roll = bones.hips ? bones.hips.rotation.z : 0;
     const rootY = hipY + legTopOffset * Math.cos(roll) + upper.position.x * Math.sin(roll);
-    const dy = (ankleRestY + plan.lift + lift) - rootY;
+    // 足首に足す傾き（+ でつま先が下がる）：後半で踵が上がり（つま先で蹴る）、着地直後はわずかにつま先が上を向く。
+    // 遊脚はつま先を上げておく（下げたままだと床を擦って見える）
+    let tilt;
+    if (plan.stance >= 0) {
+      tilt = GAIT.ankle * smoothstep(0.55, 1, plan.stance)
+        - GAIT.ankle * 0.45 * (1 - smoothstep(0, 0.18, plan.stance));
+    } else {
+      tilt = -GAIT.ankle * 0.35;
+    }
+    // 足首を軸に足を傾けると、足首より低い所（ヒールのある靴のつま先・かかと）が地面へもぐる。傾けたぶんだけ足首を
+    // 持ち上げて、足のいちばん低い所を地面に乗せたままにする（踵を上げるときは、つま先を支点に足首が上がる）。
+    // これが無いと、もぐった足を体ごと持ち上げて隠し（keepFeetAboveGround）、足が離れた瞬間に体が 2cm 落ちて、
+    // ドスンドスンと歩いて見えた（ニットの女の子：つま先が 3cm もぐっていた）
+    const rise = footShape && plan.stance >= 0 ? Math.max(0, footRestLow - footLowest(tilt)) : 0;
+    const dy = (ankleRestY + plan.lift + lift + rise) - rootY;
     const reach = Math.min(
       Math.max(Math.hypot(dy, dz), Math.abs(thighLen - shinLen) + 0.001),
       thighLen + shinLen - 0.001,
@@ -1428,15 +1451,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     const thigh = beta + alpha;
 
     // 足裏を床と平行に保つ。そのうえで蹴り出しと着地の足首を足す
-    let ankle = thigh - knee;
-    if (plan.stance >= 0) {
-      // 後半で踵が上がり（つま先で蹴る）、着地直後はわずかにつま先が上を向く
-      ankle += GAIT.ankle * smoothstep(0.55, 1, plan.stance);
-      ankle -= GAIT.ankle * 0.45 * (1 - smoothstep(0, 0.18, plan.stance));
-    } else {
-      // 遊脚はつま先を上げておく。下げたままだと床を擦って見える
-      ankle -= GAIT.ankle * 0.35;
-    }
+    const ankle = thigh - knee + tilt;
 
     // 立ち / 座りポーズからの混ぜ込み。amount が 0 ならそのまま
     // 骨盤を前へ倒していれば（pitch）、そのぶん腿を戻して足の向きを保つ
@@ -2428,7 +2443,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
     // スプリングボーン（髪・服）、視線、表情をまとめて進める
     vrm.update(dt);
     // 足が地面に沈まないように（vrm.update で骨が決まったあとで測る）
-    keepFeetAboveGround();
+    keepFeetAboveGround(dt);
     // 影は足の骨の位置から置くので、骨が決まってから
     updateFootShadows();
     updateRim(dt);

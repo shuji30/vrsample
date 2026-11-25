@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lawnPatch } from './lawn.js';
 
 /**
  * 芝の草の束。庭の芝生（丘の上の平らな所）に、細い葉を数本ずつ束にして生やす。
@@ -172,7 +173,11 @@ export function createGrass(renderer, scene, { lawnMaterial, bounds, count = 300
     m4.compose(new THREE.Vector3(x, height(x, z), z), q.setFromAxisAngle(up, yaw), new THREE.Vector3(s * 1.7, s, s * 1.7));
     mesh.setMatrixAt(i, m4);
     // 束ごとに、明るさと黄みを少しずらす（芝の地面の色むらに合わせる）
-    mesh.setColorAt(i, tint.setRGB(shade * 1.04, shade, shade * 0.9));
+    // 地面の大きな色むら（lawn.js）にも合わせる：黄ばんだ所の束は黄色く、濃い所は濃く
+    const pc = lawnPatch(x, z);
+    const dry = Math.max(0, Math.min(1, (pc - 0.1) / 0.6)) * 0.6;
+    const k = shade * (1 + pc * 0.2);
+    mesh.setColorAt(i, tint.setRGB(k * 1.04 * (1 + 0.14 * dry), k * (1 + 0.03 * dry), k * 0.9 * (1 - 0.32 * dry)));
   });
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;

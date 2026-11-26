@@ -223,6 +223,9 @@ export function createCarousel() {
     // 脚は地面に着かない（浮いて走る形）。支柱が乗り手のすぐ前（首の付け根）を通るよう、
     // 馬を 0.3m 後ろへずらす（真ん中だと、VR で支柱が頭の中を通った）
     model.root.position.set(0, 0.3, -HORSE_BACK);
+    // 木馬は屋根の下にいて、昼は屋根の影の中。1 頭 20 ほどの部品がそれぞれ影を描くと、
+    // 8 頭で 160 ほどの描画命令になるので、木馬は影を落とさない（売り物の水準 A8）
+    model.root.traverse((o) => { if (o.isMesh) o.castShadow = false; });
     bob.add(model.root);
     horses.push({ holder, bob, model, phase: i * 1.7 });
   }

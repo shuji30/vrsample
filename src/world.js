@@ -1126,6 +1126,7 @@ export function createWorld(renderer, scene, {
 
   function update(dt) {
     updateShadowFocus();
+    updateBelowCliff();
     checkStairsGate(dt);
     // 暗くした幕を、少し待ってから明ける
     if (fade > 0) {
@@ -1557,6 +1558,49 @@ export function createWorld(renderer, scene, {
   // 芝の色むら・刈り跡・際の土（草の束より前。束の色もこのむらに合わせる）
   dressLawn(renderer, scene, { lawnMaterial: park.lawnMaterial, bounds: PLATEAU });
   const grass = createGrass(renderer, scene, { lawnMaterial: park.lawnMaterial, bounds: PLATEAU, count: textureQuality >= 1 ? 30000 : 14000 });
+
+  // --- 描画の軽量化（売り物の水準 A8） ------------------------------------------
+  // 崖の下（砂浜と海辺）の物は、丘の上からは崖の縁に隠れて見えないのに、毎フレーム 300 ほどの描画命令を使っていた。
+  // 目が丘の上（崖の縁から 10m より内側）にいるあいだは描かない。物の visible はゲームの側が切り替えるもの
+  // （潜ったときの珊瑚など）があるので、触らずに、入れ物の Group にまとめて、その入れ物の表示だけを切り替える
+  const belowCliff = new THREE.Group();
+  belowCliff.name = 'belowCliff';
+  scene.add(belowCliff);
+  for (const name of ['cruiser', 'jetski', 'diveStand', 'reef']) {
+    const object = scene.children.find((c) => c.name === name);
+    if (object) belowCliff.attach(object);
+  }
+  // 砂浜の group には、崖の上の看板と門・階段も入っている。低い所（高さ -12m より下）の部品だけを移す
+  {
+    const beachLow = new THREE.Group();
+    beachLow.name = 'beachLow';
+    const box = new THREE.Box3();
+    for (const child of [...beach.group.children]) {
+      box.setFromObject(child);
+      if (!box.isEmpty() && box.max.y < -12) beachLow.attach(child);
+    }
+    beach.group.add(beachLow);
+    belowCliff.userData.parts = [beachLow];
+  }
+  const cliffEye = new THREE.Vector3();
+  function updateBelowCliff() {
+    if (!camera) return;
+    camera.getWorldPosition(cliffEye);
+    // 砂浜へ下りた（低い）、崖の縁に近い（北）、高く上がった（セスナ・観覧車・コースター）ときは見える
+    const show = cliffEye.y < -8 || cliffEye.y > 12 || cliffEye.z < PLATEAU.minZ + 10;
+    belowCliff.visible = show;
+    for (const part of belowCliff.userData.parts) part.visible = show;
+  }
+
+  // 小さな物（半径 8cm 未満：テニスボール・ボルト・小さな飾り）は影を落とさない。影の地図の 1 画素は約 2cm なので、
+  // 数画素の影しかできないのに、1 つにつき描画命令が 1 つ増える。人や動物（スキンのメッシュ）は除く
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.castShadow || o.isSkinnedMesh || o.isInstancedMesh) return;
+    const g = o.geometry;
+    if (!g.boundingSphere) g.computeBoundingSphere();
+    const scale = o.getWorldScale(cliffEye).x;
+    if (g.boundingSphere.radius * scale < 0.08) o.castShadow = false;
+  });
 
   return {
     surfaceAt,

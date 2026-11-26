@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -164,7 +164,9 @@ function toMp3(lame, { rate, pcm }, kbps) {
 // --- 台詞の一覧 -------------------------------------------------------------------
 
 async function allTexts() {
-  const { LINES, VOICE_NUMBERS, EXTRA_LINES, spokenLine } = await import(join(ROOT, 'src/voice.js'));
+  // Windows では、絶対パス（C:\...）をそのまま import に渡すと「c: という種類の URL は読めない」で落ちる。
+  // file:// の URL にして渡す（Linux・macOS でも同じに動く）
+  const { LINES, VOICE_NUMBERS, EXTRA_LINES, spokenLine } = await import(pathToFileURL(join(ROOT, 'src/voice.js')).href);
   const texts = new Set();
   for (const [kind, lines] of Object.entries(LINES)) {
     for (const line of lines) {

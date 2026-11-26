@@ -306,8 +306,9 @@ export function createFurniture(scene, tex, onSelectTheme) {
     chair.add(seat);
 
     const back = new THREE.Mesh(chairBack, chairWood);
-    back.position.set(0, 0.68, -0.19);
-    back.rotation.x = 0.10;
+    // 背もたれは、上が後ろへ倒れる向き（+ にすると座る人のほうへ倒れて不自然だった）
+    back.position.set(0, 0.68, -0.20);
+    back.rotation.x = -0.10;
     back.castShadow = true;
     chair.add(back);
 
@@ -358,8 +359,10 @@ export function createFurniture(scene, tex, onSelectTheme) {
   for (let i = 0; i < 2; i++) {
     const pillow = new THREE.Mesh(new RoundedBoxGeometry(0.40, 0.40, 0.13, 4, 0.06), pillowMaterial.clone());
     pillow.material.color.setHex(i === 0 ? 0xb96a4f : 0x4c6473);
-    pillow.position.set(-0.68 + i * 1.36, 0.72, -0.20);
-    pillow.rotation.set(0.28, (i - 0.5) * 0.5, (i - 0.5) * 0.35);
+    // 背もたれに後ろへもたせかけ、下は座面クッションの上に乗せる。前へ倒れた向きで低く置いていたので、
+    // 背もたれと座面にめり込んでいた
+    pillow.position.set(-0.68 + i * 1.36, SOFA.top + 0.215, -0.15);
+    pillow.rotation.set(-0.22, (i - 0.5) * 0.4, (i - 0.5) * 0.25);
     pillow.castShadow = true;
     sofa.add(pillow);
   }

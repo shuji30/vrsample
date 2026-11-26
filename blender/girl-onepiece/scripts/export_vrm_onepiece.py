@@ -150,28 +150,126 @@ def unwrap(obj):
     bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.select_all(action='SELECT')
     bpy.ops.uv.smart_project(island_margin=0.02); bpy.ops.object.mode_set(mode='OBJECT')
 
+# 頭（首の中ほどより上）の肌は、体とべつの画像に焼く（SkinFace）。体と同じ 1 枚では顔が画像の小さな一部にしかならず
+# （口の幅が 40 ピクセルほど）、唇のふちや目じりのメイクが粗いピクセルになって、ゲームで口の端・目じりのしわや点に見えた
+_sk = next((k for k, s in enumerate(xb.material_slots) if s.name == "Skin"), None)
+if _sk is not None:
+    _zcut = arm.bones["neck"].head_local.z+0.03
+    # 前に書き出したときの SkinFace が残っていると、写しが SkinFace.001 になって顔の画像に焼かれず、顔が真っ黒になる
+    for _old in [m for m in bpy.data.materials if m.name.startswith("SkinFace")]: bpy.data.materials.remove(_old)
+    _fm = bpy.data.materials["Skin"].copy(); _fm.name = "SkinFace"; xb.data.materials.append(_fm); _fk = len(xb.data.materials)-1
+    for p in xb.data.polygons:
+        # 顔の前半分だけ（耳・後頭部・首のかけらは入れない。入れると UV の範囲が広がって、顔が小さくなる）
+        if p.material_index == _sk and p.center.z > _zcut and p.center.y < -0.06 and abs(p.center.x) < 0.075: p.material_index = _fk
+    # 唇の面のうち、UV が顔の島の外にあるもの（唇の内側など、離れた所に置かれた島）は、体の画像のままにする
+    _uvd = xb.data.uv_layers.active.data
+    # 顔の面のうち、UV が顔の大きな島から離れた所にあるもの（目のまわりの内側・鼻や口の中など）は体の画像へ戻す
+    _cs = [(p, sum((_uvd[l].uv for l in p.loop_indices), Vector((0, 0)))/len(p.loop_indices)) for p in xb.data.polygons if p.material_index == _fk]
+    _su = sorted(c.x for _, c in _cs); _sv = sorted(c.y for _, c in _cs); _q = lambda a, f: a[int(f*(len(a)-1))]
+    _u0, _u1, _v0, _v1 = _q(_su, 0.03), _q(_su, 0.97), _q(_sv, 0.03), _q(_sv, 0.97); _mu = (_u1-_u0)*0.15; _mv = (_v1-_v0)*0.15
+    for p, c in _cs:
+        if not (_u0-_mu <= c.x <= _u1+_mu and _v0-_mv <= c.y <= _v1+_mv): p.material_index = _sk
+    _fl = [l for p in xb.data.polygons if p.material_index == _fk for l in p.loop_indices]
+    _fu = [_uvd[l].uv.x for l in _fl]; _fv = [_uvd[l].uv.y for l in _fl]
+    _bb = (min(_fu), max(_fu), min(_fv), max(_fv))
+    _lk = next((k for k, s in enumerate(xb.material_slots) if s.name == "Lips"), None)
+    for p in xb.data.polygons:
+        if p.material_index == _lk and any(not (_bb[0] <= _uvd[l].uv.x <= _bb[1] and _bb[2] <= _uvd[l].uv.y <= _bb[3]) for l in p.loop_indices):
+            p.material_index = _sk
 # 体：肌・唇 / 目 / まつ毛を、べつの画像へ（UV が重なっているかもしれないので分ける）
 names = [s.name for s in xb.material_slots]
-skin_i = image("bake_skin", 2048); eye_i = image("bake_eye", 512); lash_i = image("bake_lash", 1024); lash_a = image("bake_lash_a", 1024, True)
-SKIN = ("Skin", "Lips", "MouthInner", "Teeth", "Tongue"); LASH = ("Lash", "LashLower")
-tg = {nm: skin_i for nm in SKIN}; tg["Eye"] = eye_i; tg.update({nm: lash_i for nm in LASH})
-def _spread_uv(group):
+skin_i = image("bake_skin", 2048); eye_i = image("bake_eye", 2048)       # 目は 512 では黒目が 25 ピクセルほどしかなく粗かった
+lash_i = image("bake_lash", 1024); lash_a = image("bake_lash_a", 1024, True)
+face_i = image("bake_face", 2048)
+SKIN = ("Skin", "Lips", "MouthInner", "Teeth", "Tongue"); LASH = ("Lash", "LashLower"); FACE = ("SkinFace", "Lips")
+tg = {nm: skin_i for nm in SKIN}; tg["Eye"] = eye_i; tg.update({nm: lash_i for nm in LASH}); tg.update({nm: face_i for nm in FACE})
+def _spread_uv(group, same_scale=False):
     """その材質の面の UV を、画像いっぱいに広げる（元の UV では目が 27×13 ピクセルほどしかなく、瞳がつぶれて白くなる。まつ毛も粗くなる）"""
     idx = [k for k, nm in enumerate(names) if nm in group]
     uvd = xb.data.uv_layers.active.data
     ls = [l for p in xb.data.polygons if p.material_index in idx for l in p.loop_indices]
     if not ls: return
     us = [uvd[l].uv.x for l in ls]; vs = [uvd[l].uv.y for l in ls]; u0, u1, v0, v1 = min(us), max(us), min(vs), max(vs)
+    if same_scale:                                       # 縦横を同じ倍率で（顔の形がゆがまないように）。離れた島ごとに置き直す
+        # 面を、UV の横方向のすき間で島に分ける（顔の大きな島と、まぶたのまわりの小さな島）
+        ps = [p for p in xb.data.polygons if p.material_index in idx]
+        cu = {p.index: sum(uvd[l].uv.x for l in p.loop_indices)/len(p.loop_indices) for p in ps}
+        order = sorted(ps, key=lambda p: cu[p.index]); groups = [[order[0]]]
+        for a, b in zip(order, order[1:]):
+            if cu[b.index]-cu[a.index] > 0.03: groups.append([])
+            groups[-1].append(b)
+        groups.sort(key=len, reverse=True)
+        # いちばん大きい島は左 72%、残りは右の列に縦に並べる
+        rects = [(0.02, 0.02, 0.72, 0.98)]
+        rest = groups[1:]
+        for i in range(len(rest)): h = 0.96/max(1, len(rest)); rects.append((0.74, 0.02+h*i, 0.98, 0.02+h*(i+1)))
+        for g, (x0, y0, x1, y1) in zip(groups, rects):
+            gl = [l for p in g for l in p.loop_indices]
+            gu = [uvd[l].uv.x for l in gl]; gv = [uvd[l].uv.y for l in gl]
+            a0, a1, b0, b1 = min(gu), max(gu), min(gv), max(gv)
+            k = min((x1-x0)/max(a1-a0, 1e-6), (y1-y0)/max(b1-b0, 1e-6))
+            for l in gl: uvd[l].uv = (x0+k*(uvd[l].uv.x-a0), y0+k*(uvd[l].uv.y-b0))
+        return
     for l in ls: uvd[l].uv = (0.04+0.92*(uvd[l].uv.x-u0)/max(u1-u0, 1e-6), 0.04+0.92*(uvd[l].uv.y-v0)/max(v1-v0, 1e-6))
-_spread_uv(("Eye",)); _spread_uv(LASH)
+_spread_uv(("Eye",)); _spread_uv(LASH); _spread_uv(FACE, True)
 bake(xb, tg); bake(xb, {nm: lash_a for nm in LASH}, alpha=True)
-merge(skin_i, None, OUT+"skin.png"); merge(eye_i, None, OUT+"eye.png"); merge(lash_i, lash_a, OUT+"lash.png")
-M = [texmat("X_Skin", skin_i), texmat("X_Eye", eye_i), texmat("X_Lash", lash_i, True)]
-# 唇は肌と同じ画像のまま、つやのある別の材質にする（つやのあるルージュ。肌と同じ材質だと、ゲームでつやが出ない）
-_lips = texmat("X_Lips", skin_i); _lb = next(x for x in _lips.node_tree.nodes if x.type == "BSDF_PRINCIPLED")
+def fill_holes(img, iters=10):
+    """焼いた画像で、どの面も塗らなかった小さなすき間（真っ黒の画素）を、まわりの色で埋める。
+    顔の画像では、唇の端や上唇のふちに黒い点として出ていた"""
+    w, h = img.size; a = np.empty(w*h*4, dtype=np.float32); img.pixels.foreach_get(a); a = a.reshape(h, w, 4)
+    rgb = a[:, :, :3]; hole = rgb.sum(2) < 0.03
+    for _ in range(iters):
+        if not hole.any(): break
+        acc = np.zeros_like(rgb); cnt = np.zeros(hole.shape, np.float32)
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            src = np.roll(np.roll(rgb, dy, 0), dx, 1); ok = ~np.roll(np.roll(hole, dy, 0), dx, 1)
+            acc += src*ok[:, :, None]; cnt += ok
+        fill = hole & (cnt > 0)
+        rgb[fill] = acc[fill]/cnt[fill][:, None]; hole = hole & ~fill
+    a[:, :, :3] = rgb; img.pixels.foreach_set(a.ravel())
+def despeckle(img, ratio=0.8, R=4, frac=0.25):
+    """まわりより目立って暗い、小さな点（唇の端の暗い赤茶の点など）を、まわりの平均色で埋める。
+    口の切れ目のように暗い所が広く続く所は、点ではないので残す"""
+    w, h = img.size; a = np.empty(w*h*4, dtype=np.float32); img.pixels.foreach_get(a); a = a.reshape(h, w, 4)
+    rgb = a[:, :, :3]; lum = rgb.sum(2)
+    acc = np.zeros_like(lum); n = 0
+    for dy in range(-R, R+1):
+        for dx in range(-R, R+1):
+            acc += np.roll(np.roll(lum, dy, 0), dx, 1); n += 1
+    dark = lum < acc/n*ratio
+    dk = np.zeros_like(lum)
+    for dy in range(-R, R+1):
+        for dx in range(-R, R+1):
+            dk += np.roll(np.roll(dark, dy, 0), dx, 1)
+    spot = dark & (dk/n < frac)
+    # 目のまわりの細いアイラインまで消さないよう、唇（赤みの強い所）のまわりだけにする
+    lip = (rgb[:, :, 0]-rgb[:, :, 1] > 0.23) & (lum > 1.0)
+    if lip.any():
+        ys, xs = np.nonzero(lip); m = np.zeros_like(spot)
+        m[max(ys.min()-60, 0):ys.max()+60, max(xs.min()-60, 0):xs.max()+60] = True
+        # 唇のふち（くっきりした境目）はさわらない。唇から離れた肌の上の、うすい灰色の点（上唇の上の点線）は拾う
+        near = lip.copy()
+        for _ in range(5): near = near | np.roll(near, 1, 0) | np.roll(near, -1, 0) | np.roll(near, 1, 1) | np.roll(near, -1, 1)
+        faint = (lum < acc/n*0.95) & (dk/n < frac)
+        spot = (spot | (faint & ~near)) & m
+    else:
+        spot[:] = False
+    good = ~spot; sm = np.zeros_like(rgb); cnt = np.zeros_like(lum)
+    for dy in range(-R, R+1):
+        for dx in range(-R, R+1):
+            ok = np.roll(np.roll(good, dy, 0), dx, 1)
+            sm += np.roll(np.roll(rgb, dy, 0), dx, 1)*ok[:, :, None]; cnt += ok
+    f = spot & (cnt > 0); rgb[f] = sm[f]/cnt[f][:, None]
+    print("despeckle", int(f.sum()))
+    a[:, :, :3] = rgb; img.pixels.foreach_set(a.ravel())
+fill_holes(face_i); despeckle(face_i)
+merge(skin_i, None, OUT+"skin.png"); merge(eye_i, None, OUT+"eye.png"); merge(lash_i, lash_a, OUT+"lash.png"); merge(face_i, None, OUT+"face.png")
+M = [texmat("X_Skin", skin_i), texmat("X_Eye", eye_i), texmat("X_Lash", lash_i, True), texmat("X_Face", face_i)]
+# 唇は顔と同じ画像のまま、つやのある別の材質にする（つやのあるルージュ。肌と同じ材質だと、ゲームでつやが出ない）
+_lips = texmat("X_Lips", face_i); _lb = next(x for x in _lips.node_tree.nodes if x.type == "BSDF_PRINCIPLED")
 _lb.inputs["Roughness"].default_value = 0.22; _lb.inputs["Specular IOR Level"].default_value = 0.7
 M.append(_lips)
-grp = [3 if nm == "Lips" else (0 if nm in SKIN else (1 if nm == "Eye" else (2 if nm in LASH else 0))) for nm in names]
+grp = [4 if nm == "Lips" else (3 if nm == "SkinFace" else (0 if nm in SKIN else (1 if nm == "Eye" else (2 if nm in LASH else 0)))) for nm in names]
 pm = [grp[p.material_index] for p in xb.data.polygons]
 xb.data.materials.clear()
 for mt in M: xb.data.materials.append(mt)

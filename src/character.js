@@ -694,6 +694,7 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       footNodes = ['leftFoot', 'rightFoot'].map((n) => vrm.humanoid?.getRawBoneNode(n) ?? null);
       addRimLight(vrm.scene, rimUniform);
       curlFingers(vrm.humanoid);
+      fixUnskinnedVertices(vrm);
       relaxSkirtWeights(vrm);
 
       // 腰の高さと腿の長さは、座面に腰を乗せる位置に要る。歩幅も身体に合わせる
@@ -751,6 +752,54 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       mesh.geometry.setAttribute('skinIndex', set.index);
       mesh.geometry.setAttribute('skinWeight', set.weight);
     }
+  }
+
+  /**
+   * どの骨にも付いていない頂点を、いちばん近い（骨に付いた）頂点と同じ骨に付け直す。
+   * Blender の書き出し（glTF）は、骨の重みのない頂点を「neutral_bone」という動かない骨に付ける。立っているときは
+   * 元の位置のまま体の中に隠れているが、ソファーに横になるなどで体が動くと、その頂点だけが残って体とのあいだが
+   * 引き伸ばされ、顔から長い線が出て見えた（ストリートコーデの女の子：口の中の頂点 約 200 個）
+   */
+  function fixUnskinnedVertices(model) {
+    let fixed = 0;
+    model.scene.traverse((mesh) => {
+      if (!mesh.isSkinnedMesh) return;
+      const bones = mesh.skeleton?.bones;
+      const index = mesh.geometry?.attributes?.skinIndex;
+      const weight = mesh.geometry?.attributes?.skinWeight;
+      const pos = mesh.geometry?.attributes?.position;
+      if (!bones || !index || !weight || !pos) return;
+      const neutral = new Set();
+      bones.forEach((b, i) => { if (/neutral_bone/i.test(b?.name ?? '')) neutral.add(i); });
+      if (neutral.size === 0) return;
+      const n = index.count;
+      const bad = [];
+      const good = [];
+      for (let v = 0; v < n; v++) {
+        let w = 0;
+        for (let k = 0; k < 4; k++) if (neutral.has(index.getComponent(v, k))) w += weight.getComponent(v, k);
+        (w > 0.5 ? bad : good).push(v);
+      }
+      if (bad.length === 0 || good.length === 0) return;
+      for (const v of bad) {
+        const x = pos.getX(v), y = pos.getY(v), z = pos.getZ(v);
+        let best = -1;
+        let bd = Infinity;
+        for (const g of good) {
+          const dx = pos.getX(g) - x, dy = pos.getY(g) - y, dz = pos.getZ(g) - z;
+          const d = dx * dx + dy * dy + dz * dz;
+          if (d < bd) { bd = d; best = g; }
+        }
+        for (let k = 0; k < 4; k++) {
+          index.setComponent(v, k, index.getComponent(best, k));
+          weight.setComponent(v, k, weight.getComponent(best, k));
+        }
+        fixed++;
+      }
+      index.needsUpdate = true;
+      weight.needsUpdate = true;
+    });
+    return fixed;
   }
 
   function relaxSkirtWeights(model) {
@@ -2082,7 +2131,9 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
       // 上になった左手は腰の前（スカートの裾のあたり）に置く
       bones.hips.getWorldPosition(_b);
       left = at(_b, 0.16, 0.06, 0.02, _seatB);
-      _poleR.set(fx * 0.3, -1, fz * 0.3);
+      // 下の右ひじは体の前（ソファーの前側）へ向ける。真下へ向けると、横に寝ているので座面の中を指し、
+      // 二の腕と前腕が座面より 21cm 下まで埋まった
+      _poleR.set(fx, 0.15, fz);
       _poleL.set(fx * 0.3 + lx * 0.3, 1, fz * 0.3 + lz * 0.3);
     } else if (lap > cross && lap > belly) {
       bones.hips.getWorldPosition(_a);

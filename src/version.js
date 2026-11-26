@@ -5,5 +5,5 @@
  * 付け方：0.<リリースの PR の番号>.<その PR の中での直し>。リリース（PR を作ってマージ）のたびに、ここと
  * package.json の version を上げ、日付を変える。
  */
-export const VERSION = '0.114.1';
+export const VERSION = '0.115.0';
 export const RELEASED = '2026-11-26';

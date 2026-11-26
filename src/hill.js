@@ -203,6 +203,31 @@ function waveNormalTexture(size = 256) {
   return t;
 }
 
+/**
+ * 海の水深の地図（地形の高さ hillHeight から）。浅瀬の色と岸の白波に使う。
+ * 2.5m ごと。島のまわり（海岸線がある範囲）だけ作り、外は深い海とみなす
+ */
+function seaDepthTexture() {
+  const bounds = new THREE.Vector4(-560, -380, 520, 640);
+  const STEP = 2.5;
+  const w = Math.round((bounds.z - bounds.x) / STEP);
+  const h = Math.round((bounds.w - bounds.y) / STEP);
+  const data = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++) {
+    const z = bounds.y + (j + 0.5) * STEP;
+    for (let i = 0; i < w; i++) {
+      const x = bounds.x + (i + 0.5) * STEP;
+      const depth = SEA_LEVEL - hillHeight(x, z);
+      data[j * w + i] = Math.round(Math.min(Math.max(depth, 0), 9) / 9 * 255);
+    }
+  }
+  const texture = new THREE.DataTexture(data, w, h, THREE.RedFormat, THREE.UnsignedByteType);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return { texture, bounds };
+}
+
 export function createHill(tex) {
   const group = new THREE.Group();
   group.name = 'hill';
@@ -315,28 +340,99 @@ export function createHill(tex) {
   // --- 海 ------------------------------------------------------------------------
   const normalMap = waveNormalTexture();
   normalMap.repeat.set(220, 220);
+  // 金属度は 0（水は誘電体）。真下を見ると 2% ほどしか映らず水の色が見え、遠くの浅い角度ほど空を映す（フレネル）。
+  // 以前は 0.15 で、足もとまで空が白く映り、水の色が出なかった（売り物の水準 A6）
   const seaMat = new THREE.MeshStandardMaterial({
-    color: 0x1d6690, roughness: 0.08, metalness: 0.15,
+    color: 0x0e4f6e, roughness: 0.08, metalness: 0,
     normalMap, normalScale: new THREE.Vector2(0.45, 0.45),
   });
+  const seaDepth = seaDepthTexture();
   // 波の模様を 2 枚重ねる：2 枚目は 0.37 倍の細かさで 37° 回し、逆向きに流す（1 枚だと 17m ごとの繰り返しと、
   // 遠くの格子状の照り返しが目立つ）。遠いほど凹凸を弱める（30m から 300m で 15% まで。VR でのちらつきを抑える）
   normalMap.anisotropy = 8;
   const seaWave = { value: new THREE.Vector2() };
+  const seaTime = { value: 0 };
   seaMat.onBeforeCompile = (shader) => {
     shader.uniforms.seaWave = seaWave;
+    shader.uniforms.seaTime = seaTime;
+    shader.uniforms.seaDepth = { value: seaDepth.texture };
+    shader.uniforms.seaDepthBounds = { value: seaDepth.bounds };
+    shader.uniforms.seaBeach = { value: new THREE.Vector4(BEACH.minX - 6, -104, BEACH.maxX + 6, -70) };
+    shader.vertexShader = 'varying vec3 vSeaPos;\n' + shader.vertexShader
+      .replace('#include <project_vertex>', `#include <project_vertex>
+      vSeaPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;`);
     shader.fragmentShader = shader.fragmentShader
-      .replace('void main() {', 'uniform vec2 seaWave;\nvoid main() {')
+      .replace('void main() {', `uniform vec2 seaWave;
+uniform float seaTime;
+uniform sampler2D seaDepth;
+uniform vec4 seaDepthBounds;
+uniform vec4 seaBeach;
+varying vec3 vSeaPos;
+float seaHash( vec2 p ) {
+  vec3 p3 = fract( vec3( p.xyx ) * 0.1031 );
+  p3 += dot( p3, p3.yzx + 33.33 );
+  return fract( ( p3.x + p3.y ) * p3.z );
+}
+float seaNoise( vec2 p ) {
+  vec2 i = floor( p );
+  vec2 f = p - i;
+  vec2 u = f * f * ( 3.0 - 2.0 * f );
+  return mix( mix( seaHash( i ), seaHash( i + vec2( 1.0, 0.0 ) ), u.x ),
+              mix( seaHash( i + vec2( 0.0, 1.0 ) ), seaHash( i + vec2( 1.0, 1.0 ) ), u.x ), u.y );
+}
+void main() {
+  // 水深（m）。地形の高さ（hillHeight）から作った地図。範囲の外は深い
+  vec2 seaRel = ( vSeaPos.xz - seaDepthBounds.xy ) / ( seaDepthBounds.zw - seaDepthBounds.xy );
+  float seaD = 9.0;
+  if ( all( greaterThan( seaRel, vec2( 0.0 ) ) ) && all( lessThan( seaRel, vec2( 1.0 ) ) ) ) seaD = texture2D( seaDepth, seaRel ).r * 9.0;
+  // 砂浜（beach.js）は自前の寄せ波を持つので、白波は足さない
+  float seaNotBeach = 1.0 - step( seaBeach.x, vSeaPos.x ) * step( vSeaPos.x, seaBeach.z ) * step( seaBeach.y, vSeaPos.z ) * step( vSeaPos.z, seaBeach.w );`)
+      // 法線マップの処理は #include のままなので、先に展開してから書き換える
+      // （以前は展開せずに置き換えようとしていて、2 枚重ねの波が効いていなかった）
+      .replace('#include <normal_fragment_maps>', THREE.ShaderChunk.normal_fragment_maps)
       .replace(
         'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
         `vec2 seaUv2 = mat2(0.799, 0.602, -0.602, 0.799) * vNormalMapUv * 0.37 + seaWave;
         vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
         vec3 mapN2 = texture2D( normalMap, seaUv2 ).xyz * 2.0 - 1.0;
         mapN = vec3( mapN.xy * 0.6 + mapN2.xy * 0.55, mapN.z * mapN2.z );
+        // 風の当たり方のむら：数十 m の大きさで、波の立つ所と凪いだ所を作る（模様の繰り返しを隠す）
+        mapN.xy *= 0.55 + 0.9 * seaNoise( vSeaPos.xz / 70.0 + seaTime * 0.01 );
+        // 太陽の照り返し用に、遠くでも弱めない凹凸を取っておく
+        vec2 seaGlitXY = mapN.xy;
         mapN.xy *= mix( 1.0, 0.15, smoothstep( 30.0, 300.0, length( vViewPosition ) ) );`,
-      );
+      )
+      .replace('#include <map_fragment>', `#include <map_fragment>
+      {
+        // 浅い所は、底の砂が透けて明るい青緑に
+        float shallow = smoothstep( 5.0, 0.2, seaD );
+        diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.05, 0.3, 0.32 ), shallow * 0.6 );
+        // 岸の白波：岸から 0.1〜1.2m の水深の帯を、沖から岸へ寄せる縞で
+        float wave = sin( seaD * 7.0 - seaTime * 1.6 + seaNoise( vSeaPos.xz * 0.15 ) * 6.0 );
+        float foam = smoothstep( 1.4, 0.1, seaD ) * smoothstep( 0.2, 0.9, wave * 0.5 + 0.5 );
+        foam = max( foam, smoothstep( 0.35, 0.0, seaD ) );
+        foam *= seaNotBeach * ( 0.55 + 0.45 * seaNoise( vSeaPos.xz * 0.6 + seaTime * 0.2 ) );
+        diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.85, 0.88, 0.9 ), foam * 0.85 );
+      }`)
+      .replace('#include <opaque_fragment>', `
+      #if NUM_DIR_LIGHTS > 0
+      {
+        // 太陽（月）の光の帯。遠いほど面が粗く見えるので、照り返しを広げて縦に伸びた帯にする
+        vec3 gN = normalize( tbn * vec3( seaGlitXY * 1.2, 1.0 ) );
+        vec3 gV = normalize( vViewPosition );
+        vec3 gL = directionalLights[ 0 ].direction;
+        vec3 gH = normalize( gL + gV );
+        float dist = length( vViewPosition );
+        float shine = mix( 900.0, 60.0, smoothstep( 15.0, 500.0, dist ) );
+        float glint = pow( max( dot( gN, gH ), 0.0 ), shine ) * ( shine + 8.0 ) / 8.0;
+        // 低い太陽ほど強い（夕日の帯）。真上の太陽は、もとの照り返しで足りる
+        float low = 0.35 + 0.65 * smoothstep( 0.6, 0.05, dot( gL, normalize( ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz ) ) );
+        outgoingLight += directionalLights[ 0 ].color * glint * 0.06 * low;
+      }
+      #endif
+      #include <opaque_fragment>`);
   };
-  seaMat.customProgramCacheKey = () => 'sea2';
+  seaMat.customProgramCacheKey = () => 'sea3';
   const sea = new THREE.Mesh(new THREE.CircleGeometry(1900, 96), seaMat);
   sea.rotation.x = -Math.PI / 2;
   sea.position.y = SEA_LEVEL;
@@ -412,6 +508,7 @@ export function createHill(tex) {
       // 波を流す
       normalMap.offset.set(time * 0.012, time * 0.007);
       seaWave.value.set(-time * 0.009, time * 0.011);
+      seaTime.value = time;
       for (const b of boats) {
         b.boat.position.x = b.x + Math.sin(time * 0.02 + b.phase) * 40;
         b.boat.rotation.z = Math.sin(time * 0.8 + b.phase) * 0.05;

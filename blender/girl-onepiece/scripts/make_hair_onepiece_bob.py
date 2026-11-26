@@ -1,4 +1,4 @@
-# 【いまは使っていない】4 人目（ワンピース）のボブの髪（最初の案）。いまは make_hair_onepiece.py（後ろで低く結ぶまとめ髪）を使う。
+# 4 人目（ワンピース）のゆるふわセミロングボブの髪。値は Girl_Body の hair_params（前のまとめ髪 make_hair_onepiece.py は使っていない）。
 #   3 人目の make_hair_knit.py（元は Documents/girl-blender/scripts/make_hair.py）の写しに、make_hair_bob.py の形を入れたもの。
 #   ちがい：毛先はあごの下（hair_params の ZB）でほぼまっすぐ切りそろえ、内へ巻く。横の毛はほおの外側を通る。
 #   前髪は眉にかかる長さで、毛先を少しばらつかせて軽く見せる。
@@ -180,6 +180,23 @@ if WAVE > 0 or FLUFF > 0:
         a = math.atan2(d.x, -d.y); ph = WAVE_PH*a+0.25*math.sin(7.0*a)      # 毛束ごとに波の位置を少しずらす（ずらしすぎると、となりの束と逆にうねって布がしわになったように見えた）
         s = 2*math.pi*(ZSM-v.co.z)/WAVE_LEN+ph; k = sstep(t*2.5)
         v.co += d*(WAVE*k*math.sin(s)+FLUFF*sstep(t*1.4))+tg*(0.6*WAVE*k*math.cos(s))
+# ゆるふわの前髪：頭の丸みにぴったり沿った一枚の面だと、ヘルメットをかぶったように見えた。
+#   BANG_FLUFF … 前髪を額から浮かせる量（m）。中ほどでふくらみ、毛先は内へ巻いて額に戻る
+#   BANG_SWEEP … 毛先を横へ流す量（m。+ で体の左へ）
+#   TOP_LUMP … 頭頂の毛束の凹凸（m）。つるんとした殻に見えないように
+BANG_FLUFF = globals().get("BANG_FLUFF", 0.0); BANG_SWEEP = globals().get("BANG_SWEEP", 0.0); TOP_LUMP = globals().get("TOP_LUMP", 0.0)
+_ztop = C.z+RZ
+for v in bm.verts:
+    d = Vector((v.co.x-C.x, v.co.y-C.y, 0))
+    if d.length < 1e-5: continue
+    d.normalize()
+    if v[L_b] > 0.5 and (BANG_FLUFF > 0 or BANG_SWEEP != 0):
+        f = max(0.0, min(1.0, (_ztop-v.co.z)/max(1e-4, _ztop-ZBANG)))      # 0：頭頂、1：前髪の毛先
+        v.co += d*(BANG_FLUFF*math.sin(math.pi*min(1.0, f*0.8))-0.6*BANG_FLUFF*sstep((f-0.75)/0.25))
+        v.co.x += BANG_SWEEP*sstep((f-0.35)/0.65)
+    if TOP_LUMP > 0 and v.co.z > ZSM:
+        a = math.atan2(d.x, -d.y)
+        v.co += d*TOP_LUMP*(0.5+0.5*math.sin(9*a+1.7*math.sin(3*a)))*sstep((v.co.z-ZSM)/0.04)
 # 後ろ髪を首・背中に沿わせる（BACK_HUG）：頭のいちばん後ろから真下へ垂らすだけだと、細い首とのあいだにすき間ができ、
 # 横から見ると毛先が宙に浮いて、重力に逆らって後ろへ張り出したように見えた。下へ行くほど、後ろの表面の少し外へ寄せる
 BACK_HUG = globals().get("BACK_HUG", 0.0)

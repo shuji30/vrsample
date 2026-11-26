@@ -406,3 +406,38 @@ body.touch #overlay { z-index: 20; }
 
 /* バージョン（開始画面の題の下） */
 .version { margin: 2px 0 6px; font-size: 11px; opacity: 0.6; letter-spacing: 0.04em; }
+
+/* 最初の 5 分の案内の札（guide.js。売り物の水準 B2） */
+#guide {
+  position: fixed;
+  left: 50%;
+  bottom: 128px;
+  transform: translateX(-50%);
+  width: min(520px, calc(100vw - 32px));
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  border-radius: 12px;
+  background: rgba(10, 16, 34, 0.82);
+  border: 1px solid rgba(143, 220, 255, 0.45);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  color: #e8ecf8;
+  font-size: 14px;
+  line-height: 1.6;
+  z-index: 20;
+  pointer-events: auto;
+}
+#guide p { margin: 0; flex: 1; }
+#guide b { color: #bfe8ff; }
+#guide button {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: inherit;
+  cursor: pointer;
+}
+body.touch #guide { bottom: 170px; font-size: 13px; }

@@ -1,3 +1,4 @@
+import { createGuide } from './guide.js';
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { createWorld } from './world.js';
@@ -447,6 +448,8 @@ const talkEye = new THREE.Vector3();
   // 検証用
   window.__vrsample.loopErrors = () => loopErrors;
 
+  /** 最初の 5 分の案内（guide.js）。world ができてから作る */
+  let guide = null;
   renderer.setAnimationLoop((timestamp) => {
     try {
       timer.update(timestamp);
@@ -469,6 +472,7 @@ const talkEye = new THREE.Vector3();
       // 足音は足もとの地面で変える（芝生・砂浜・舗装・木）
       player.footsteps.setSurface(world.surfaceAt(player.player.position.x, player.player.position.z));
       world.update(dt);
+      guide?.update(dt);
       // 女の子がしゃべっているあいだは BGM を下げる
       music.update(dt, { ducked: Boolean(world.voice?.speaking || world.carousel?.musicPlaying) });
       debugPanel.update(elapsed);
@@ -710,7 +714,16 @@ const talkEye = new THREE.Vector3();
     overlayEl?.classList.add('closed');
     kartDrive.openWheelPanel();
   });
-  Object.assign(window.__vrsample, { mixer, contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView });
+  // 最初の 5 分の案内（売り物の水準 B2）：出迎え → キャッチボール → 座って話す → 次の遊び。1 回だけ（?guide=again でもう一度）
+  guide = createGuide({
+    voice: world.voice,
+    catchGame: world.catchGame,
+    talk: world.talk,
+    overlayOpen: () => !overlayEl?.classList.contains('closed'),
+    touch: touchMode,
+    again: params.get('guide') === 'again',
+  });
+  Object.assign(window.__vrsample, { mixer, contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView, guide });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する
   const voiceStatusEl = document.getElementById('voice-status');

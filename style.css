@@ -82,6 +82,50 @@ canvas { display: block; }
 
 #overlay .note { font-size: 12px; color: #8fa3cc; }
 
+/* 開始画面の上：題と「はじめる」（売り物の水準 B1） */
+#overlay header.title {
+  text-align: center;
+  padding: 4px 0 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  margin-bottom: 6px;
+}
+#overlay header.title h1 { font-size: 24px; margin-bottom: 2px; }
+#overlay header.title h1 .subtitle { font-size: 14px; }
+#overlay .version { font-size: 11px; color: #6f82a8; margin: 0 0 10px; }
+#start {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #5fc8ff, #2f8fe0);
+  color: #fff;
+  font: inherit;
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 0.2em;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(47, 143, 224, 0.35);
+}
+#start:hover { filter: brightness(1.08); }
+#start:disabled { background: #3a4766; color: #a8b6d6; box-shadow: none; cursor: default; letter-spacing: 0.05em; }
+
+/* 説明は開け閉めできる欄にしまう */
+#overlay details {
+  margin: 10px 0 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+#overlay summary {
+  cursor: pointer;
+  color: #bfe8ff;
+  font-weight: bold;
+  font-size: 14px;
+}
+#overlay details[open] summary { margin-bottom: 4px; }
+
 #girl-name {
   display: flex;
   flex-wrap: wrap;

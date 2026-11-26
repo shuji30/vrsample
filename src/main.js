@@ -805,18 +805,29 @@ const talkEye = new THREE.Vector3();
     perfSeconds = 0;
   }
 
-  // 起動状況の表示
-  const suffix = `（生成 ${buildMs}ms${safeMode ? ' / safe' : ''}）\n${describeCanvas()} / ${gpuName}`;
+  // 起動状況の表示。生成時間・画面の大きさ・GPU の名前は遊ぶ人には要らないので、「クレジットとライセンス」の
+  // 中の技術情報へ回す（売り物の水準 B1）。?debug / ?perf のときは、題の下にも出す
+  const tech = `生成 ${buildMs}ms${safeMode ? ' / safe' : ''} / ${describeCanvas()} / ${gpuName}`;
+  const techEl = document.getElementById('tech');
+  if (techEl) techEl.textContent = `技術情報：${tech}`;
+  const suffix = params.has('debug') || params.has('perf') ? `\n${tech}` : '';
   if (navigator.xr?.isSessionSupported) {
     navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
       report((supported
-        ? 'VR 対応デバイスを検出しました。「ENTER VR」で開始できます。'
-        : 'このブラウザでは VR に入れません（PC 操作でそのまま見られます）。') + suffix);
+        ? 'VR に入れます。「はじめる」のあと、画面の下の「ENTER VR」で。'
+        : 'この端末ではそのまま画面で遊べます（VR はヘッドセットのブラウザで）。') + suffix);
     }).catch(() => {
-      report('WebXR の状態を確認できませんでした（PC 操作でそのまま見られます）。' + suffix);
+      report('この端末ではそのまま画面で遊べます。' + suffix);
     });
   } else {
-    report('WebXR 非対応のブラウザです（PC 操作でそのまま見られます）。' + suffix);
+    report('この端末ではそのまま画面で遊べます（VR はヘッドセットのブラウザで）。' + suffix);
+  }
+  // 「はじめる」：読み込みが済んだら押せる。押すと開始画面を閉じる（I キー・右上の「？」でまた開ける）
+  const startButton = document.getElementById('start');
+  if (startButton) {
+    startButton.disabled = false;
+    startButton.textContent = 'はじめる';
+    startButton.addEventListener('click', () => setOverlay(false));
   }
 }
 

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { roundedBox, postCap } from './shapes.js';
 import { BEACH, SEA_LEVEL, hillHeight } from './hill.js';
 import { girlName, onGirlNameChange } from './girlname.js';
 import { audioContext, bus } from './mixer.js';
@@ -99,8 +100,8 @@ export function createBeach() {
       const y = Math.max(hillHeight(STAIRS.x - 0.7, z), hillHeight(STAIRS.x + 0.7, z), hillHeight(STAIRS.x, z)) + 0.12;
       steps.push([z, y]);
     }
-    const stepMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.5, 0.12, 0.6), wood, steps.length);
-    const postMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.08, 1.0, 0.08), darkWood, Math.ceil(steps.length / 5) * 2 + 2);
+    const stepMesh = new THREE.InstancedMesh(roundedBox(1.5, 0.12, 0.6, 0.012), wood, steps.length);
+    const postMesh = new THREE.InstancedMesh(roundedBox(0.08, 1.0, 0.08, 0.012), darkWood, Math.ceil(steps.length / 5) * 2 + 2);
     const m4 = new THREE.Matrix4();
     steps.forEach(([z, y], i) => { m4.makeTranslation(STAIRS.x, y, z); stepMesh.setMatrixAt(i, m4); });
     let posts = 0;
@@ -125,11 +126,11 @@ export function createBeach() {
     }
     // 上の門：丘の縁の柵の線に立てて、柱を柵の切れ目の両端にする（柵は park.js が切る）
     for (const side of [-1, 1]) {
-      const p = shade(new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.2, 0.14), darkWood));
+      const p = shade(new THREE.Mesh(roundedBox(0.14, 2.2, 0.14, 0.018), darkWood));
       p.position.set(STAIRS.x + side * STAIRS_GATE_HALF, 1.1, FENCE_Z);
       group.add(p);
     }
-    const lintel = shade(new THREE.Mesh(new THREE.BoxGeometry(STAIRS_GATE_HALF * 2 + 0.2, 0.16, 0.18), darkWood));
+    const lintel = shade(new THREE.Mesh(roundedBox(STAIRS_GATE_HALF * 2 + 0.2, 0.16, 0.18, 0.018), darkWood));
     lintel.position.set(STAIRS.x, 2.2, FENCE_Z);
     group.add(lintel);
     // 門から階段の一段目までの踏み板（柵の線と崖の縁のあいだの地面を渡る）
@@ -143,11 +144,14 @@ export function createBeach() {
     const g = new THREE.Group();
     g.position.set(x, y, z);
     g.rotation.y = yaw;
-    const post = shade(new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.5, 0.08), darkWood));
+    const post = shade(new THREE.Mesh(roundedBox(0.08, 1.5, 0.08, 0.012), darkWood));
     // 支柱は板の後ろへ（前は板の真ん中を突き抜けて、表示の面に棒が見えていた）
     post.position.set(0, 0.75, -0.06);
+    const cap = new THREE.Mesh(postCap(0.08), darkWood);
+    cap.position.y = 0.75;
+    post.add(cap);
     g.add(post);
-    const board = shade(new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.46, 0.04), wood));
+    const board = shade(new THREE.Mesh(roundedBox(0.9, 0.46, 0.04, 0.012), wood));
     board.position.y = 1.35;
     g.add(board);
     const face = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.42), new THREE.MeshStandardMaterial({ map: signTexture(lines, bg), roughness: 0.7 }));
@@ -207,10 +211,10 @@ export function createBeach() {
     mat.position.set(px + 0.3, gy(px, pz + 0.3) + 0.015, pz + 0.3);
     mat.receiveShadow = true;
     group.add(mat);
-    const cooler = shade(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.36, 0.34), new THREE.MeshStandardMaterial({ color: 0x2f7fe0, roughness: 0.5 })));
+    const cooler = shade(new THREE.Mesh(roundedBox(0.5, 0.36, 0.34, 0.03), new THREE.MeshStandardMaterial({ color: 0x2f7fe0, roughness: 0.5 })));
     cooler.position.set(px + 1.6, gy(px + 1.6, pz + 0.6) + 0.18, pz + 0.6);
     group.add(cooler);
-    const lid = shade(new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.06, 0.36), new THREE.MeshStandardMaterial({ color: 0xf4f4f4, roughness: 0.5 })));
+    const lid = shade(new THREE.Mesh(roundedBox(0.52, 0.06, 0.36, 0.02), new THREE.MeshStandardMaterial({ color: 0xf4f4f4, roughness: 0.5 })));
     lid.position.copy(cooler.position).setY(cooler.position.y + 0.2);
     group.add(lid);
     // 砂の城

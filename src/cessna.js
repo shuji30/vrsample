@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { roundedBox, postCap } from './shapes.js';
 import { SEA_LEVEL, hillHeight, AIRFIELD_ZONE, COASTER_ZONE, PLATEAU } from './hill.js';
 import { FERRIS } from './ferriswheel.js';
 import { girlName } from './girlname.js';
@@ -157,11 +158,14 @@ function makeField(interactables, onTravel) {
     const s = new THREE.Group();
     s.position.set(x, y, z);
     s.rotation.y = yaw;
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.5, 0.08), darkWood);
+    const post = new THREE.Mesh(roundedBox(0.08, 1.5, 0.08, 0.012), darkWood);
     // 支柱は板の後ろへ（前は板の真ん中を突き抜けて、表示の面に棒が見えていた）
     post.position.set(0, 0.75, -0.06);
+    const cap = new THREE.Mesh(postCap(0.08), darkWood);
+    cap.position.y = 0.75;
+    post.add(cap);
     s.add(post);
-    const board = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.46, 0.04), wood);
+    const board = new THREE.Mesh(roundedBox(0.9, 0.46, 0.04, 0.012), wood);
     board.position.y = 1.35;
     s.add(board);
     const face = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.42), new THREE.MeshStandardMaterial({ map: signTexture(lines, bg), roughness: 0.7 }));

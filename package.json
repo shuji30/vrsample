@@ -1,6 +1,6 @@
 {
   "name": "vrsample",
-  "version": "0.115.0",
+  "version": "0.116.0",
   "private": true,
   "type": "module",
   "description": "WebXR + three.js でつくる、ビルド不要の VR サンプル",

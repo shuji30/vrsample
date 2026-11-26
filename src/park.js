@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { roundedBox, postCap } from './shapes.js';
 import { GARAGE, F40_PARK } from './roaddata.js';
 import { ROOM } from './room.js';
 import { createKartCourse } from './karttrack.js';
@@ -753,7 +754,7 @@ function createBench(tex) {
   });
   const ironMaterial = new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.55, metalness: 0.7 });
 
-  const slat = new THREE.BoxGeometry(1.6, 0.035, 0.085);
+  const slat = roundedBox(1.6, 0.035, 0.085, 0.01);
   for (let i = 0; i < 3; i++) {
     const mesh = new THREE.Mesh(slat, slatMaterial);
     mesh.position.set(0, 0.44, -0.11 + i * 0.105);
@@ -769,11 +770,11 @@ function createBench(tex) {
     group.add(mesh);
   }
   for (const x of [-0.68, 0.68]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.44, 0.34), ironMaterial);
+    const leg = new THREE.Mesh(roundedBox(0.05, 0.44, 0.34, 0.015), ironMaterial);
     leg.position.set(x, 0.22, 0.02);
     leg.castShadow = true;
     group.add(leg);
-    const back = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.46, 0.05), ironMaterial);
+    const back = new THREE.Mesh(roundedBox(0.05, 0.46, 0.05, 0.012), ironMaterial);
     back.position.set(x, 0.66, 0.22);
     back.rotation.x = -0.18;
     back.castShadow = true;
@@ -793,11 +794,14 @@ function createFence(length, { gap = 0, seed = 3 } = {}) {
   const half = gap / 2;
 
   const post = (x) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.80, 0.075), material);
+    const mesh = new THREE.Mesh(roundedBox(0.075, 0.80, 0.075, 0.012), material);
     mesh.position.set(x, 0.40, (rand() - 0.5) * 0.02);
     mesh.rotation.y = (rand() - 0.5) * 0.05;
     mesh.castShadow = true;
     group.add(mesh);
+    const cap = new THREE.Mesh(postCap(0.075), material);
+    cap.position.set(0, 0.40, 0);
+    mesh.add(cap);
   };
 
   // 通り道の左右に分けて桟を張る
@@ -811,7 +815,7 @@ function createFence(length, { gap = 0, seed = 3 } = {}) {
     const count = Math.max(1, Math.round(span / 1.5));
     for (let i = 0; i <= count; i++) post(from + (span * i) / count);
     for (const y of [0.34, 0.66]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(span, 0.075, 0.035), material);
+      const rail = new THREE.Mesh(roundedBox(span, 0.075, 0.035, 0.01), material);
       rail.position.set(from + span / 2, y, 0);
       rail.castShadow = true;
       group.add(rail);
@@ -1275,14 +1279,17 @@ export function createPark(scene, tex) {
     for (let i = 0; i <= n; i++) {
       const x = PLATEAU.minX + ((PLATEAU.maxX - PLATEAU.minX) * i) / n;
       if (x > gapMin - 0.6 && x < gapMax + 0.6) continue;
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.1, 0.1), fenceMat);
+      const post = new THREE.Mesh(roundedBox(0.1, 1.1, 0.1, 0.014), fenceMat);
       post.position.set(x, 0.55, z);
       post.castShadow = true;
       group.add(post);
+      const cap = new THREE.Mesh(postCap(0.1), fenceMat);
+      cap.position.set(x, 1.1, z);
+      group.add(cap);
     }
     for (const [x0, x1] of [[PLATEAU.minX, gapMin], [gapMax, PLATEAU.maxX]]) {
       for (const y of [0.5, 1.0]) {
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.08, 0.05), fenceMat);
+        const rail = new THREE.Mesh(roundedBox(x1 - x0, 0.08, 0.05, 0.012), fenceMat);
         rail.position.set((x0 + x1) / 2, y, z);
         rail.castShadow = true;
         group.add(rail);

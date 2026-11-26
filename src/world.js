@@ -859,6 +859,49 @@ export function createWorld(renderer, scene, {
    * 身を乗り出した拍子にネットの線を少し越えると、「いちばん近い矩形」が向こう側に
    * なって、ネットの外へ出てしまった。
    */
+  // --- 女の子にぶつかっても体の中が見えないように -------------------------------------------
+  // 歩いて女の子に近づいたら、体の中心から GIRL_KEEP_OUT（体の半径 + 頭の半径）の外で止める。
+  // 以前は体を素通りして、目が体の中に入り、内側（裏面）が見えた（ユーザーの報告）。
+  // 押し戻すのはプレイヤーの移動だけ（ボールなどの小物や、乗り物に乗っているときには使わない）
+  const GIRL_KEEP_OUT = 0.38;
+  const girlFeet = new THREE.Vector3();
+  function clampForPlayer(x, z, inset = 0, from = null) {
+    const p = clampToBounds(x, z, inset, from);
+    if (!character.body.loaded) return p;
+    character.group.getWorldPosition(girlFeet);
+    // 崖の上と砂浜のように高さが違うときは、ぶつからない
+    if (camera && Math.abs(camera.getWorldPosition(cliffEyeTmp).y - girlFeet.y - 1.2) > 1.4) return p;
+    const dx = p.x - girlFeet.x;
+    const dz = p.z - girlFeet.z;
+    const d = Math.hypot(dx, dz);
+    if (d >= GIRL_KEEP_OUT) return p;
+    // 体の中心からまっすぐ外へ。真上に重なったときは、来た向き（なければ手前）へ
+    let ux = dx / (d || 1);
+    let uz = dz / (d || 1);
+    if (d < 1e-3) {
+      const fx = (from?.x ?? x) - girlFeet.x;
+      const fz = (from?.z ?? z) - girlFeet.z;
+      const fl = Math.hypot(fx, fz);
+      if (fl > 1e-3) { ux = fx / fl; uz = fz / fl; } else { ux = 0; uz = 1; }
+    }
+    const q = clampToBounds(girlFeet.x + ux * GIRL_KEEP_OUT, girlFeet.z + uz * GIRL_KEEP_OUT, inset, from);
+    return q;
+  }
+  const cliffEyeTmp = new THREE.Vector3();
+  /**
+   * それでも目が体の中に入ったら（女の子のほうから歩いてきた、VR で体を乗り出した）、そのあいだだけ女の子を描かない
+   */
+  const girlEye = new THREE.Vector3();
+  function hideGirlIfInside() {
+    const vrm = character.vrm;
+    if (!camera || !vrm) return;
+    camera.getWorldPosition(girlEye);
+    character.group.getWorldPosition(girlFeet);
+    const top = girlFeet.y + (character.body.headHeight || 1.5) + 0.12;
+    const inside = Math.hypot(girlEye.x - girlFeet.x, girlEye.z - girlFeet.z) < 0.2 && girlEye.y > girlFeet.y + 0.15 && girlEye.y < top;
+    vrm.scene.visible = !inside;
+  }
+
   function clampToBounds(x, z, inset = 0, from = null) {
     const p = clampToRegions(x, z, inset, from);
     // 池の水の上には入れない（縁の石のぶん 0.2m 広く見る）。直前の点が池の外なら、
@@ -1401,6 +1444,7 @@ export function createWorld(renderer, scene, {
       if (bp.x > a.minX && bp.x < a.maxX && bp.z > a.minZ && bp.z < a.maxZ) bp.y = groundHeight(bp.x, bp.z);
     }
     character.update(dt);
+    hideGirlIfInside();
     tennisGame?.afterPose();
     updateListener();
     grass.update(dt);
@@ -1622,7 +1666,8 @@ export function createWorld(renderer, scene, {
     /** 地面の高さ（カートコースの起伏。ほかは 0） */
     groundHeight,
     bounds: regions,
-    clampToBounds,
+    /** プレイヤーの歩ける範囲（VR・PC・スマホの移動が使う）。女の子の体の中へは入らない */
+    clampToBounds: clampForPlayer,
     room,
     park,
     furniture,

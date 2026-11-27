@@ -1,14 +1,14 @@
 # models/
 
-キャラクター（VRM）を置く場所です。`src/character.js` は既定で
-`models/character.vrm` を読みに行き、**無ければキャラクターだけ出ない**まま
-部屋はそのまま動きます。
+キャラクター（VRM）を置く場所です。どのモデルを読むかは `src/girlchoice.js` が決めます
+（既定はニットコーデ。開始画面の「女の子」で選べる）。モデルが無ければ**キャラクターだけ出ない**まま
+部屋はそのまま動きます。モデルが仕様を満たすかは `node scripts/vrm-audit.mjs models/*.vrm` で調べられます。
 
 ```
-models/character.vrm    このリポジトリのオーナーが自作した VRM 1.0 モデル（VRoid Studio。既定）
+models/character.vrm    このリポジトリのオーナーが自作した VRM 1.0 モデル（VRoid Studio。売り物に使えない利用条件なので、既定ではない）
 models/girl-swim.vrm    Blender で作った自前のモデル・水着コーデ（VRM 1.0）
 models/girl-street.vrm  Blender で作った自前のモデル・ストリートコーデ（VRM 1.0）
-models/girl-knit.vrm    Blender で作った自前のモデル・ニットコーデ（VRM 1.0。作り方は blender/girl-knit/）
+models/girl-knit.vrm    Blender で作った自前のモデル・ニットコーデ（VRM 1.0。作り方は blender/girl-knit/。既定）
 models/girl-onepiece.vrm Blender で作った自前のモデル・ワンピースコーデ（VRM 1.0。作り方は blender/girl-onepiece/）
 models/corgi.glb        Blender で作った自前のモデル・コーギーの「こむぎ」（GLB。骨入り。作り方は blender/corgi/）
 models/sarusuberi.glb   Blender で作った自前のモデル・さるすべりの木（GLB。満開のピンク。作り方は blender/sarusuberi/）

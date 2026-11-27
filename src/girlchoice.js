@@ -12,13 +12,18 @@
  */
 
 export const GIRL_MODELS = [
-  { id: 'classic', label: 'もとの女の子', url: './models/character.vrm' },
-  { id: 'swim', label: '水着コーデ', url: './models/girl-swim.vrm' },
-  { id: 'street', label: 'ストリートコーデ', url: './models/girl-street.vrm' },
   { id: 'knit', label: 'ニットコーデ', url: './models/girl-knit.vrm' },
   { id: 'onepiece', label: 'ワンピースコーデ', url: './models/girl-onepiece.vrm' },
+  { id: 'swim', label: '水着コーデ', url: './models/girl-swim.vrm' },
+  { id: 'street', label: 'ストリートコーデ', url: './models/girl-street.vrm' },
+  { id: 'classic', label: 'もとの女の子（試作・売り物には使えない）', url: './models/character.vrm' },
 ];
-export const DEFAULT_GIRL_MODEL = 'classic';
+/**
+ * 既定はニットコーデ（ROADMAP C1）。Blender で作った自前のモデルで、利用条件が売り物に使える設定（商用可）。
+ * 仕様（docs/girl-blender.md）の目標の服装そのもので、軽さ（三角形 4 万・6MB）も範囲に入る。
+ * もとの女の子（VRoid で作ったもの）は「個人・非営利のみ」なので、既定にしない
+ */
+export const DEFAULT_GIRL_MODEL = 'knit';
 const KEY = 'vrsample.girlModel';
 
 const known = (id) => GIRL_MODELS.some((m) => m.id === id);

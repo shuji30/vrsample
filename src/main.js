@@ -1,3 +1,4 @@
+import { createVrMenu } from './vrmenu.js';
 import { createGuide } from './guide.js';
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
@@ -450,6 +451,8 @@ const talkEye = new THREE.Vector3();
 
   /** 最初の 5 分の案内（guide.js）。world ができてから作る */
   let guide = null;
+  /** VR の中のメニュー（vrmenu.js）。左手の Y で開け閉め */
+  let vrMenu = null;
   renderer.setAnimationLoop((timestamp) => {
     try {
       timer.update(timestamp);
@@ -473,6 +476,7 @@ const talkEye = new THREE.Vector3();
       player.footsteps.setSurface(world.surfaceAt(player.player.position.x, player.player.position.z));
       world.update(dt);
       guide?.update(dt);
+      vrMenu?.update();
       // 女の子がしゃべっているあいだは BGM を下げる
       music.update(dt, { ducked: Boolean(world.voice?.speaking || world.carousel?.musicPlaying) });
       debugPanel.update(elapsed);
@@ -723,7 +727,10 @@ const talkEye = new THREE.Vector3();
     touch: touchMode,
     again: params.get('guide') === 'again',
   });
-  Object.assign(window.__vrsample, { mixer, contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView, guide });
+  // VR の中のメニュー（売り物の水準 B3）：音量・時間帯・操作・VR をやめる
+  vrMenu = createVrMenu({ renderer, camera, interactables: world.interactables, theme: () => world.theme, cycleTheme: () => world.cycleTheme() });
+  scene.add(vrMenu.panel);
+  Object.assign(window.__vrsample, { mixer, contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView, guide, vrMenu });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する
   const voiceStatusEl = document.getElementById('voice-status');

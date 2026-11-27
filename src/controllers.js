@@ -221,6 +221,9 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
         object.position.set(0, 0, -0.12); // 離れた場所からでも手元に引き寄せる
       }
       controller.userData.held = object;
+    } else if (object.userData.interactive && object.userData.onSelectHit) {
+      // 板（VR のメニュー・会話の札）：どこを指したかで選ぶ
+      object.userData.onSelectHit(hit);
     } else if (object.userData.interactive && object.userData.onSelect) {
       object.userData.press = 1;
       object.userData.onSelect();

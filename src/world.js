@@ -6,6 +6,7 @@ import { createBilliardGame } from './billiardgame.js';
 import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { createGrass } from './grass.js';
 import { dressLawn } from './lawn.js';
+import { createAmbience } from './ambience.js';
 import { createHouseExterior } from './houseexterior.js';
 import { PLATEAU } from './hill.js';
 import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
@@ -1170,6 +1171,10 @@ export function createWorld(renderer, scene, {
   function update(dt) {
     updateShadowFocus();
     updateBelowCliff();
+    if (ambience && camera) {
+      camera.getWorldPosition(ambienceEye);
+      ambience.update(dt, { theme: themeKey, inside: Boolean(lighting?.inside), eye: ambienceEye, cliffZ: PLATEAU.minZ });
+    }
     checkStairsGate(dt);
     // 暗くした幕を、少し待ってから明ける
     if (fade > 0) {
@@ -1626,6 +1631,9 @@ export function createWorld(renderer, scene, {
     beach.group.add(beachLow);
     belowCliff.userData.parts = [beachLow];
   }
+  // 環境音（ambience.js）：風・遠い波・小鳥・ひぐらし・虫。家の中ではこもる
+  const ambience = camera ? createAmbience() : null;
+  const ambienceEye = new THREE.Vector3();
   const cliffEye = new THREE.Vector3();
   function updateBelowCliff() {
     if (!camera) return;
@@ -1666,6 +1674,7 @@ export function createWorld(renderer, scene, {
     /** 地面の高さ（カートコースの起伏。ほかは 0） */
     groundHeight,
     bounds: regions,
+    ambience,
     /** プレイヤーの歩ける範囲（VR・PC・スマホの移動が使う）。女の子の体の中へは入らない */
     clampToBounds: clampForPlayer,
     room,

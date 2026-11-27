@@ -8,6 +8,7 @@ import { createGrass } from './grass.js';
 import { dressLawn } from './lawn.js';
 import { createAmbience } from './ambience.js';
 import { startWantedPlays, currentPlay } from './plays.js';
+import { createMemory } from './memory.js';
 import { createHouseExterior } from './houseexterior.js';
 import { PLATEAU } from './hill.js';
 import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
@@ -1184,7 +1185,7 @@ export function createWorld(renderer, scene, {
       fader.visible = fade > 0;
     }
     // サーキットにいるあいだは、女の子はレースだけ（庭の遊びは止めておく）
-    if (gt3Race?.active) gt3Race.update(dt);
+    if (gt3Race?.active) { gt3Race.update(dt); memory?.notePlay('gt3'); }
     else {
     // 遊びの始まりと、いま女の子を使っている遊び（plays.js。ROADMAP 7）。
     // ビリヤードの部屋・パットゴルフの芝地にいるかは、決める前に入れておく
@@ -1201,6 +1202,8 @@ export function createWorld(renderer, scene, {
     // 体と手が 1 フレーム前の席と鎖に合わせたままになり、こいでいるあいだ手が鎖から離れて見えた
     buranko.updateGirl(dt);
     const play = currentPlay(plays);
+    memory?.notePlay(play);
+    memory?.noteRally(catchGame?.stats?.rally);
     // ポケバイは下で動かす（女の子が見ていないあいだもラップを数える）
     if (play === 'catch') catchGame?.update(dt);
     else if (play && play !== 'bike') plays[play].update(dt);
@@ -1445,6 +1448,8 @@ export function createWorld(renderer, scene, {
     dive: diveGame, jetski: jetskiGame, ferris: ferrisGame, billiard: billiardGame, golf: golfGame, coaster: coasterGame,
     tennis: tennisGame, catch: catchGame,
   };
+  // 思い出ノートと思い出ボード（memory.js。ROADMAP 8）。ボードは家の奥の壁（本棚と扉のあいだ）
+  const memory = camera ? createMemory(room.group, { x: -0.3, y: 1.45, z: ROOM.maxZ - 0.015, yaw: Math.PI }) : null;
   const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, cruiser.body, jetski.body, cessna.body, ...cessna.interactables, gt3.body, f40.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
@@ -1520,6 +1525,7 @@ export function createWorld(renderer, scene, {
     groundHeight,
     bounds: regions,
     ambience,
+    memory,
     /** いま女の子を使っている遊びの名前（plays.js。'catch' はキャッチボール・ふだんのとき） */
     get currentPlay() { return currentPlay(plays); },
     /** プレイヤーの歩ける範囲（VR・PC・スマホの移動が使う）。女の子の体の中へは入らない */

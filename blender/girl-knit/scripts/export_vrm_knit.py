@@ -24,6 +24,34 @@ if "hairSwingEnd" not in arm.bones:                     # 髪の揺れ骨の先�
     _p = arm.edit_bones["hairSwing"]; _e = arm.edit_bones.new("hairSwingEnd"); _e.head = _p.tail; _e.tail = _p.tail+(_p.tail-_p.head).normalized()*0.05; _e.parent = _p; _e.use_connect = True
     bpy.ops.object.mode_set(mode='OBJECT')
     rig.hide_viewport = _hid[0]; rig.hide_set(_hid[1])
+# スカートの骨（揺れもの）：前・横・後ろの左右 6 本のチェーン。ゲームは名前で探す（skirt、根もとの前は front・横は side）。
+#   それぞれ腰の骨の子で、スカートの外側の面に沿って、上（すその長さの 1 割下）からすそまで 3 本＋先の骨
+SKIRT_OBJ = "Knit_Skirt"
+CHAINS = (("Front_L", 30), ("Front_R", -30), ("Side_L", 90), ("Side_R", -90), ("Back_L", 150), ("Back_R", -150))
+SKIRT_T = (0.1, 0.4, 0.7, 1.0)
+_sk = bpy.data.objects.get(SKIRT_OBJ)
+if _sk:
+    _SP = np.array([tuple(_sk.matrix_world @ v.co) for v in _sk.data.vertices])
+    _cx, _cy = arm.bones["hips"].head_local.x, arm.bones["hips"].head_local.y
+    _ztop, _zhem = float(_SP[:, 2].max()), float(_SP[:, 2].min())
+    _ang = np.degrees(np.arctan2(_SP[:, 0]-_cx, -(_SP[:, 1]-_cy))); _rad = np.hypot(_SP[:, 0]-_cx, _SP[:, 1]-_cy)
+    def _ring(a, t):
+        z = _ztop+(_zhem-_ztop)*t
+        m = (np.abs((_ang-a+180) % 360-180) < 20) & (np.abs(_SP[:, 2]-z) < 0.03)
+        r = float(np.percentile(_rad[m], 80)) if m.any() else float(_rad.mean())
+        return Vector((_cx+r*math.sin(math.radians(a)), _cy-r*math.cos(math.radians(a)), z))
+    if "Skirt_Front_L_01" not in arm.bones:
+        for o in bpy.context.view_layer.objects: o.select_set(False)
+        _hid = (rig.hide_viewport, rig.hide_get()); rig.hide_viewport = False; rig.hide_set(False)
+        rig.select_set(True); bpy.context.view_layer.objects.active = rig; bpy.ops.object.mode_set(mode='EDIT')
+        for nm, a in CHAINS:
+            pts = [_ring(a, t) for t in SKIRT_T]; pts.append(pts[-1]+(pts[-1]-pts[-2]).normalized()*0.04)
+            par = arm.edit_bones["hips"]
+            for k in range(len(pts)-1):
+                eb = arm.edit_bones.new("Skirt_%s_%02d" % (nm, k+1)); eb.head = pts[k]; eb.tail = pts[k+1]
+                eb.parent = par; eb.use_connect = k > 0; par = eb
+        bpy.ops.object.mode_set(mode='OBJECT')
+        rig.hide_viewport = _hid[0]; rig.hide_set(_hid[1])
 
 # ── 1) 写しを作る ──
 def copy_obj(src, name):
@@ -65,6 +93,46 @@ for o in list(bpy.data.objects):
     x = copy_obj(o, "X_"+o.name.split("_", 1)[-1]); others[o.name] = x
     for g in [g for g in x.vertex_groups if g.name not in arm.bones]: x.vertex_groups.remove(g)
 print("copies:", ["X_Body"]+[x.name for x in others.values()], "body verts", n)
+# 軽くする（LIGHT）：VR は描画命令の数（メッシュ×材質）が重さに効く。服・靴を 1 つのメッシュ・1 枚の画像にまとめる。
+#   体の目・まつ毛と、歯・口の中は 1 枚の画像（切りぬき）に、髪と眉も 1 枚の画像にまとめる（下の 2 と 2b）。材質は 4 つになる
+LIGHT = globals().get("LIGHT", True)
+# スカートの重み：腰と左右の腿で分け合い（すそ側ほど腿。すそで 0.96）、そこへスカートの骨（揺れもの）を混ぜる（すそで SKIRT_SPRING）。
+#   腿の重みは、ゲームが座るときに腰へ移す（relaxSkirtWeights。スカートの骨に付いた頂点が対象）。歩くと腿がすそを押し、揺れものが揺らす
+SKIRT_SPRING = globals().get("SKIRT_SPRING", 0.3)
+_xs = others.get(SKIRT_OBJ)
+if _xs and "Skirt_Front_L_01" in arm.bones:
+    def _ss(x): x = min(max(x, 0.0), 1.0); return x*x*(3-2*x)
+    for g in list(_xs.vertex_groups): _xs.vertex_groups.remove(g)
+    G = {}
+    def grp(nm): return G.setdefault(nm, _xs.vertex_groups.new(name=nm))
+    _ca = [a for _, a in CHAINS]
+    for v in _xs.data.vertices:
+        p = _xs.matrix_world @ v.co
+        t = min(max((_ztop-p.z)/(_ztop-_zhem), 0.0), 1.0)
+        a = math.degrees(math.atan2(p.x-_cx, -(p.y-_cy)))
+        d = sorted(((abs((a-ca+180) % 360-180), i) for i, ca in enumerate(_ca)))[:2]
+        wa = d[1][0]/(d[0][0]+d[1][0]+1e-9)                   # 近いほうのチェーンの割合
+        seg = min(len(SKIRT_T)-2, max(0, int((t-SKIRT_T[0])/(SKIRT_T[-1]-SKIRT_T[0])*(len(SKIRT_T)-1))))
+        s = SKIRT_SPRING*_ss((t-SKIRT_T[0])/0.5)
+        L = 0.96*_ss(t); u = _ss((p.x-_cx+0.05)/0.10)
+        W = {"hips": (1-s)*(1-L), "leftUpperLeg": (1-s)*L*u, "rightUpperLeg": (1-s)*L*(1-u),
+             "Skirt_%s_%02d" % (CHAINS[d[0][1]][0], seg+1): s*wa, "Skirt_%s_%02d" % (CHAINS[d[1][1]][0], seg+1): s*(1-wa)}
+        top = sorted(W.items(), key=lambda kv: -kv[1])[:4]; tot = sum(w for _, w in top)
+        for nm, w in top:
+            if w > 1e-4: grp(nm).add([v.index], w/tot, 'REPLACE')
+    print("skirt reweighted:", len(_xs.data.vertices), "verts")
+def join(objs, name):
+    for o in bpy.context.view_layer.objects: o.select_set(False)
+    for o in objs: o.select_set(True)
+    bpy.context.view_layer.objects.active = objs[0]
+    bpy.ops.object.join(); j = bpy.context.view_layer.objects.active; j.name = name; j.data.name = name
+    return j
+if LIGHT:
+    _wear = [k for k, x in others.items() if not x.name.startswith(("X_Hair", "X_Brows", "X_Teeth", "X_MouthBag"))]
+    _xo = join([others[k] for k in _wear], "X_Outfit")
+    for k in _wear: others.pop(k)
+    others["X_Outfit"] = _xo
+    print("outfit joined:", _wear)
 
 # ── 2) 色を焼く ──
 old_engine = sc.render.engine; sc.render.engine = 'CYCLES'; sc.cycles.samples = 1; sc.cycles.device = 'CPU'
@@ -155,7 +223,10 @@ def _linked(mt):
     return bool(b and b.inputs["Base Color"].is_linked)
 for o in others.values():
     mats = [s.name for s in o.material_slots]
-    if o.name.startswith(("X_Hair", "X_Brows")):                  # 眉も毛の筋を透けで描いているので、髪と同じく色と透けを焼く
+    if o.name == "X_Outfit":                                      # まとめた服・靴：材質を全部 1 枚の画像に焼く
+        unwrap(o); ci = image("bake_"+o.name, 2048)
+        bake(o, {nm: ci for nm in mats}); merge(ci, None, OUT+o.name+".png"); one_material(o, texmat(o.name+"_M", ci))
+    elif o.name.startswith(("X_Hair", "X_Brows")):                # 眉も毛の筋を透けで描いているので、髪と同じく色と透けを焼く
         ci = image("bake_"+o.name, 1024); ai = image("bake_"+o.name+"_a", 1024, True)
         bake(o, {mats[0]: ci}); bake(o, {mats[0]: ai}, alpha=True); merge(ci, ai, OUT+o.name+".png")
         one_material(o, texmat(o.name+"_M", ci, True))
@@ -173,13 +244,61 @@ for o in others.values():
         for s in o.material_slots: s.material.use_backface_culling = False
     print("baked", o.name)
 sc.render.engine = old_engine
+# ── 2b) 軽くする：画像をまとめる ──
+def px(im):
+    w, h = im.size; a = np.empty(w*h*4, dtype=np.float32); im.pixels.foreach_get(a); return a.reshape(h, w, 4)
+def put(dst, src, x0, y0):
+    h, w = src.shape[:2]; dst[y0:y0+h, x0:x0+w] = src
+def atlas(name, arr):
+    h, w = arr.shape[:2]; im = bpy.data.images.get(name)
+    if im: bpy.data.images.remove(im)
+    im = bpy.data.images.new(name, w, h, alpha=True); im.pixels.foreach_set(arr.ravel())
+    im.filepath_raw = OUT+name+".png"; im.file_format = 'PNG'; im.save(); return im
+def remap_uv(obj, faces, su, sv, ou, ov):
+    uvd = obj.data.uv_layers.active.data
+    for p in faces:
+        for l in p.loop_indices: uvd[l].uv = (ou+su*uvd[l].uv.x, ov+sv*uvd[l].uv.y)
+def tex_of(o):
+    return next(n.image for n in o.material_slots[0].material.node_tree.nodes if n.type == "TEX_IMAGE")
+if LIGHT:
+    # 体：2048×1024。左下 512 に目、左の上の段に歯（白）と口の中（赤）の色、右半分にまつ毛。切りぬき（目と歯・口は不透明）
+    A = np.zeros((1024, 2048, 4), dtype=np.float32)
+    put(A, px(eye_i), 0, 0); A[0:512, 0:512, 3] = 1.0
+    A[512:768, 0:512] = (0.93, 0.92, 0.88, 1.0); A[768:1024, 0:512] = (0.16, 0.035, 0.045, 1.0)
+    put(A, px(lash_i), 1024, 0)
+    el = atlas("X_EyeLash", A)
+    remap_uv(xb, [p for p in xb.data.polygons if p.material_index == 1], 0.25, 0.5, 0.0, 0.0)
+    remap_uv(xb, [p for p in xb.data.polygons if p.material_index == 2], 0.5, 1.0, 0.5, 0.0)
+    for p in xb.data.polygons:
+        if p.material_index == 2: p.material_index = 1
+    xb.data.materials.pop(index=2); xb.data.materials[1] = texmat("X_EyeLash_M", el, True)
+    # 歯・口の中を体にまとめる（表情のシェイプキーは名前でそろう）。色は上の色の段の 1 点を指す
+    mouth = [others.pop(k) for k in list(others) if others[k].name.startswith(("X_Teeth", "X_MouthBag"))]
+    for o in mouth:
+        uvd = (o.data.uv_layers.active or o.data.uv_layers.new(name="UVMap")).data
+        col_v = 0.625 if o.name.startswith("X_Teeth") else 0.875
+        for l in range(len(uvd)): uvd[l].uv = (0.06, col_v)
+    nb = len(xb.data.polygons)
+    xb = join([xb]+mouth, "X_Body")
+    for p in xb.data.polygons[nb:]: p.material_index = 1
+    while len(xb.data.materials) > 2: xb.data.materials.pop(index=2)
+    # 髪と眉：2048×1024 の左に髪、右に眉
+    hair = next(o for o in others.values() if o.name.startswith("X_Hair")); brow = next(o for o in others.values() if o.name.startswith("X_Brows"))
+    hi, bi_ = px(tex_of(hair)), px(tex_of(brow))
+    A = np.zeros((1024, 2048, 4), dtype=np.float32); put(A, hi, 0, 0); put(A, bi_, 1024, 0)
+    hb_im = atlas("X_HairBrows", A)
+    remap_uv(hair, list(hair.data.polygons), 0.5, 1.0, 0.0, 0.0); remap_uv(brow, list(brow.data.polygons), 0.5, 1.0, 0.5, 0.0)
+    for k in [k for k in list(others) if others[k] in (hair, brow)]: others.pop(k)
+    hbj = join([brow, hair], "X_HairBrows")                       # 眉（シェイプキーあり）を先にして、キーを残す
+    one_material(hbj, texmat("X_HairBrows_M", hb_im, True)); others["X_HairBrows"] = hbj
+    print("light: materials", sum(len(o.data.materials) for o in [xb]+list(others.values())), "meshes", 1+len(others))
 
 # ── 3) VRM の設定 ──
 ext = arm.vrm_addon_extension; ext.spec_version = ext.SPEC_VERSION_VRM1; v1 = ext.vrm1
 def snake(s): return re.sub(r"(?<!^)(?=[A-Z])", "_", s).lower()
 hb = v1.humanoid.human_bones
 for b in arm.bones:
-    if b.name.startswith("hairSwing"): continue
+    if b.name.startswith(("hairSwing", "Skirt_")): continue
     getattr(hb, snake(b.name)).node.bone_name = b.name
 for e in EXPS:
     ex = getattr(v1.expressions.preset, snake(e)); ex.morph_target_binds.clear()
@@ -193,10 +312,34 @@ for _n, _out in (("range_map_horizontal_inner", 8.0), ("range_map_horizontal_out
 # 揺れもの：髪（耳の高さから下）を、頭の動きに遅れて揺らす
 _sb = ext.spring_bone1
 while len(_sb.springs): bpy.ops.vrm.remove_spring_bone1_spring(armature_object_name=rig.name, spring_index=0)
-bpy.ops.vrm.add_spring_bone1_spring(armature_object_name=rig.name); _sp = _sb.springs[0]; _sp.vrm_name = "hair"
-for _bn in ("hairSwing", "hairSwingEnd"):
-    bpy.ops.vrm.add_spring_bone1_spring_joint(armature_object_name=rig.name, spring_index=0, guess_properties=False)
-    _j = _sp.joints[-1]; _j.node.bone_name = _bn; _j.hit_radius = 0.0; _j.stiffness = 0.8; _j.gravity_power = 0.35; _j.gravity_dir = (0, 0, -1); _j.drag_force = 0.45
+while len(_sb.collider_groups): bpy.ops.vrm.remove_spring_bone1_collider_group(armature_object_name=rig.name, collider_group_index=0)
+while len(_sb.colliders): bpy.ops.vrm.remove_spring_bone1_collider(armature_object_name=rig.name, collider_index=0)
+# コライダー（位置は骨の向きで：骨の根もとが原点、骨の向きが +Y）。脚：腰の球と腿のカプセル。体：胸の球と肩のカプセル（髪が肩と胸に入らないように）
+def collider(bone, r, tail=None, off=(0, 0, 0)):
+    bpy.ops.vrm.add_spring_bone1_collider(armature_object_name=rig.name); c = _sb.colliders[-1]; c.node.bone_name = bone
+    _ids = [it.identifier for it in c.bl_rna.properties["shape_type"].enum_items]
+    _pick = lambda w: next(i for i in _ids if i.lower() == w)
+    if tail is None: c.shape_type = _pick("sphere"); c.shape.sphere.offset = off; c.shape.sphere.radius = r
+    else: c.shape_type = _pick("capsule"); c.shape.capsule.offset = off; c.shape.capsule.tail = tail; c.shape.capsule.radius = r
+    return c
+def cgroup(name, cols):
+    bpy.ops.vrm.add_spring_bone1_collider_group(armature_object_name=rig.name); g = _sb.collider_groups[-1]; g.vrm_name = name
+    for c in cols: g.colliders.add().collider_uuid = c.uuid
+    return g
+_leg = lambda s: arm.bones[s+"UpperLeg"].length
+g_legs = cgroup("legs", [collider("hips", 0.09)]+[collider(s+"UpperLeg", 0.065, tail=(0, _leg(s)*0.95, 0)) for s in ("left", "right")])
+g_body = cgroup("body", [collider("upperChest" if "upperChest" in arm.bones else "chest", 0.10, off=(0, 0.04, 0))]
+                + [collider(s+"Shoulder", 0.045, tail=(0, arm.bones[s+"Shoulder"].length, 0)) for s in ("left", "right")])
+def spring(name, bones, groups, stiff, grav, drag, radius):
+    bpy.ops.vrm.add_spring_bone1_spring(armature_object_name=rig.name); i = len(_sb.springs)-1; sp = _sb.springs[i]; sp.vrm_name = name
+    for bn in bones:
+        bpy.ops.vrm.add_spring_bone1_spring_joint(armature_object_name=rig.name, spring_index=i, guess_properties=False)
+        j = sp.joints[-1]; j.node.bone_name = bn; j.hit_radius = radius; j.stiffness = stiff; j.gravity_power = grav; j.gravity_dir = (0, 0, -1); j.drag_force = drag
+    for g in groups: sp.collider_groups.add().collider_group_uuid = g.uuid
+spring("hair", ("hairSwing", "hairSwingEnd"), (g_body,), 0.8, 0.35, 0.45, 0.02)
+for _nm, _ in CHAINS:
+    _bs = [b.name for b in arm.bones if b.name.startswith("Skirt_%s_" % _nm)]
+    if _bs: spring("skirt_"+_nm, sorted(_bs), (g_legs,), 1.2, 0.05, 0.5, 0.03)
 v1.meta.vrm_name = TITLE; v1.meta.version = "1"
 v1.meta.authors.clear(); v1.meta.authors.add().value = "shuji30"
 v1.meta.commercial_usage = "corporation"                 # 売り物のゲームに使えるように、商用利用を許可（再配布・改変は「不可」のまま）

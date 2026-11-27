@@ -822,6 +822,23 @@ export function createCharacter(scene, { url = CHARACTER.url, camera = null, wan
         else if (hips < 0 && /hips/i.test(name)) hips = i;
       });
       if (hips < 0 || skirt.size === 0 || thigh.size === 0) return;
+      // Blender で作った女の子のスカートは、腿に強く付けて作ってある（すそで腿 0.96。揺れ骨は揺らすぶんだけ）。
+      // 腰へ移すと、揺れ骨の重さで後ろのすそが座面を突き抜けて垂れた。スカートの頂点の腿の重みが平均で大きいメッシュは、
+      // 腿に付けたままにする（座って腿を上げると、すそも腿といっしょに上がる）
+      let thighSum = 0;
+      let skirtVerts = 0;
+      for (let v = 0; v < index.count; v++) {
+        let onSkirt = false;
+        let t = 0;
+        for (let k = 0; k < 4; k++) {
+          const w = weight.getComponent(v, k);
+          const b = index.getComponent(v, k);
+          if (w > 0.01 && skirt.has(b)) onSkirt = true;
+          if (thigh.has(b)) t += w;
+        }
+        if (onSkirt) { skirtVerts++; thighSum += t; }
+      }
+      if (skirtVerts > 0 && thighSum / skirtVerts > 0.25) return;
       // 元の（腿に乗る）重みも取っておく。カートのように腿を前へ出して座るときは、
       // こちらに戻すと裾が腿の上をおおう（skirtOnLegs）
       const original = { index: index.clone(), weight: weight.clone() };

@@ -6,6 +6,7 @@ import { girlName } from './girlname.js';
  *
  * - その日にした遊び（女の子と遊んだもの。world.currentPlay が変わったとき）と、キャッチボールのいちばん長いラリーを
  *   このブラウザに覚える（日ごと。直近 10 日ぶん）
+ * - ボードの下に「つぎは？」：きょうまだしていない遊びを 3 つ（台詞は足さない。ユーザーの判断）
  * - 家の奥の壁に「思い出ボード」をかける：きょうしたこと・前の休日にしたこと・ベスト。VR でも読める（シーンの中の板）
  *
  * 遊びの名前は plays.js の名前（kart・tennis など）。
@@ -21,6 +22,17 @@ export const PLAY_LABELS = {
   golf: 'パットゴルフ', billiard: 'ビリヤード', seat: 'おしゃべり', beach: '海辺', cruiser: 'クルーザー',
   jetski: 'ジェットスキー', dive: 'ダイビング', cessna: 'セスナ', f40: 'ドライブ', gt3: 'GT3 のレース',
 };
+
+/** 「つぎは？」に出す順（座って話すは出さない） */
+const SUGGEST = ['catch', 'tennis', 'kart', 'fishing', 'ferris', 'coaster', 'golf', 'beach', 'horse', 'carousel', 'bike',
+  'seesaw', 'buranko', 'billiard', 'cruiser', 'jetski', 'dive', 'cessna', 'f40', 'gt3'];
+
+/** きょうまだしていない遊びを 3 つ。日によって始まりをずらす */
+export function suggestNext(plays, date = new Date()) {
+  const start = date.getDate() % SUGGEST.length;
+  const order = [...SUGGEST.slice(start), ...SUGGEST.slice(0, start)];
+  return order.filter((k) => !plays[k]).slice(0, 3);
+}
 
 function today() {
   const d = new Date();
@@ -133,6 +145,13 @@ export function createMemory(parent, at) {
     ctx.textAlign = 'right';
     ctx.fillText(`キャッチボールのベスト ${data.best.rally ?? 0} かい`, W - 26, 26);
     ctx.textAlign = 'left';
+    // つぎは？：きょうまだしていない遊びを 3 つ（日によって並びを回す）
+    const next = suggestNext(t.plays);
+    if (next.length) {
+      ctx.fillStyle = '#2a2018';
+      ctx.font = 'bold 26px system-ui, sans-serif';
+      ctx.fillText(`つぎは？　${next.map((k) => PLAY_LABELS[k]).join('・')}`, 30, H - 44);
+    }
     texture.needsUpdate = true;
   }
   draw();

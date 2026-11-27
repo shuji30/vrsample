@@ -1,3 +1,4 @@
+import { comfort, saveComfort, STANDING_EYE } from './comfort.js';
 import * as THREE from 'three';
 import { createFootsteps } from './audio.js';
 import { VR_GRIP } from './tennis.js';
@@ -6,6 +7,7 @@ const MOVE_SPEED = 1.45;        // m/s（室内なので歩く速さくらいに
 const ACCELERATION = 8.0;       // m/s^2 歩き出し
 const DECELERATION = 11.0;      // m/s^2 止まるほうが速い
 const SNAP_ANGLE = Math.PI / 6; // 30度
+const SMOOTH_TURN = 2.0;         // rad/s（なめらか旋回の、いっぱいに倒したときの速さ）
 const WHEEL_TURN = 1.1;         // rad/s ハンコンで歩くとき、ハンドルいっぱいで回る速さ（約 63°/s）
 const WHEEL_BACK = 0.7;         // ハンコンのブレーキで後ろへ歩く速さ（前の何倍か）
 const DEADZONE = 0.25;
@@ -151,6 +153,26 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
   bob.name = 'bob';
   player.add(bob);
   bob.add(camera);
+
+  // 視野しぼり（快適設定）：歩く・なめらかに回るあいだ、視野の外側を暗くする。頭のまわりの球の内側に描く
+  // （目の前の板だと、左右の目で見え方がずれる）。正面 ±35° は透明、±70° より外は黒
+  const vignette = new THREE.Mesh(
+    new THREE.SphereGeometry(0.3, 32, 16),
+    new THREE.ShaderMaterial({
+      uniforms: { strength: { value: 0 } },
+      vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: 'uniform float strength; varying vec3 vDir; void main() { float c = dot(normalize(vDir), vec3(0.0, 0.0, -1.0)); float a = smoothstep(0.82, 0.34, c) * strength; gl_FragColor = vec4(0.0, 0.0, 0.0, a); }',
+      side: THREE.BackSide,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  vignette.name = 'vignette';
+  vignette.renderOrder = 999;
+  vignette.frustumCulled = false;
+  vignette.visible = false;
+  camera.add(vignette);
 
   const footsteps = createFootsteps({ muted });
 
@@ -393,8 +415,11 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
   let padSource = null;
   let padSnap = false;
   let wheelSource = null;
+  /** このフレームになめらか旋回した強さ（0〜1。視野しぼりに使う） */
+  let turning = 0;
   function updateLocomotion(dt) {
     desired.set(0, 0, 0);
+    turning = 0;
     if (driving) { velocity.set(0, 0, 0); return; }
 
     const session = renderer.xr.getSession();
@@ -431,7 +456,14 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
       if (hand === 'right') {
         // スナップターン：一度倒したら中央に戻すまで再入力しない
         if (!controller) return;
-        if (x === 0) {
+        if (comfort.turn === 'smooth') {
+          // なめらか旋回（快適設定）。倒した量に比例して回る
+          if (x !== 0) {
+            rotateAroundHead(-x * SMOOTH_TURN * dt);
+            clampToBounds();
+            turning = Math.max(turning, Math.abs(x));
+          }
+        } else if (x === 0) {
           controller.userData.snapLatched = false;
         } else if (!controller.userData.snapLatched) {
           rotateAroundHead(-Math.sign(x) * SNAP_ANGLE);
@@ -450,7 +482,13 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
       desired.addScaledVector(forward, -pad.move.y * MOVE_SPEED);
       desired.addScaledVector(right, pad.move.x * MOVE_SPEED);
       const lx = pad.look.x;
-      if (Math.abs(lx) < 0.3) padSnap = false;
+      if (comfort.turn === 'smooth') {
+        if (Math.abs(lx) > 0.15) {
+          rotateAroundHead(-lx * SMOOTH_TURN * dt);
+          clampToBounds();
+          turning = Math.max(turning, Math.abs(lx));
+        }
+      } else if (Math.abs(lx) < 0.3) padSnap = false;
       else if (!padSnap) {
         rotateAroundHead(-Math.sign(lx) * SNAP_ANGLE);
         clampToBounds();
@@ -512,7 +550,8 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
 
     // 1 歩ごとに 1 回沈む。左右の振れは 2 歩で 1 周期
     const phase = (stepDistance / STEP_LENGTH) * Math.PI;
-    bob.position.y = -Math.abs(Math.sin(phase)) * BOB_HEIGHT * gait * bobScale;
+    // 座って遊ぶ（快適設定）：目の高さを立ったときの高さまで持ち上げる。手も同じだけ上がる
+    bob.position.y = (comfort.seated ? comfort.heightOffset : 0) - Math.abs(Math.sin(phase)) * BOB_HEIGHT * gait * bobScale;
     bob.position.x = Math.sin(phase * 0.5) * BOB_SWAY * gait * bobScale;
   }
 
@@ -605,6 +644,14 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
     applyAlign();
     updateLocomotion(dt);
     updateGait(dt);
+    // 視野しぼり：速さと旋回から。ふっと出て、ふっと消える
+    {
+      const want = comfort.vignette && renderer.xr.isPresenting && !driving
+        ? Math.min(1, velocity.length() / MOVE_SPEED + turning) * 0.85 : 0;
+      const u = vignette.material.uniforms.strength;
+      u.value += (want - u.value) * Math.min(1, dt * 8);
+      vignette.visible = u.value > 0.01;
+    }
 
     // 足元の影を頭の真下へ。歩幅の沈み込みに合わせて少し濃くすると接地が出る
     groundShadow.visible = renderer.xr.isPresenting;
@@ -698,6 +745,20 @@ export function createPlayer(renderer, camera, scene, world, { bobScale = 1, mut
 
   return {
     player, bob, controllers, footsteps, update, reset, releaseHeld,
+    vignette,
+    /**
+     * 座って遊ぶ（快適設定）。入れると、いまの頭の高さ（床から）を測って、立った目の高さまで持ち上げる
+     */
+    setSeated(on) {
+      if (on) {
+        headWorldPosition(pivot);
+        const lift = comfort.seated ? comfort.heightOffset : 0;
+        const head = pivot.y - player.position.y - (bob.position.y - lift) - lift;
+        comfort.heightOffset = Math.max(0, Math.min(1.2, STANDING_EYE - head));
+      }
+      comfort.seated = Boolean(on);
+      saveComfort();
+    },
     setDriving(value) { driving = Boolean(value); hasLastHead = false; },
     /** VR の最中のゲームパッドのスティック（desktop.js の xrPad）を返す関数 */
     setPadSource(fn) { padSource = fn; },

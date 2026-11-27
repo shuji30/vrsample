@@ -1,3 +1,4 @@
+import { coasterGentle } from './comfort.js';
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { hillHeight } from './hill.js';
@@ -14,7 +15,7 @@ import { audioContext, bus } from './mixer.js';
  * 駅へ戻って止まると、E で降りる。降りずにいると、10 秒でもう 1 周。途中で降りたときは、暗くして駅へ戻す。
  *
  * 車両の向き：ローカル +Z が前、+Y が上、+X が左。seatQuaternion で、宙返りでは VR のリグも車両ごと回る。
- * VR 酔いが心配なら ?coaster=gentle（宙返りなし・最高 13m/s）。
+ * 既定はゆるやか（宙返りなし・最高 13m/s）。宙返りありは VR のメニューの快適設定か ?coaster=full。
  *
  * 走り：リフトはチェーンで 3.2m/s、ほかは重力（接線の傾き）と、転がりの抵抗・空気の抵抗。
  * 駅の手前でブレーキ、駅の決まった所で止まる。
@@ -28,7 +29,8 @@ export const COASTER = {
 };
 const G = 9.8;
 const STEP = 0.5;             // 線路をたどる間隔（m）
-const GENTLE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('coaster') === 'gentle';
+// ゆるやか（宙返りなし・最高 13m/s）が既定（売り物の水準 B4。VR 酔い対策）。快適設定（comfort.js）か ?coaster=full で宙返りあり
+const GENTLE = coasterGentle();
 
 /** 宙返り（進む向き dir、中心の高さ、半径、横へのずれ）の点 */
 function loopPoints(at, dir, radius, shift, n = 20) {

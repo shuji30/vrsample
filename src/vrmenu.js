@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as mixer from './mixer.js';
+import { comfort, saveComfort } from './comfort.js';
 
 /**
  * VR の中のメニュー（売り物の水準 B3）。
@@ -16,9 +17,9 @@ import * as mixer from './mixer.js';
 
 const LEVELS_KEY = 'vrsample.levels';
 const W = 512;
-const H = 448;
+const H = 680;
 const ROW0 = 70;
-const ROW_H = 58;
+const ROW_H = 54;
 
 const HELP = [
   '歩く：左スティック　向き：右スティック',
@@ -46,7 +47,7 @@ export function loadLevels() {
  * @param {() => string} options.theme いまの時間帯
  * @param {() => string} options.cycleTheme 時間帯を次へ。替えた先を返す
  */
-export function createVrMenu({ renderer, camera, interactables, theme, cycleTheme }) {
+export function createVrMenu({ renderer, camera, interactables, theme, cycleTheme, setSeated = null }) {
   const levels = loadLevels();
   const apply = () => {
     mixer.setBusLevel('music', levels.music);
@@ -78,6 +79,10 @@ export function createVrMenu({ renderer, camera, interactables, theme, cycleThem
     { label: 'BGM の音量', value: `${Math.round(levels.music * 100)}%`, step: 'music' },
     { label: '声の音量', value: `${Math.round(levels.voice * 100)}%`, step: 'voice' },
     { label: '時間帯', value: THEME_NAME[theme()] ?? theme(), act: () => cycleTheme() },
+    { label: '旋回', value: comfort.turn === 'smooth' ? 'なめらか' : '30° ずつ', act: () => { comfort.turn = comfort.turn === 'smooth' ? 'snap' : 'smooth'; saveComfort(); } },
+    { label: '視野しぼり（酔い止め）', value: comfort.vignette ? '入' : '切', act: () => { comfort.vignette = !comfort.vignette; saveComfort(); } },
+    { label: '座って遊ぶ', value: comfort.seated ? `入（+${Math.round(comfort.heightOffset * 100)}cm）` : '切', act: () => setSeated?.(!comfort.seated) },
+    { label: 'コースター', value: comfort.coaster === 'full' ? '宙返りあり*' : 'やさしい*', act: () => { comfort.coaster = comfort.coaster === 'full' ? 'gentle' : 'full'; saveComfort(); } },
     { label: '操作のしかた', act: () => { page = 'help'; } },
     { label: 'VR をやめる', act: () => { close(); renderer.xr.getSession()?.end(); }, warn: true },
     { label: '閉じる', act: () => close() },
@@ -104,6 +109,10 @@ export function createVrMenu({ renderer, camera, interactables, theme, cycleThem
       ctx.font = '20px system-ui, sans-serif';
       ctx.fillText('（どこかを選ぶと戻る）', 28, H - 28);
     } else {
+      ctx.fillStyle = '#8fa3cc';
+      ctx.font = '18px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('* コースターは、ページを読み込み直すと変わります', 28, H - 22);
       rows().forEach((row, i) => {
         const y = ROW0 + i * ROW_H;
         ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';

@@ -728,7 +728,7 @@ const talkEye = new THREE.Vector3();
     again: params.get('guide') === 'again',
   });
   // VR の中のメニュー（売り物の水準 B3）：音量・時間帯・操作・VR をやめる
-  vrMenu = createVrMenu({ renderer, camera, interactables: world.interactables, theme: () => world.theme, cycleTheme: () => world.cycleTheme() });
+  vrMenu = createVrMenu({ renderer, camera, interactables: world.interactables, theme: () => world.theme, cycleTheme: () => world.cycleTheme(), setSeated: (on) => player.setSeated(on) });
   scene.add(vrMenu.panel);
   Object.assign(window.__vrsample, { mixer, contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView, guide, vrMenu });
 

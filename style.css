@@ -441,3 +441,38 @@ body.touch #overlay { z-index: 20; }
   cursor: pointer;
 }
 body.touch #guide { bottom: 170px; font-size: 13px; }
+
+/* 読み込めなかったときの画面（main.js の showFatal。売り物の水準 B5） */
+#fatal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(6, 10, 22, 0.92);
+}
+#fatal .box {
+  width: min(460px, 100%);
+  padding: 22px 24px;
+  border-radius: 14px;
+  background: #121a33;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  line-height: 1.6;
+}
+#fatal h2 { margin: 0 0 8px; font-size: 20px; color: #ffcfc8; }
+#fatal .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+#fatal button {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #2f8fe0;
+  color: #fff;
+  font: inherit;
+  font-weight: bold;
+  cursor: pointer;
+}
+#fatal button + button { background: #3a4766; }
+#fatal summary { cursor: pointer; color: #8fa3cc; font-size: 13px; }
+#fatal pre { white-space: pre-wrap; font-size: 12px; color: #a8b6d6; max-height: 40vh; overflow: auto; }

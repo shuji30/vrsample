@@ -7,6 +7,7 @@ import { createPark, PARK, COURT_BACKSTOP } from './park.js';
 import { createGrass } from './grass.js';
 import { dressLawn } from './lawn.js';
 import { createAmbience } from './ambience.js';
+import { startWantedPlays, currentPlay } from './plays.js';
 import { createHouseExterior } from './houseexterior.js';
 import { PLATEAU } from './hill.js';
 import { KART_TRACK, groundHeight as kartGround } from './karttrack.js';
@@ -1185,187 +1186,24 @@ export function createWorld(renderer, scene, {
     // サーキットにいるあいだは、女の子はレースだけ（庭の遊びは止めておく）
     if (gt3Race?.active) gt3Race.update(dt);
     else {
-    // カートがいちばん先。テニスの最中なら、テニスを片づけ終わってから（ラケットを戻して）
-    if (kartGame?.wanted && !kartGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        kartGame.start();
-      }
-    }
-    // ポケバイはカートの次。カートで遊んでいないときに
-    if (!kartGame?.active && bikeGame?.wanted && !bikeGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        bikeGame.start();
-      }
-    }
-    // シーソーも同じ
-    if (!kartGame?.active && !bikeGame?.active && seesawGame?.wanted && !seesawGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        seesawGame.start();
-      }
-    }
-    // ブランコも同じ
-    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && burankoGame?.wanted && !burankoGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        burankoGame.start();
-      }
-    }
-    // 釣りも同じ
-    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && fishingGame?.wanted && !fishingGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        fishingGame.start();
-      }
-    }
-    // 乗馬も同じ
-    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && horseGame?.wanted && !horseGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        horseGame.start();
-      }
-    }
-    // メリーゴーランドも同じ
-    if (!kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && carouselGame?.wanted && !carouselGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        carouselGame.start();
-      }
-    }
-    // F40 に乗ったら、していた遊びをやめて助手席へ
-    if (f40Game?.wanted && !f40Game.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active && !seatGame?.active && !beachGame?.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        f40Game.start();
-      }
-    }
-    // 飛行場へ行ったら、していた遊びをやめて一緒に来る
-    if (cessnaGame?.wanted && !cessnaGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        cessnaGame.start();
-      }
-    }
-    // 砂浜へ下りたら、していた遊びをやめて下りてくる
-    if (beachGame?.wanted && !beachGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        beachGame.start();
-      }
-    }
-    // 座って話す：座ったら、していた遊びをやめて来る。砂浜ならビーチバレーの最中でも（ボールは置いて）
-    if (seatGame?.wanted && !seatGame.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active
-      && (!beachGame?.active || beachGame.state === 'play')) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        seatGame.start();
-      }
-    }
-    // クルーザー：砂浜にいる（ビーチバレーの最中でも）ので、座って話すのと同じ条件で来る
-    if (cruiserGame?.wanted && !cruiserGame.active && !seatGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active
-      && (!beachGame?.active || beachGame.state === 'play')) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        cruiserGame.start();
-      }
-    }
-    // スキューバ：潜ったら、していた遊びをやめていっしょに（画面が暗くなるあいだに水の中へ）
-    if (diveGame?.wanted && !diveGame.active && !jetskiGame?.active && !cruiserGame?.active && !seatGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active
-      && (!beachGame?.active || beachGame.state === 'play')) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        diveGame.start();
-      }
-    }
-    if (jetskiGame?.wanted && !jetskiGame.active && !cruiserGame?.active && !seatGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active
-      && (!beachGame?.active || beachGame.state === 'play')) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        jetskiGame.start();
-      }
-    }
-    // 観覧車も同じ
-    if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && ferrisGame?.wanted && !ferrisGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        ferrisGame.start();
-      }
-    }
-    // ビリヤード：ビリヤードの部屋に入ったら（ほかの遊びをしていなければ）
+    // 遊びの始まりと、いま女の子を使っている遊び（plays.js。ROADMAP 7）。
+    // ビリヤードの部屋・パットゴルフの芝地にいるかは、決める前に入れておく
     if (billiardGame) {
       if (camera) camera.getWorldPosition(billiardEye);
       billiardGame.playerHere = billiardGame.inAnnex(billiardEye.x, billiardEye.z);
-      if (billiardGame.wanted && !billiardGame.active && !seatGame?.active && !golfGame?.active && !beachGame?.active && !kartGame?.active && !bikeGame?.active) {
-        if (tennisGame?.active) tennisGame.stop();
-        else {
-          catchGame?.suspend();
-          billiardGame.start();
-        }
-      }
     }
-    // パットゴルフ：芝地に入ったら（ほかの遊びをしていなければ）
     if (golfGame) {
       if (camera) camera.getWorldPosition(golfEye);
       golfGame.playerHere = golf.inZone(golfEye.x, golfEye.z);
     }
-    if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && golfGame?.wanted && !golfGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        golfGame.start();
-      }
-    }
-    // ジェットコースターも同じ
-    if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && coasterGame?.wanted && !coasterGame.active) {
-      if (tennisGame?.active) tennisGame.stop();
-      else {
-        catchGame?.suspend();
-        coasterGame.start();
-      }
-    }
-    if (!beachGame?.active && !kartGame?.active && !bikeGame?.active && !seesawGame?.active && !burankoGame?.active && !fishingGame?.active && !horseGame?.active && !carouselGame?.active && !ferrisGame?.active && !coasterGame?.active && !golfGame?.active && tennisGame && !tennisGame.active && tennisGame.wanted) {
-      catchGame?.suspend();
-      tennisGame.start();
-    }
+    startWantedPlays(plays);
     // ブランコの女の子の席は、女の子を座らせる（burankoGame）前に進める。あとで進めると、
     // 体と手が 1 フレーム前の席と鎖に合わせたままになり、こいでいるあいだ手が鎖から離れて見えた
     buranko.updateGirl(dt);
-    if (seatGame?.active) seatGame.update(dt);
-    else if (f40Game?.active) f40Game.update(dt);
-    else if (cessnaGame?.active) cessnaGame.update(dt);
-    else if (diveGame?.active) diveGame.update(dt);
-    else if (cruiserGame?.active) cruiserGame.update(dt);
-    else if (jetskiGame?.active) jetskiGame.update(dt);
-    else if (beachGame?.active) beachGame.update(dt);
-    else if (kartGame?.active) kartGame.update(dt);
-    else if (bikeGame?.active) { /* 下で動かす */ } else if (seesawGame?.active) seesawGame.update(dt);
-    else if (burankoGame?.active) burankoGame.update(dt);
-    else if (fishingGame?.active) fishingGame.update(dt);
-    else if (horseGame?.active) horseGame.update(dt);
-    else if (carouselGame?.active) carouselGame.update(dt);
-    else if (ferrisGame?.active) ferrisGame.update(dt);
-    else if (coasterGame?.active) coasterGame.update(dt);
-    else if (golfGame?.active) golfGame.update(dt);
-    else if (billiardGame?.active) billiardGame.update(dt);
-    else if (tennisGame?.active) tennisGame.update(dt);
-    else catchGame?.update(dt);
+    const play = currentPlay(plays);
+    // ポケバイは下で動かす（女の子が見ていないあいだもラップを数える）
+    if (play === 'catch') catchGame?.update(dt);
+    else if (play && play !== 'bike') plays[play].update(dt);
     }
     // ポケバイは、女の子が見ていないあいだもラップを数えて、表示を出す
     bikeGame?.update(dt);
@@ -1600,6 +1438,13 @@ export function createWorld(renderer, scene, {
     basket.update(tennisBalls);
   }
 
+  // 女の子を使う遊び（plays.js が始まりと順番を決める）
+  const plays = {
+    kart: kartGame, bike: bikeGame, seesaw: seesawGame, buranko: burankoGame, fishing: fishingGame, horse: horseGame,
+    carousel: carouselGame, f40: f40Game, cessna: cessnaGame, beach: beachGame, seat: seatGame, cruiser: cruiserGame,
+    dive: diveGame, jetski: jetskiGame, ferris: ferrisGame, billiard: billiardGame, golf: golfGame, coaster: coasterGame,
+    tennis: tennisGame, catch: catchGame,
+  };
   const interactables = [...grabbables.filter((prop) => prop.userData.grabbable), ...buttons, karts.player.body, bike.body, seesaw.body, buranko.body, fishing.body, horse.body, carousel.body, ferris.body, coaster.body, cruiser.body, jetski.body, cessna.body, ...cessna.interactables, gt3.body, f40.body, ...beach.interactables, ...seats.bodies, ...(corgi ? [corgi.body] : [])];
   // 会話の札（VR）は、出しているあいだだけこの表に入る
   if (talk) talk.interactables = interactables;
@@ -1675,6 +1520,8 @@ export function createWorld(renderer, scene, {
     groundHeight,
     bounds: regions,
     ambience,
+    /** いま女の子を使っている遊びの名前（plays.js。'catch' はキャッチボール・ふだんのとき） */
+    get currentPlay() { return currentPlay(plays); },
     /** プレイヤーの歩ける範囲（VR・PC・スマホの移動が使う）。女の子の体の中へは入らない */
     clampToBounds: clampForPlayer,
     room,

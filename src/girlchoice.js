@@ -9,6 +9,7 @@
  * swim と street は、Blender で作った自前のモデル（VRM 1.0）。元データと作り方は vrgame2 の blender/girl/。
  * knit も Blender で作った自前のモデル。元データと作り方は、このリポジトリの blender/girl-knit/。
  * onepiece も Blender で作った自前のモデル。元データと作り方は、このリポジトリの blender/girl-onepiece/。
+ * onepiece2 は onepiece を写して作った 5 人目（白いレースのワンピース・昭和のアイドル風）。元データと作り方は、このリポジトリの blender/girl-onepiece2/。
  */
 
 export const GIRL_MODELS = [
@@ -17,6 +18,7 @@ export const GIRL_MODELS = [
   { id: 'street', label: 'ストリートコーデ', url: './models/girl-street.vrm' },
   { id: 'knit', label: 'ニットコーデ', url: './models/girl-knit.vrm' },
   { id: 'onepiece', label: 'ワンピースコーデ', url: './models/girl-onepiece.vrm' },
+  { id: 'onepiece2', label: 'ワンピースコーデ 2', url: './models/girl-onepiece2.vrm' },
 ];
 export const DEFAULT_GIRL_MODEL = 'classic';
 const KEY = 'vrsample.girlModel';

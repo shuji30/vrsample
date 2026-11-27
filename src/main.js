@@ -67,6 +67,31 @@ function fail(stage, error) {
   }
 
   report(lines.join('\n'), true);
+  // 起動が済む前の失敗は、遊べない。技術的な文面ではなく、エラーの画面を出す（売り物の水準 B5）
+  if (!appStarted) showFatal(lines);
+  // VR に入れなかったときは、開始画面を開いて理由を見せる
+  else if (/^VR/.test(stage)) setOverlay(true);
+}
+
+/** 起動（start）が済んだか（start の中の started は開始の時刻で、別物） */
+let appStarted = false;
+/** 読み込めなかったときの画面。読み込み直す・軽い設定で開く・詳しい内容 */
+function showFatal(lines) {
+  if (document.getElementById('fatal')) return;
+  const el = document.createElement('div');
+  el.id = 'fatal';
+  const safeUrl = new URL(location.href);
+  safeUrl.searchParams.set('safe', '');
+  el.innerHTML = `<div class="box">
+    <h2>読み込めませんでした</h2>
+    <p>ページを読み込み直すと、たいていは開けます。何度も失敗するときは、軽い設定で開いてください。</p>
+    <p class="buttons"><button type="button" data-act="reload">読み込み直す</button><button type="button" data-act="safe">軽い設定で開く</button></p>
+    <details><summary>詳しい内容（不具合を知らせるとき）</summary><pre></pre></details>
+  </div>`;
+  el.querySelector('pre').textContent = `${lines.join('\n')}\nバージョン ${VERSION}（${RELEASED}）\n${navigator.userAgent}`;
+  el.querySelector('[data-act="reload"]').addEventListener('click', () => location.reload());
+  el.querySelector('[data-act="safe"]').addEventListener('click', () => { location.href = safeUrl.toString().replace('safe=', 'safe'); });
+  document.body.appendChild(el);
 }
 
 /**
@@ -387,7 +412,7 @@ const talkEye = new THREE.Vector3();
     stats = null;
   });
 
-  // --- VR の診断表示（VR の最中だけ、PC のモニターの左下に出す。?vrdiag=off で出さない）---------
+  // --- VR の診断表示（VR の最中だけ、PC のモニターの左下に出す。?vrdiag か ?debug のとき）---------
   // 実機（Pimax など）でしか起きない不具合（移動しても位置が変わらない・目線合わせが効かない等）を
   // 調べるため、XR の状態・リグと頭の位置・VR のコントローラーとゲームパッドの値を見せる
   let sessionStarts = 0;
@@ -395,7 +420,8 @@ const talkEye = new THREE.Vector3();
   diagEl.id = 'vrdiag';
   diagEl.style.cssText = 'position:fixed;left:8px;bottom:8px;margin:0;padding:8px 10px;background:rgba(0,0,0,.75);color:#9f9;font:12px/1.35 monospace;border-radius:6px;z-index:20;display:none;max-width:60vw;white-space:pre-wrap';
   document.body.appendChild(diagEl);
-  const showDiag = params.get('vrdiag') !== 'off';
+  // 実機の不具合を調べるときだけ（?vrdiag か ?debug）。遊ぶ人の PC のモニターには出さない（売り物の水準 B5）
+  const showDiag = params.has('vrdiag') ? params.get('vrdiag') !== 'off' : params.has('debug');
   let diagIn = 0;
   const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
   const vec = (v) => `${f2(v.x)}, ${f2(v.y)}, ${f2(v.z)}`;
@@ -408,7 +434,7 @@ const talkEye = new THREE.Vector3();
     diagIn = 0.2;
     const head = camera.getWorldPosition(new THREE.Vector3());
     const lines = [
-      `VR 診断（?vrdiag=off で消す）`,
+      `VR 診断（?vrdiag）`,
       `isPresenting=${renderer.xr.isPresenting} session=${Boolean(session)} sessionstart=${sessionStarts} align=${JSON.stringify(player.alignInfo)}`,
       `rig=${vec(player.player.position)} rigYaw=${f2(player.player.rotation.y)} head=${vec(head)} headLocal=${vec(camera.position)}`,
       `driving=${kartDrive.driving} vehicle=${kartDrive.driving ? kartDrive.vehicle?.kind ?? '?' : '-'}`,
@@ -434,6 +460,14 @@ const talkEye = new THREE.Vector3();
   let loopErrorHide = 0;
   /** 描画ループの例外を、画面の上に 8 秒だけ小さく出す */
   function showLoopError(error) {
+    // 遊ぶ人には出さない（ループは続くので遊べる）。数と最後の内容は「クレジットとライセンス」の技術情報に書く
+    const techEl = document.getElementById('tech');
+    if (techEl) {
+      const base = techEl.dataset.base ?? techEl.textContent;
+      techEl.dataset.base = base;
+      techEl.textContent = `${base}\nエラー ${loopErrors} 件（最後：${error?.name ? `${error.name}: ` : ''}${error?.message ?? error}）`;
+    }
+    if (!params.has('debug')) return;
     if (!loopErrorEl) {
       loopErrorEl = document.createElement('div');
       loopErrorEl.id = 'loop-error';
@@ -849,6 +883,7 @@ const talkEye = new THREE.Vector3();
     startButton.textContent = 'はじめる';
     startButton.addEventListener('click', () => setOverlay(false));
   }
+  appStarted = true;
 }
 
 start().catch((error) => fail('シーンの構築', error));

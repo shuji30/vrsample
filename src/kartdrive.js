@@ -36,6 +36,19 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   const specOf = (v) => (v.kind === 'bike' ? { spec: BIKE, track: BIKE_TRACK } : v.kind === 'gt3' ? GT3_SPEC : v.silent ? SEESAW_SPEC : { spec: KART, track: KART_TRACK });
   // シフト（GT3）：押した回数をためて、次のフレームで車に渡す（+1 上げる / -1 下げる）
   let shiftQueue = 0;
+  /**
+   * シフトの合図は、前の合図から SHIFT_QUIET 秒あいだが空いたときだけ数える（同じ向き。間に来た合図も「前の合図」にする）。
+   * ハンコンは Gamepad API・WebHID・デバイスブリッジの複数の口から同じパドルが見えることがあり、1 回押すと合図が
+   * 少しずつずれて何本も届いたり、パドルの接点がばたついたりして、1 フレームに 1 段ずつ上がって 6 速まで入っていた
+   */
+  const SHIFT_QUIET = 0.2;
+  const lastShiftAt = { 1: -Infinity, [-1]: -Infinity };
+  function requestShift(dir) {
+    const now = performance.now() / 1000;
+    const quiet = now - lastShiftAt[dir] > SHIFT_QUIET;
+    lastShiftAt[dir] = now;
+    if (quiet) shiftQueue += dir;
+  }
   let autoToggle = false;        // AT / MT の切り替えを押した（次のフレームで GT3 へ）
   let xrStickRight = false;
   const padShift = { up: false, down: false };
@@ -232,8 +245,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     keys.add(event.code);
     // シフト：X で上げる、Z で下げる（ハンコンのボタンを割り当てると、このキーとして届く。VR でも効く）
     // 「＞」（. キー）でも上げ、「＜」（, キー）でも下げる（Shift を押さなくても効く）
-    if (!event.repeat && driving && (event.code === 'KeyX' || event.code === 'Period')) shiftQueue++;
-    if (!event.repeat && driving && (event.code === 'KeyZ' || event.code === 'Comma')) shiftQueue--;
+    if (!event.repeat && driving && (event.code === 'KeyX' || event.code === 'Period')) requestShift(1);
+    if (!event.repeat && driving && (event.code === 'KeyZ' || event.code === 'Comma')) requestShift(-1);
     // AT / MT の切り替え（GT3。Q・パッドの十字キー上・VR の右スティックの押し込み）
     if (!event.repeat && driving && event.code === 'KeyQ') autoToggle = true;
     // 乗る / 降りるは E（どの乗り物も同じ。F は拾う / 投げる）。VR でも効く（ハンコンに割り当てた
@@ -359,8 +372,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
       if (hand === 'right') {
         const up = Boolean(gp.buttons[4]?.pressed);
         const down = Boolean(gp.buttons[5]?.pressed);
-        if (up && !xrShift.up) shiftQueue++;
-        if (down && !xrShift.down) shiftQueue--;
+        if (up && !xrShift.up) requestShift(1);
+        if (down && !xrShift.down) requestShift(-1);
         xrShift.up = up;
         xrShift.down = down;
         // 右スティックの押し込みで AT / MT
@@ -545,8 +558,8 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
     // パッドの RB / LB（押した瞬間）でもシフト
     const pad = wheel.readPad();
     if (pad) {
-      if (pad.shiftUp && !padShift.up) shiftQueue++;
-      if (pad.shiftDown && !padShift.down) shiftQueue--;
+      if (pad.shiftUp && !padShift.up) requestShift(1);
+      if (pad.shiftDown && !padShift.down) requestShift(-1);
       padShift.up = Boolean(pad.shiftUp);
       padShift.down = Boolean(pad.shiftDown);
     }

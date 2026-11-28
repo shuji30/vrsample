@@ -14,6 +14,7 @@ models/girl-onepiece2.vrm Blender で作った自前のモデル・ワンピー�
 models/corgi.glb        Blender で作った自前のモデル・コーギーの「こむぎ」（GLB。骨入り。作り方は blender/corgi/）
 models/sarusuberi.glb   Blender で作った自前のモデル・さるすべりの木（GLB。満開のピンク。作り方は blender/sarusuberi/）
 models/gt3.glb          GT3 の車。porsche_gt3_rs.glb（"Porsche GT3 RS" by Black Snow、Sketchfab、CC BY 4.0）を Blender で軽くしたもの
+models/kart.glb         カート。modular_go-kart.glb（"Modular Go-kart" by Jungle Jim、Sketchfab、CC BY 4.0）を Blender で軽くし、塗装を色を掛けられる灰色に抜いたもの（blender/cars/build_kart.py。src/kart.js が読む）
 models/lexus.glb        ガレージの Lexus。lexus-lc-500-wald-sports-line-wwwvecarzcom.zip（vecarz）を Blender で軽くしたもの（利用条件は要確認）
 ```
 

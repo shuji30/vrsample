@@ -9,9 +9,12 @@ blender -b --factory-startup --python blender/cars/build_gt3.py -- models/porsch
 
 # ガレージの Lexus（zip を展開した source/*.glb を渡す）
 blender -b --factory-startup --python blender/cars/build_lexus.py -- <展開先>/source/Sketchfab_2026_11_14_14_55_43.glb models/lexus.glb 0.3
+
+# カート（"Modular Go-kart" by Jungle Jim、CC BY 4.0）
+blender -b --factory-startup --python blender/cars/build_kart.py -- models/modular_go-kart.glb models/kart.glb 0.25
 ```
 
-最後の数字はポリゴンを減らす割合（0.35 なら大きな部品を 35% に）。
+3 つ目の数字はポリゴンを減らす割合（0.35 なら大きな部品を 35% に）。
 
 - 部品を Body・Wheel_LF/RF/LR/RR（原点が車輪の中心）・Caliper_*（Lexus だけ）・Steer（原点が輪の中心。
   extras の `axis` が回る軸）にまとめる

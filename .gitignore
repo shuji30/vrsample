@@ -9,4 +9,5 @@ blender/girl-onepiece/export/
 blender/girl-onepiece2/export/
 # 車の元データ（大きい。ゲームが読むのは Blender で軽くした models/gt3.glb・models/lexus.glb）
 models/porsche_gt3_rs.glb
+models/modular_go-kart.glb
 models/lexus-lc-500-wald-sports-line-wwwvecarzcom.zip

@@ -1,5 +1,21 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { KART_TRACK, TRACK_LENGTH, groundHeight, nearestOnTrack, trackPoint, trackTangent } from './karttrack.js';
+import { VERSION } from './version.js';
+
+/**
+ * カートの見た目の GLB（models/kart.glb。"Modular Go-kart" by Jungle Jim
+ * https://sketchfab.com/3d-models/modular-go-kart-35ed6acb8016410d9b2a32d41ef2ca54 CC-BY-4.0。
+ * blender/cars/build_kart.py で組み直したもの）。2 台で 1 回だけ読む。
+ * 中は Body・Wheel_LF/RF/LR/RR（原点が車輪の中心）・Steer（原点がハンドルの輪の中心。extras の axis が運転席のほう）。
+ * 向きと原点はこのファイルのカートと同じ（前が +Z、左が +X、後輪の車軸の真ん中の地面）。塗装の材質は KartPaint_*
+ */
+let kartModel = null;
+/** GLB のハンドルを、柱の向きに沿って運転席へ引き寄せる長さ（m） */
+const STEER_PULL = 0.2;
+function loadKartModel() {
+  return (kartModel ??= new GLTFLoader().loadAsync(`./models/kart.glb?v=${encodeURIComponent(VERSION)}`));
+}
 
 /** 坂で受ける重力の加速度（m/s²）。本当の重力（9.8）そのままだと、小さい坂でも止まりそうになる */
 const SLOPE_GRAVITY = 5.5;
@@ -139,6 +155,66 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart', perf
     }
   }
 
+  // 見た目を GLB に差し替える（読めたら、上で組んだ模型を隠す。読めないときは模型のまま走れる）
+  const shell = [];
+  body.traverse((o) => { if (o.isMesh) shell.push(o); });
+  for (const w of wheels) shell.push(w.wheel, w.hub);
+  loadKartModel().then((gltf) => {
+    const src = gltf.scene.clone(true);
+    const part = (name) => {
+      const o = src.getObjectByName(name);
+      if (!o) throw new Error(`models/kart.glb に ${name} がありません`);
+      return o;
+    };
+    const model = { body: part('Body'), steer: part('Steer'), wheels: { LF: part('Wheel_LF'), RF: part('Wheel_RF'), LR: part('Wheel_LR'), RR: part('Wheel_RR') } };
+    const axis = model.steer.userData.axis;
+    if (!Array.isArray(axis)) throw new Error('models/kart.glb の Steer に axis がありません');
+    // 塗装はカートごとの色に（材質を写して色を掛ける。テクスチャの赤い所は灰色に抜いてある）
+    const own = new Map();
+    src.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = true;
+      o.receiveShadow = true;
+      if (o.material?.name?.startsWith('KartPaint_')) {
+        if (!own.has(o.material)) { const m = o.material.clone(); m.color.set(color); own.set(o.material, m); }
+        o.material = own.get(o.material);
+      }
+    });
+    for (const o of shell) o.visible = false;
+    body.add(model.body);
+    // 車輪：上の wheels の並び（前の右・前の左・後ろの右・後ろの左。+X が左）。車輪の中心へ動かし、回すのはこの車輪。
+    // 半径が模型（KART.wheelRadius）と違うので、回る速さを半径で直す
+    ['RF', 'LF', 'RR', 'LR'].forEach((k, i) => {
+      const m = model.wheels[k];
+      const w = wheels[i];
+      w.knuckle.position.copy(m.position);
+      m.position.set(0, 0, 0);
+      w.knuckle.add(m);
+      w.wheel = m;
+      w.hub = m;
+      w.spinScale = KART.wheelRadius / Math.max(0.05, w.knuckle.position.y);
+    });
+    // ハンドル：回る軸（ローカル +Z）を運転席と反対の向き（模型と同じ）に、ローカル +X を左に合わせる
+    const zAxis = new THREE.Vector3(-axis[0], -axis[1], -axis[2]).normalize();
+    const xAxis = new THREE.Vector3(1, 0, 0).addScaledVector(zAxis, -zAxis.x).normalize();
+    const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis);
+    // この GLB のハンドルは、コードの模型（z 0.57・高さ 0.65）より 25cm ほど前で低く、座った女の子の手が届かず宙に浮いた。
+    // 柱の向きに沿って STEER_PULL だけ運転席へ引き寄せ、引き寄せたぶんの柱を足す
+    const from = model.steer.position.clone();
+    model.steer.position.addScaledVector(zAxis, -STEER_PULL);
+    const column = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, STEER_PULL, 10), metal);
+    column.position.copy(from).add(model.steer.position).multiplyScalar(0.5);
+    column.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), zAxis);
+    column.castShadow = true;
+    body.add(column);
+    wheelPivot.position.copy(model.steer.position);
+    wheelPivot.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis));
+    model.steer.position.set(0, 0, 0);
+    model.steer.quaternion.copy(wheelPivot.quaternion).invert();
+    steering.add(model.steer);
+    pose();
+  }).catch((error) => console.warn('[vrsample] カートのモデルを読めませんでした（模型のまま）', error));
+
   const state = {
     speed: 0,        // 前向きの速さ（m/s、バックは負）
     steer: 0,        // ハンドルの位置 -1（右）〜 1（左）
@@ -182,8 +258,8 @@ export function createKart({ color = 0x2b6fd6, number = '1', name = 'kart', perf
     const angle = state.steer * steerLimit();
     for (const w of wheels) {
       if (w.front) w.knuckle.rotation.y = angle;
-      w.wheel.rotation.x = spin;
-      w.hub.rotation.x = spin;
+      w.wheel.rotation.x = spin * (w.spinScale ?? 1);
+      w.hub.rotation.x = spin * (w.spinScale ?? 1);
     }
     steering.rotation.z = -state.steer * 1.6;   // ハンドルは前輪の 3 倍ほど回す
   }

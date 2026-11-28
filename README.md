@@ -1094,6 +1094,9 @@ VRM にはモデルごとのライセンスがファイル自身に埋め込ま�
 - `models/gt3.glb`（GT3）："Porsche GT3 RS" by Black Snow
   （https://sketchfab.com/3d-models/porsche-gt3-rs-e738eae819c34d19a31dd066c45e0f3d）、
   **CC BY 4.0**（作者表示が必要。開始画面の「クレジットとライセンス」に出しています）。Blender でポリゴン・テクスチャを減らし、部品をまとめ直しています
+- `models/kart.glb`（カート。`src/kart.js` が読む）："Modular Go-kart" by Jungle Jim
+  （https://sketchfab.com/3d-models/modular-go-kart-35ed6acb8016410d9b2a32d41ef2ca54）、
+  **CC BY 4.0**。Blender でポリゴン・テクスチャを減らし、赤い塗装を灰色に抜いて、プレイヤーは青・女の子はピンクに塗っています
 - `models/lexus.glb`（ガレージの Lexus）：Lexus LC500 WALD スポーツライン（vecarz の配布データ
   `lexus-lc-500-wald-sports-line-wwwvecarzcom.zip`）。**利用条件は配布元のページで確かめてください**
   （公開して再配布してよいかが分かるまでは、リポジトリに入れないでください）

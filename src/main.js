@@ -1,5 +1,6 @@
 import { createVrMenu } from './vrmenu.js';
 import { createGuide } from './guide.js';
+import { createMapImage, createMapScreen } from './map.js';
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { createWorld } from './world.js';
@@ -487,6 +488,8 @@ const talkEye = new THREE.Vector3();
   let guide = null;
   /** VR の中のメニュー（vrmenu.js）。左手の Y で開け閉め */
   let vrMenu = null;
+  /** 画面の地図（map.js）。PC・スマホ */
+  let mapScreen = null;
   renderer.setAnimationLoop((timestamp) => {
     try {
       timer.update(timestamp);
@@ -510,7 +513,8 @@ const talkEye = new THREE.Vector3();
       player.footsteps.setSurface(world.surfaceAt(player.player.position.x, player.player.position.z));
       world.update(dt);
       guide?.update(dt);
-      vrMenu?.update();
+      vrMenu?.update(dt);
+      mapScreen?.update(dt);
       // 女の子がしゃべっているあいだは BGM を下げる
       music.update(dt, { ducked: Boolean(world.voice?.speaking || world.carousel?.musicPlaying) });
       debugPanel.update(elapsed);
@@ -522,7 +526,7 @@ const talkEye = new THREE.Vector3();
         world.talk.placeVr(kartDrive.vehicle.eye(talkEye), kartDrive.vehicle.state.yaw, renderer.xr.isPresenting);
       }
       // GT3 のルームミラー（運転席から見ているときだけ。VR はいつも運転席）
-      // （F40 も同じ作りのミラー）
+      // （Lexus も同じ作りのミラー）
       for (const car of [world.gt3, world.f40]) {
         if (!car?.renderMirror || !MIRROR_ON) continue;
         if (kartDrive.driving && kartDrive.vehicle === car && (renderer.xr.isPresenting || kartDrive.view === 'first')) car.renderMirror(renderer, scene);
@@ -684,7 +688,7 @@ const talkEye = new THREE.Vector3();
       const buttons = pedals('アクセル', 'ブレーキ');
       const chips = [view, gyro];
       if (kind === 'kart' || kind === 'gt3' || kind === 'bike') buttons.push(top(btn('Space', ' ', 'サイド', 'small')));
-      // GT3・F40：シフトは右の上の段（PC は ＞ ＜）、上に AT / MT
+      // GT3・Lexus：シフトは右の上の段（PC は ＞ ＜）、上に AT / MT
       if (kind === 'gt3') { buttons.push(top(btn('KeyX', 'x', 'シフト▲', 'small')), top(btn('KeyZ', 'z', 'シフト▼', 'small'))); chips.push(btn('KeyQ', 'q', 'AT/MT')); }
       return { buttons, chips, dpad: steer };
     }
@@ -762,9 +766,37 @@ const talkEye = new THREE.Vector3();
     again: params.get('guide') === 'again',
   });
   // VR の中のメニュー（売り物の水準 B3）：音量・時間帯・操作・VR をやめる
-  vrMenu = createVrMenu({ renderer, camera, interactables: world.interactables, theme: () => world.theme, cycleTheme: () => world.cycleTheme(), setSeated: (on) => player.setSeated(on) });
+  // 丘の地図（map.js）。PC・スマホは「🗺 マップ」・N キー、VR はメニューの「マップ」。札か地面を選ぶと移る
+  const mapImage = createMapImage({ renderer, scene });
+  const mapLook = new THREE.Vector3();
+  const mapGirl = new THREE.Vector3();
+  const mapMarks = () => {
+    camera.getWorldPosition(mapGirl);
+    const player = { x: mapGirl.x, z: mapGirl.z };
+    camera.getWorldDirection(mapLook);
+    player.yaw = Math.atan2(-mapLook.x, -mapLook.z);
+    const g = world.girlPosition?.(mapGirl);
+    return { player, girl: g ? { x: g.x, z: g.z } : null };
+  };
+  const mapPick = (hit) => {
+    if (kartDrive.driving) return '乗り物を降りてから（席を立ってから）選んでください';
+    const ok = hit.place
+      ? world.mapTravel(hit.place.x, hit.place.z, hit.place.look ?? null, hit.place.travel)
+      : world.mapTravel(hit.x, hit.z, null);
+    return ok ? true : 'そこへは行けません';
+  };
+  mapScreen = createMapScreen({ image: mapImage, marks: mapMarks, onPick: mapPick });
+  window.addEventListener('keydown', (e) => {
+    if (e.target?.tagName === 'INPUT' || renderer.xr.isPresenting) return;
+    if (e.code === 'KeyN' && !e.repeat) mapScreen.toggle();
+    else if (e.code === 'Escape' && mapScreen.open) mapScreen.close();
+  });
+  vrMenu = createVrMenu({
+    renderer, camera, interactables: world.interactables, theme: () => world.theme, cycleTheme: () => world.cycleTheme(), setSeated: (on) => player.setSeated(on),
+    map: { image: mapImage, marks: mapMarks, onPick: mapPick },
+  });
   scene.add(vrMenu.panel);
-  Object.assign(window.__vrsample, { mixer, contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView, guide, vrMenu });
+  Object.assign(window.__vrsample, { mixer, contextAction, updateActionHint, world, player, desktop, touch, debugPanel, music, kartDrive, resetView, guide, vrMenu, mapScreen, mapImage });
 
   // 女の子の声の状態を開始画面に出す。日本語の声が無い端末では、入れ方を案内する
   const voiceStatusEl = document.getElementById('voice-status');

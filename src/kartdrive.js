@@ -119,7 +119,7 @@ export function createKartDrive({ renderer, camera, player, desktop, world, kart
   function bridgeTry() {
     if (bridge.seen || bridge.connected || wheel.simVisible || renderer.xr.isPresenting) bridge.connectNow();
   }
-  /** ハンドルで運転する乗り物（kind。カートは kind を持たないので 'kart'）。F40 は GT3 と同じ 'gt3' */
+  /** ハンドルで運転する乗り物（kind。カートは kind を持たないので 'kart'）。Lexus は GT3 と同じ 'gt3' */
   const DRIVEN = new Set(['kart', 'bike', 'gt3', 'jetski', 'cruiser', 'cessna']);
   /**
    * ハンコン（入力の HID・FFB）を閉じてから開き直す。beep：終わったら音で知らせる（VR では画面の知らせが見えない。

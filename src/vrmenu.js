@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as mixer from './mixer.js';
 import { comfort, saveComfort } from './comfort.js';
+import { drawMap, pickMap } from './map.js';
 
 /**
  * VR の中のメニュー（売り物の水準 B3）。
@@ -10,6 +11,7 @@ import { comfort, saveComfort } from './comfort.js';
  *
  *   BGM の音量・声の音量 … 板の左の「－」・右の「＋」。このブラウザに覚える（PC でも効く）
  *   時間帯           … 昼 → 夕方 → 夜
+ *   マップ           … 丘の地図（map.js）。場所の札か地面を指してトリガーで、そこへ移る
  *   操作のしかた      … VR の操作の一覧に切り替える（もう一度選ぶと戻る）
  *   VR をやめる       … VR を終える
  *   閉じる           … 板を消す（Y ボタンでも）
@@ -19,7 +21,7 @@ const LEVELS_KEY = 'vrsample.levels';
 const W = 512;
 const H = 680;
 const ROW0 = 70;
-const ROW_H = 54;
+const ROW_H = 50;
 
 const HELP = [
   '歩く：左スティック　向き：右スティック',
@@ -47,7 +49,7 @@ export function loadLevels() {
  * @param {() => string} options.theme いまの時間帯
  * @param {() => string} options.cycleTheme 時間帯を次へ。替えた先を返す
  */
-export function createVrMenu({ renderer, camera, interactables, theme, cycleTheme, setSeated = null }) {
+export function createVrMenu({ renderer, camera, interactables, theme, cycleTheme, setSeated = null, map = null }) {
   const levels = loadLevels();
   const apply = () => {
     mixer.setBusLevel('music', levels.music);
@@ -57,8 +59,10 @@ export function createVrMenu({ renderer, camera, interactables, theme, cycleThem
   const save = () => { try { localStorage.setItem(LEVELS_KEY, JSON.stringify(levels)); } catch { /* 覚えられなくてもよい */ } };
 
   const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
+  // 地図の小さな字も読めるように、板の絵は 2 倍の細かさで描く（座標は W × H のまま）
+  const RES = 2;
+  canvas.width = W * RES;
+  canvas.height = H * RES;
   const ctx = canvas.getContext('2d');
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -83,12 +87,18 @@ export function createVrMenu({ renderer, camera, interactables, theme, cycleThem
     { label: '視野しぼり（酔い止め）', value: comfort.vignette ? '入' : '切', act: () => { comfort.vignette = !comfort.vignette; saveComfort(); } },
     { label: '座って遊ぶ', value: comfort.seated ? `入（+${Math.round(comfort.heightOffset * 100)}cm）` : '切', act: () => setSeated?.(!comfort.seated) },
     { label: 'コースター', value: comfort.coaster === 'full' ? '宙返りあり*' : 'やさしい*', act: () => { comfort.coaster = comfort.coaster === 'full' ? 'gentle' : 'full'; saveComfort(); } },
+    ...(map ? [{ label: 'マップ（行きたい所へ）', act: () => { page = 'map'; mapMsg = ''; } }] : []),
     { label: '操作のしかた', act: () => { page = 'help'; } },
     { label: 'VR をやめる', act: () => { close(); renderer.xr.getSession()?.end(); }, warn: true },
     { label: '閉じる', act: () => close() },
   ];
 
+  /** 地図のページ：地図の描いた範囲（板の上の W × H の座標）と、移れなかったときの一言 */
+  let mapLayout = null;
+  let mapMsg = '';
+  const MAP_FOOT = 64;
   function draw() {
+    ctx.setTransform(RES, 0, 0, RES, 0, 0);
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = 'rgba(10, 16, 34, 0.92)';
     roundRect(0, 0, W, H, 28);
@@ -100,8 +110,25 @@ export function createVrMenu({ renderer, camera, interactables, theme, cycleThem
     ctx.font = 'bold 30px system-ui, sans-serif';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-    ctx.fillText(page === 'help' ? '操作のしかた' : 'メニュー', 28, 38);
-    if (page === 'help') {
+    ctx.fillText(page === 'help' ? '操作のしかた' : page === 'map' ? 'マップ' : 'メニュー', 28, 38);
+    if (page === 'map') {
+      ctx.fillStyle = mapMsg ? '#ffcf8a' : '#8fa3cc';
+      ctx.font = '18px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(mapMsg || '札か地面を指してトリガー', W - 24, 40);
+      mapLayout = drawMap(ctx, map.image.canvas, 12, 62, W - 24, H - 62 - MAP_FOOT - 6, { ...map.marks(), scale: 1.05 });
+      const y = H - MAP_FOOT + 4;
+      for (const [i, label] of ['戻る', '閉じる'].entries()) {
+        const x = 18 + i * (W - 36) / 2;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        roundRect(x + 4, y, (W - 36) / 2 - 8, MAP_FOOT - 16, 12);
+        ctx.fill();
+        ctx.fillStyle = '#e8ecf8';
+        ctx.font = '26px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x + (W - 36) / 4, y + (MAP_FOOT - 16) / 2);
+      }
+    } else if (page === 'help') {
       ctx.fillStyle = '#e8ecf8';
       ctx.font = '24px system-ui, sans-serif';
       HELP.forEach((line, i) => ctx.fillText(line, 28, ROW0 + 22 + i * 52));
@@ -156,6 +183,20 @@ export function createVrMenu({ renderer, camera, interactables, theme, cycleThem
     if (page === 'help') { page = 'main'; draw(); return; }
     const px = uv.x * W;
     const py = (1 - uv.y) * H;
+    if (page === 'map') {
+      if (py > H - MAP_FOOT) {
+        if (px < W / 2) page = 'main';
+        else { close(); return; }
+      } else if (mapLayout) {
+        const hit = pickMap(mapLayout, (px - mapLayout.ox) / mapLayout.mw, (py - mapLayout.oy) / mapLayout.mh);
+        if (!hit) return;
+        const result = map.onPick(hit);
+        if (typeof result === 'string') mapMsg = result;
+        else if (result) { close(); return; }
+      }
+      draw();
+      return;
+    }
     const i = Math.floor((py - ROW0) / ROW_H);
     const row = rows()[i];
     if (!row) return;
@@ -195,6 +236,7 @@ export function createVrMenu({ renderer, camera, interactables, theme, cycleThem
   }
 
   let yWas = false;
+  let redrawIn = 0;
   // 音の入れ物（AudioContext）は、最初の操作のあとで作られる。できたときに覚えた音量を入れ直す
   let applied = false;
   return {
@@ -203,8 +245,12 @@ export function createVrMenu({ renderer, camera, interactables, theme, cycleThem
     toggle() { if (panel.visible) close(); else open(); },
     press,
     levels,
-    /** 毎フレーム：左手の Y ボタンで開け閉め。VR を出たら閉じる */
-    update() {
+    /** 毎フレーム：左手の Y ボタンで開け閉め。VR を出たら閉じる。地図のページは自分と女の子の印を描き直す */
+    update(dt = 0) {
+      if (panel.visible && page === 'map') {
+        redrawIn -= dt;
+        if (redrawIn <= 0) { redrawIn = 0.25; draw(); }
+      }
       if (!applied && mixer.mixerState().created) { apply(); applied = true; }
       const session = renderer.xr.isPresenting ? renderer.xr.getSession() : null;
       if (!session) { if (panel.visible) close(); yWas = false; return; }

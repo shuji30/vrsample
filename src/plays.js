@@ -24,7 +24,7 @@ export const PLAY_RULES = [
   ['fishing', ['kart', 'bike', 'seesaw', 'buranko']],
   ['horse', ['kart', 'bike', 'seesaw', 'buranko', 'fishing']],
   ['carousel', ['kart', 'bike', 'seesaw', 'buranko', 'fishing', 'horse']],
-  // F40 に乗ったら、していた遊びをやめて助手席へ
+  // Lexus に乗ったら、していた遊びをやめて助手席へ
   ['f40', [...PARK, 'ferris', 'coaster', 'golf', 'seat', 'beach']],
   // 飛行場・砂浜へ行ったら、していた遊びをやめて一緒に来る
   ['cessna', []],

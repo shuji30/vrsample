@@ -166,7 +166,7 @@ export function createWorld(renderer, scene, {
     if (fireworks) fireworks.active = key === 'night';
     // 夜は沖の灯台が光る
     park?.hill?.setNight(key === 'night');
-    // 高速道路の街灯（夕方から灯す）と、F40 のヘッドライト（夜）
+    // 高速道路の街灯（夕方から灯す）と、Lexus のヘッドライト（夜）
     road?.setNight(key === 'night' ? 1 : key === 'sunset' ? 0.5 : 0);
     // 家の外灯（夕方から灯す）
     houseExterior?.setNight(key === 'night' ? 1 : key === 'sunset' ? 0.35 : 0);
@@ -356,11 +356,11 @@ export function createWorld(renderer, scene, {
   const GT3_PARK = { x: 14.5, z: -0.6, yaw: -Math.PI / 2, y: 0.08 };   // y は飾り台の上面
   const gt3 = createGT3({ park: GT3_PARK });
   scene.add(gt3.group);
-  // 高速道路と、家の東の芝生の東の端のガレージ。F40 ふうの車（運転は GT3 と同じ。道の上だけを走る）
+  // 高速道路と、家の東の芝生の東の端のガレージ。Lexus（models/lexus.glb。運転は GT3 と同じ。道の上だけを走る）
   road = createRoad();
   scene.add(road.group);
   road.setNight(themeKey === 'night' ? 1 : themeKey === 'sunset' ? 0.5 : 0);
-  const f40 = createGT3({ park: F40_PARK, color: 0xc8161d, style: 'f40', track: road.track, name: 'f40' });
+  const f40 = createGT3({ park: F40_PARK, color: 0xc8161d, style: 'lexus', track: road.track, name: 'f40' });
   scene.add(f40.group);
   // ヘッドライト（本物の光源 2 つ。影は付けない）。夜に乗っているあいだだけ灯す
   const headlights = [-1, 1].map((side) => {
@@ -374,7 +374,7 @@ export function createWorld(renderer, scene, {
   updateHeadlights = () => {
     const on = f40Ridden && (themeKey === 'night' || themeKey === 'sunset');
     for (const l of headlights) { l.visible = on; l.intensity = themeKey === 'night' ? 90 : 45; }
-    f40.model.headMat.emissiveIntensity = on ? 3 : 0.8;
+    for (const m of f40.model.headMats) m.emissiveIntensity = on ? 3 : 0.8;
   };
   let f40Ridden = false;
   let f40Wait = 0;
@@ -602,7 +602,7 @@ export function createWorld(renderer, scene, {
       }
     };
   }
-  // F40：プレイヤーが運転席に座ると、女の子が助手席に来る
+  // Lexus：プレイヤーが運転席に座ると、女の子が助手席に来る
   const f40Game = camera ? createF40Game({ character, car: f40, voice, playerHead: (out) => camera.getWorldPosition(out), isNight: () => themeKey === 'night' }) : null;
   if (f40Game) {
     f40Game.onFinish = () => {
@@ -706,6 +706,59 @@ export function createWorld(renderer, scene, {
     }
   }
   let onPlayerTravel = null;
+  /**
+   * 地図（map.js）で選んだ所へ移る。暗くしてから。乗り物に乗っている・座っているあいだは main.js が呼ばない。
+   * (x, z) が歩けない所（池の水・遊具の中・矩形の外）なら、いちばん近い歩ける所へ。
+   * 砂浜と丘の上・飛行場のあいだを行き来するときは、看板と同じく砂浜・飛行場の遊びに知らせる（女の子も移る）。
+   * 女の子はふだんは移さない（キャッチボールは庭へ連れ戻すので）。遊びを始めると、いつものように来る
+   * @returns {boolean} 移ったか
+   */
+  function mapTravel(x, z, look = null, dest = null) {
+    // 看板と同じ行き来（飛行場）。砂浜にいたら、丘の上を通って行く扱いにする
+    if (dest) {
+      if (beachGame?.wanted) { beachGame.playerHere = false; travelPoint.set(HILL_RETURN.x, 0, HILL_RETURN.z); beachGame.leave(travelPoint); }
+      travel(dest);
+      return true;
+    }
+    const p = freeSpotNear(x, z);
+    if (!p) return false;
+    if (!look && camera) {
+      camera.getWorldDirection(travelPoint);
+      look = { x: travelPoint.x, z: travelPoint.z };
+    }
+    const len = Math.hypot(look?.x ?? 0, look?.z ?? 0);
+    look = len > 1e-4 ? { x: look.x / len, z: look.z / len } : { x: 0, z: -1 };
+    const toBeach = inBeach(p.x, p.z) || onPier(p.x, p.z);
+    blackout();
+    onPlayerTravel?.(p.x, groundHeight(p.x, p.z), p.z, look);
+    if (beachGame) {
+      if (toBeach && !beachGame.wanted) beachGame.playerHere = true;
+      else if (!toBeach && beachGame.wanted) { beachGame.playerHere = false; travelPoint.set(p.x, 0, p.z); beachGame.leave(travelPoint); }
+    }
+    if (cessnaGame?.wanted) { cessnaGame.playerHere = false; travelPoint.set(p.x, 0, p.z); cessnaGame.leave(travelPoint); }
+    return true;
+  }
+  /** (x, z) のまわりで、プレイヤーが立てるいちばん近い所（10m 以内）。立てるかは「寄せても動かない」で見る */
+  function freeSpotNear(x, z) {
+    const inset = 0.3;
+    const start = clampToRegions(x, z, inset);
+    const ok = (px, pz) => {
+      const q = clampToBounds(px, pz, inset, { x: px, z: pz });
+      // 崖の階段の門のすぐ前は、立つと砂浜へ運ばれるので避ける
+      const gate = Math.abs(px - STAIRS.x) < STAIRS_GATE_HALF + 0.3 && pz < STAIRS_TOP_AREA.minZ + 0.6;
+      return !gate && Math.abs(q.x - px) < 1e-6 && Math.abs(q.z - pz) < 1e-6;
+    };
+    if (ok(start.x, start.z)) return start;
+    for (let r = 0.3; r <= 10; r += 0.3) {
+      const n = Math.max(8, Math.round(r * 8));
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2;
+        const q = clampToRegions(start.x + Math.cos(a) * r, start.z + Math.sin(a) * r, inset);
+        if (ok(q.x, q.z)) return q;
+      }
+    }
+    return null;
+  }
   beach.onTravel = travel;
   beach.onBallSelect = () => {
     if (!camera || !beachGame?.wanted) return;
@@ -912,8 +965,8 @@ export function createWorld(renderer, scene, {
     // 厩の建物と馬場の柵、メリーゴーランドの回転台も同じように（馬場の入口は通れる）
     // 飾ってある GT3（丘の上にあるとき）も、歩いて通り抜けない
     const gt3Blocks = (x, z) => !gt3.state.atCircuit && Math.abs(x - GT3_PARK.x) < 2.5 + inset && Math.abs(z - GT3_PARK.z) < 1.2 + inset;
-    // ガレージの壁と、ガレージに止めてある F40（走りに出ているあいだは、その場所を歩ける）
-    const f40Blocks = (x, z) => f40AtHome() && Math.abs(x - F40_PARK.x) < 2.35 + inset && Math.abs(z - F40_PARK.z) < 1.05 + inset;
+    // ガレージの壁と、ガレージに止めてある Lexus（走りに出ているあいだは、その場所を歩ける）
+    const f40Blocks = (x, z) => f40AtHome() && Math.abs(x - F40_PARK.x + 0.04) < 2.45 + inset && Math.abs(z - F40_PARK.z) < 1.0 + inset;
     // ビリヤードの部屋の外壁と、台
     const solid = (x, z) => stableBlocks(x, z, inset) || carouselBlocks(x, z, inset) || ferrisBlocks(x, z, inset) || gt3Blocks(x, z) || road.garageBlocks(x, z, inset) || f40Blocks(x, z)
       || annexBlocks(x, z, inset) || tableBlocks(x, z, inset);
@@ -1031,7 +1084,7 @@ export function createWorld(renderer, scene, {
     camera.getWorldPosition(eye);
     lighting.setInside(eyeInHouse(eye));
     // サーキットにいるあいだは、プレイヤーの車のまわりに影を落とす
-    // 高速道路を走っているあいだは、F40 のまわりに
+    // 高速道路を走っているあいだは、Lexus のまわりに
     if (f40Ridden && !f40AtHome()) {
       lighting.setShadowFocus(f40.group.position.x, f40.group.position.z, f40.group.position.y);
       shadowAt = 'road';
@@ -1271,7 +1324,7 @@ export function createWorld(renderer, scene, {
     // セスナ：乗ったのに女の子がいない（飛行場に来ていない）ときは、3 秒で動けるようにする
     cessnaWait = cessnaRidden && cessna.hold && !cessnaGame?.active ? cessnaWait + dt : 0;
     if (cessnaWait > 3) cessna.hold = false;
-    // F40：女の子が助手席に座るまでは動かない（向かっているなら 30 秒まで、来られないなら 3 秒で動ける）
+    // Lexus：女の子が助手席に座るまでは動かない（向かっているなら 30 秒まで、来られないなら 3 秒で動ける）
     f40Wait = f40Ridden && !f40Game?.seated ? f40Wait + dt : 0;
     f40.locked = f40Ridden && !f40Game?.seated && f40Wait < (f40Game?.active ? 30 : 3);
     // 乗ったのに女の子が来ない（ほかの遊びの途中など）ときは、3 秒で動けるようにする
@@ -1699,6 +1752,10 @@ export function createWorld(renderer, scene, {
     talk,
     /** 砂浜へ / 丘の上へ（看板と同じ） */
     travel,
+    /** 地図で選んだ所へ（map.js）。移ったら true */
+    mapTravel,
+    /** 女の子の足もと（地図に出す） */
+    girlPosition: (out = new THREE.Vector3()) => (character.body.loaded ? character.group.getWorldPosition(out) : null),
     /** main.js から：プレイヤーを (x, y, z) に、look の向きで立たせる */
     set onPlayerTravel(fn) { onPlayerTravel = fn; },
     /** PC の F：砂浜にいるときは、近くのビーチボールを打つ・貝がらを拾う。使ったら true */

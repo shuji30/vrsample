@@ -13,7 +13,13 @@ models/girl-onepiece.vrm Blender で作った自前のモデル・ワンピー�
 models/girl-onepiece2.vrm Blender で作った自前のモデル・ワンピースコーデ 2（VRM 1.0。白いレースのワンピース・昭和のアイドル風。作り方は blender/girl-onepiece2/）
 models/corgi.glb        Blender で作った自前のモデル・コーギーの「こむぎ」（GLB。骨入り。作り方は blender/corgi/）
 models/sarusuberi.glb   Blender で作った自前のモデル・さるすべりの木（GLB。満開のピンク。作り方は blender/sarusuberi/）
+models/gt3.glb          GT3 の車。porsche_gt3_rs.glb（"Porsche GT3 RS" by Black Snow、Sketchfab、CC BY 4.0）を Blender で軽くしたもの
+models/lexus.glb        ガレージの Lexus。lexus-lc-500-wald-sports-line-wwwvecarzcom.zip（vecarz）を Blender で軽くしたもの（利用条件は要確認）
 ```
+
+`gt3.glb`・`lexus.glb` の中は、Body（車体と室内）・Wheel_LF/RF/LR/RR（車輪。原点が中心）・Steer（ハンドル。
+extras の axis が回る軸）に分けてあります（`src/carmodel.js` が読む）。元のファイル（`porsche_gt3_rs.glb`・
+`lexus-lc-500-...zip`）は大きいので、リポジトリには入れません（`.gitignore`）。
 
 別のファイルを試したいときは URL で差し替えられます。
 

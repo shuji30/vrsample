@@ -2,9 +2,10 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CIRCUIT, circuitNearest, circuitFrame, CIRCUIT_LENGTH } from './circuit.js';
 import { createCircuitMap } from './circuitmap.js';
+import { attachCarModel, CAR_MODELS } from './carmodel.js';
 
 /**
- * GT3 のレースカー（乗り物の窓口。kartdrive.js の乗り降り・VR の目線合わせ・視点・ハンコン・FFB を使う）。
+ * GT3 のレースカー（見た目は Porsche GT3 RS の GLB。carmodel.js。乗り物の窓口。kartdrive.js の乗り降り・VR の目線合わせ・視点・ハンコン・FFB を使う）。
  *
  * 6 速のシーケンシャル。AT（自動で変速）と MT（手動）を切り替えられる（Q・パッドの十字キー上・
  * VR の右スティックの押し込み・ハンコンに割り当てたボタン。選んだほうは localStorage に覚える）。
@@ -91,9 +92,10 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   // 灯火
   const lightMat = new THREE.MeshStandardMaterial({ color: 0xfff6d8, emissive: 0xfff0c0, emissiveIntensity: 0.8 });
   const tailMat = new THREE.MeshStandardMaterial({ color: 0xff3020, emissive: 0xff2010, emissiveIntensity: 0.4 });
-  if (style === 'f40') {
-    // F40 ふう（赤い、低いくさび形。前は低く、ボンネットの上にリトラクタブルのふた、後ろは全幅の大きなウイング、
-    // エンジンの上はすだれ、ドアに空気の取り入れ口、丸いテール。社名・エンブレムは付けない）
+  if (style === 'lexus') {
+    // ガレージの Lexus。見た目は models/lexus.glb（carmodel.js が読んで入れ替える）。ここで組むのは、読み込むまで・読めないときの
+    // 代わりの模型（もとの F40 ふうの、赤い低いくさび形。前は低く、ボンネットの上にリトラクタブルのふた、後ろは全幅の大きなウイング、
+    // エンジンの上はすだれ、ドアに空気の取り入れ口、丸いテール）
     // 車体の下半分。前は 1 つの箱で、車室まで詰まっていたので、助手席の女の子の脚・腰が埋まっていた。
     // 車室（左右 ±0.86・前後 -1.2〜0.9）をくり抜き、前・後ろのかたまり、左右のサイドシル、床下の板、
     // ダッシュボード（下は足もとの空き）に分けた。外から見た形（幅 2.0・高さ 0.21〜0.71・長さ 4.45）は同じ
@@ -140,7 +142,7 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
       const rearFender = shade(new THREE.Mesh(new RoundedBoxGeometry(0.42, 0.34, 1.5, 2, 0.1), paint));
       rearFender.position.set(side * 0.78, 0.8, -1.35);
       body.add(rearFender);
-      // ウイングは後ろのフェンダーから立ち上がる板で支える（F40 の一体のウイング）
+      // ウイングは後ろのフェンダーから立ち上がる板で支える（一体のウイング）
       const plate = shade(new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.26, 0.5), paint));
       plate.position.set(side * 0.93, 1.08, -2.02);
       body.add(plate);
@@ -263,6 +265,7 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
     }
   }
   // 室内：床・シート・ハンドル
+  const mirrorAt = CAR_MODELS[style]?.mirror ?? MIRROR;
   const floor = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.05, 2.0), carbon);
   floor.position.set(0, 0.32, -0.2);
   body.add(floor);
@@ -281,6 +284,8 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   // 真ん中の四角い部分（ハブ）。メーター（下の dash）をこの運転席側の面にはめ込む
   const hub = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.108, 0.04), carbon);
   steering.add(hub);
+  // ここまでが車体（GLB が読めたら隠す。carmodel.js）
+  const shell = body.children.slice();
   body.add(steering);
   // 車輪（前の 2 つはハンドルで切れる）
   const tire = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.85 });
@@ -301,13 +306,14 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
     wheels.push({ hold, spin, front: z > 0 });
   }
   // ルームミラーの枠（屋根の前の端、フロントガラスの上の真ん中）。映るのはプレイヤーの車だけ（createGT3）
-  const mirrorFrame = new THREE.Mesh(new RoundedBoxGeometry(MIRROR.w + 0.03, MIRROR.h + 0.03, 0.03, 2, 0.012), carbon);
-  mirrorFrame.position.set(MIRROR.x, MIRROR.y, MIRROR.z + 0.02);
+  const mirrorFrame = new THREE.Mesh(new RoundedBoxGeometry(mirrorAt.w + 0.03, mirrorAt.h + 0.03, 0.03, 2, 0.012), carbon);
+  mirrorFrame.position.set(mirrorAt.x, mirrorAt.y, mirrorAt.z + 0.02);
   mirrorFrame.lookAt(SEAT.x, 1.12, SEAT.z - 0.05);
   body.add(mirrorFrame);
   const mirrorStay = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.07, 0.02), carbon);
-  mirrorStay.position.set(MIRROR.x, MIRROR.y + 0.06, MIRROR.z + 0.03);
+  mirrorStay.position.set(mirrorAt.x, mirrorAt.y + 0.06, mirrorAt.z + 0.03);
   body.add(mirrorStay);
+  shell.push(mirrorStay);
   // メーター（ハンドルの奥）。gt3.js の update が描く
   const dashCanvas = document.createElement('canvas');
   dashCanvas.width = 256;
@@ -316,7 +322,7 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   dashTex.colorSpace = THREE.SRGBColorSpace;
   // ハンドルの真ん中の四角い部分（ハブ）の、運転席側の面にはめ込む（実車の GT3 のハンドルのように、ハンドルと一緒に回る）。
   // 前は車の真ん中（センターコンソール）の上段にあった。ハブはもとから目と前の道のあいだにあるので、新たに道を隠さない。
-  // ハブの面（ローカル +Z）から 1mm 浮かせる（重なってちらつかないように）。F40 も同じ
+  // ハブの面（ローカル +Z）から 1mm 浮かせる（重なってちらつかないように）。GLB の車は、その車のメーターの所へ（carmodel.js）
   const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.184, 0.092), new THREE.MeshBasicMaterial({ map: dashTex, toneMapped: false }));
   dash.position.set(0, 0, 0.021);
   steering.add(dash);
@@ -332,7 +338,7 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   const mapPlane = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.15), new THREE.MeshBasicMaterial({ map: mapTex, toneMapped: false }));
   // ダッシュボードの上に立てた GPS（カーナビ）ふう：黒い縁の箱と、ダッシュボードへの短い台。車の真ん中寄りに置き、
   // 運転席の目のほうへ向ける（車の前を向いて +X が運転席の側）。ダッシュボードの上（車体の上面 0.81）に載せ、上の縁は運転席から見たボンネットの線より下
-  // （前の道を隠さない）。F40 は高速道路で地図を描かないので付けない
+  // （前の道を隠さない）。Lexus は高速道路で地図を描かないので付けない
   const eyeAt = new THREE.Vector3(SEAT.x, 1.12, SEAT.z - 0.05);
   const unit = (x, y, z) => {
     const g = new THREE.Group();
@@ -350,7 +356,7 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   const gpsStand = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.03, 0.08, 10), carbon);
   gpsStand.position.set(0, -0.1, -0.025);
   gps.add(gpsStand);
-  gps.visible = style !== 'f40';
+  gps.visible = style !== 'lexus';
   // ラップタイマー（青い枠の表示器）。ハンドルと GPS のあいだのダッシュボードの上に（運転席から見てハンドルのすぐ右。
   // ドア側に置くと、ハンドルの輪に隠れた）。createGT3 の update が描く
   const lapCanvas = document.createElement('canvas');
@@ -369,8 +375,15 @@ export function createGT3Model({ color = 0x2a5ad8, accent = 0xffffff, number = '
   const timerStand = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), carbon);
   timerStand.position.set(0, -0.066, -0.02);
   timer.add(timerStand);
-  timer.visible = style !== 'f40';
-  return { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, headMat: lightMat, mapPlane, mapCanvas, mapTex, mirrorFrame, gps, lapTimer: timer, lapCanvas, lapTex };
+  timer.visible = style !== 'lexus';
+  // tailMats・headMats：ブレーキ・夜に光らせる材質（GLB の車は、その車のライトも足す。carmodel.js）
+  const model = { root, body, steering, wheels, dash, dashCanvas, dashTex, tailMat, headMat: lightMat, tailMats: [tailMat], headMats: [lightMat], mapPlane, mapCanvas, mapTex, mirrorFrame, gps, lapTimer: timer, lapCanvas, lapTex };
+  // 見た目を GLB（Porsche GT3 RS・Lexus）に入れ替える。読めないときは、ここで組んだ模型のまま
+  if (CAR_MODELS[style]) {
+    attachCarModel(model, style, { eyeAt, shell, color: style === 'gt3' ? color : null })
+      .catch((err) => console.warn(`[car] ${CAR_MODELS[style].url} を読めませんでした。コードで組んだ模型のまま走ります`, err));
+  }
+  return model;
 }
 
 /**
@@ -548,7 +561,7 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
       if (w.front) w.hold.rotation.y = delta;
     }
     model.steering.rotation.z = steer * (input.kind === 'wheel' ? 1.6 : 1.2);
-    model.tailMat.emissiveIntensity = brake > 0.1 ? 2.5 : 0.4;
+    for (const m of model.tailMats) m.emissiveIntensity = brake > 0.1 ? 2.5 : 0.4;
     dashIn -= dt;
     if (dashIn < 0) { drawDash(); dashIn = 0.1; }
     mapIn -= dt;
@@ -632,18 +645,19 @@ export function createGT3({ park, color = 0x2a5ad8, number = '7', track = null, 
   mirrorTarget.texture.wrapS = THREE.RepeatWrapping;
   mirrorTarget.texture.repeat.x = -1;
   mirrorTarget.texture.offset.x = 1;
-  const mirror = new THREE.Mesh(new THREE.PlaneGeometry(MIRROR.w, MIRROR.h), new THREE.MeshBasicMaterial({ map: mirrorTarget.texture, color: 0xd8dde4 }));
+  const MR = CAR_MODELS[style]?.mirror ?? MIRROR;
+  const mirror = new THREE.Mesh(new THREE.PlaneGeometry(MR.w, MR.h), new THREE.MeshBasicMaterial({ map: mirrorTarget.texture, color: 0xd8dde4 }));
   mirror.name = 'gt3-mirror';
-  mirror.position.set(MIRROR.x, MIRROR.y, MIRROR.z);
+  mirror.position.set(MR.x, MR.y, MR.z);
   model.body.add(mirror);
   // 向きは枠と同じに（lookAt はワールドの点を取るので、置き場所へ動かした後の車では使えない）
   mirror.quaternion.copy(model.mirrorFrame.quaternion);
   mirror.visible = false;   // 乗って運転席から見ているときだけ（renderMirror）
   // far は天球（半径 2600）より外。手前で切ると空が真っ黒になる
-  const mirrorCam = new THREE.PerspectiveCamera(13, MIRROR.w / MIRROR.h, 0.3, 3000);
-  mirrorCam.position.set(MIRROR.x, MIRROR.y, MIRROR.z);
+  const mirrorCam = new THREE.PerspectiveCamera(13, MR.w / MR.h, 0.3, 3000);
+  mirrorCam.position.set(MR.x, MR.y, MR.z);
   // 真後ろの少し下を見る（車のローカルで向きを決める）
-  mirrorCam.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(mirrorCam.position, new THREE.Vector3(MIRROR.x, 0.95, -15), new THREE.Vector3(0, 1, 0)));
+  mirrorCam.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(mirrorCam.position, new THREE.Vector3(MR.x, MR.y - 0.34, -15), new THREE.Vector3(0, 1, 0)));
   model.body.add(mirrorCam);
   let mirrorFrame = 0;
 

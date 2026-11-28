@@ -573,21 +573,25 @@ export function createBeach() {
     const pos = geo.attributes.position;
     const cx = (BEACH.minX + BEACH.maxX) / 2;
     const cz = BEACH.shoreZ + 1;
+    // 波打ちぎわの線（shoreZ）の地面が海より高い所（桟橋より東の丘の側など）は海が無いので、泡を出さない
+    const sea = new Float32Array(pos.count);
     for (let k = 0; k < pos.count; k++) {
       const x = pos.getX(k) + cx;
       const z = pos.getZ(k) + cz;
       pos.setXYZ(k, x, Math.max(hillHeight(x, z), SEA_LEVEL) + 0.02, z);
+      sea[k] = 1 - THREE.MathUtils.smoothstep(hillHeight(x, BEACH.shoreZ) - SEA_LEVEL, 0.3, 0.7);
     }
+    geo.setAttribute('aSea', new THREE.BufferAttribute(sea, 1));
     geo.computeVertexNormals();
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, transparent: true, depthWrite: false });
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uEdge = foamUniforms.uEdge;
       shader.uniforms.uTime = foamUniforms.uTime;
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPos;')
-        .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        .replace('#include <common>', '#include <common>\nattribute float aSea;\nvarying vec3 vWorldPos;\nvarying float vSea;')
+        .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvSea = aSea;');
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform float uEdge;\nuniform float uTime;\nvarying vec3 vWorldPos;')
+        .replace('#include <common>', '#include <common>\nuniform float uEdge;\nuniform float uTime;\nvarying vec3 vWorldPos;\nvarying float vSea;')
         .replace('#include <color_fragment>', `#include <color_fragment>
           // 泡の先（edge）のぎざぎざ。先は白い泡、その後ろ（沖）は薄い泡、先より浜の側は濡れた砂の影
           float wob = sin(vWorldPos.x * 0.9 + uTime * 0.7) * 0.25 + sin(vWorldPos.x * 2.3 - uTime * 1.1) * 0.12;
@@ -597,7 +601,7 @@ export function createBeach() {
             * (0.5 + 0.5 * sin(vWorldPos.x * 3.1 + vWorldPos.z * 2.7 + uTime));
           float wet = smoothstep(0.1, 0.3, d) * (1.0 - smoothstep(0.3, 2.2, d));
           diffuseColor.rgb = mix(vec3(0.42, 0.35, 0.22), vec3(1.0), step(d, 0.12));
-          diffuseColor.a = max(max(front * 0.95, lace), wet * 0.28);`);
+          diffuseColor.a = max(max(front * 0.95, lace), wet * 0.28) * vSea;`);
     };
     const foam = new THREE.Mesh(geo, mat);
     foam.renderOrder = 2;

@@ -25,6 +25,12 @@ export const CAR_MODELS = {
     paint: (name) => name.startsWith('TwiXeR_992_carPaint'),
     head: (name) => name.startsWith('CarHead_'),
     tail: (name) => name.startsWith('CarTail_'),
+    /**
+     * ガラス（窓・ライトのカバー・黒いガラス）。GLB では金属度が書かれておらず（glTF の決まりで 1 ＝ 金属）粗さ 0 なので、
+     * 鏡になって写り込み（環境マップ）をくっきり映し、家の中から見ると部屋の中が、どこでも丘の上の景色が窓に映った。
+     * 金属でないガラス（正面からはほとんど映らず、斜めから見たときだけ空が映る）にする
+     */
+    glass: (name) => /glass/i.test(name),
     /** ルームミラー（GLB のミラーの、運転席側の面に重ねる） */
     mirror: { x: 0.004, y: 1.178, z: 0.175, w: 0.22, h: 0.05 },
     /** メーター（gt3.js が描く速さ・ギア）。この車のメーターの真ん中に、運転席の目のほうへ向けて */
@@ -104,6 +110,11 @@ export async function attachCarModel(model, style, { eyeAt, shell, color = null 
       o.material.emissive.set(0xff2010);
       o.material.emissiveIntensity = tailIntensity;
       if (!model.tailMats.includes(o.material)) model.tailMats.push(o.material);
+    }
+    if (spec.glass?.(m.name) && o.material.metalness > 0) {
+      o.material = mine(m);   // ライトのカバーは上で写した材質（mine は同じ写しを返す）
+      o.material.metalness = 0;
+      o.material.roughness = Math.max(o.material.roughness, 0.05);
     }
   });
 

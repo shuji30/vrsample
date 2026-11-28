@@ -57,6 +57,7 @@
 | `scripts/set_makeup_onepiece2.py` | 肌のつや、チークの位置と広がり、眉の色と高さ（`Girl_Brows["brow_up"]`）、唇の色 |
 | `scripts/set_ear_natural_onepiece2.py` | 耳：4 人目の耳の直し（`custom-ear-*`）を全部 0 にして MakeHuman の素の耳に戻し、大きさ（`ear-scale-decr` 0.35）と頭への寄せ方（`ear-wing-decr` 1.0）だけ決める |
 | `scripts/set_idol_face_onepiece2.py` | 2026-11-28 の直し。`set_vibe` のあとに流す。高さは目の骨（`leftEye` の基本の位置）から決める（靴を替えると体ごと上下するため）。目（横に長いアーモンド形で、上まぶたが黒目の上を少し隠す。たれ目 `custom-idol-eye`）、鼻（短く低く、下げて鼻と口のあいだを狭める。小鼻を小さく）、口（小さく、口角を上げ、横から見て出すぎないよう奥へ）、ほお（ムチッとした丸みは残し、下ほおとあごを少し細く）、眉（UV から形を決めて肌に貼り直す。低め・長め・まん中寄り。影は落とさない）、下まぶたのふちのならし（`custom-lowlid-clean`）、目じりの外と口のまわりのしわ取り（`custom-smooth-wrinkle`）。最後に `set_lash_fit`・`set_blink_fit` を呼び、眉にまばたき・やすらぎの表情キー（肌と同じだけ動く）を作る |
+| `scripts/set_cool_face_onepiece2.py` | 2026-11-29 の直し（いまの顔）。少し大人っぽくすっきりした顔に寄せる。`set_idol_face` に目・鼻・口の値を渡して流し直し（切れ長の目・細く高い鼻すじ・薄めの唇・少し細いあご）、瞳をグレーがかった青に（`Eye` の `IrisRamp`）、下まぶたと目じりのまわりに赤み（頂点の属性 `mk_eyered`・肌の `EyeRedMix`）、唇を薄めの赤に（`set_makeup` に `LIP_IN`・`LIP_OUT`）。昭和のアイドル風に戻すときは、スクリプトの頭の書き方のとおり |
 | `scripts/set_lash_fit_onepiece2.py` | まつ毛を今の目の形に合わせ直す。目を直す前のまつ毛（`_LashOrig_Upper`・`_LashOrig_Lower`。親なし・非表示で保管）を、まぶたのふちの補助メッシュ（`helper-?-eyelashes-*`）の動きで運び、毛の付け根を見えている白目のふちにそろえる。近くの肌の動きの平均で動かしたら、根元が浮いて段になった |
 | `scripts/set_blink_fit_onepiece2.py` | まばたきのキーを、閉じた位置が目を直す前と同じになるよう合わせ直す（元のキーは `_orig-exp-blink*` に保管）。閉じた目のまつ毛が少し波打つのは直す前から |
 | `scripts/make_expressions_extra_onepiece2.py` | 怒り（`exp-angry`）と悲しみ（`exp-sad`）の表情を足す。まばたき・やすらぎ・口角の動きを少しずつ足し、眉のまわりの肌と眉を上げ下げする。眉・まつ毛にも同じ名前のキーを作り、体のキーの値で動かす。書き出しの `EXPS` に入れてある |

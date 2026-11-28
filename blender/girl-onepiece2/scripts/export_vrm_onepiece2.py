@@ -9,7 +9,7 @@ import bpy, bmesh, os, re, math
 import numpy as np
 from mathutils import Vector, Matrix
 
-OUT = "C:\\Users\\shuji\\vrsample\\blender\\girl-onepiece2\\export\\"; os.makedirs(OUT, exist_ok=True)
+OUT = globals().get("OUT", os.path.join(os.path.dirname(bpy.data.filepath), "export", "")); os.makedirs(OUT, exist_ok=True)   # .blend の隣の export/（PC ごとにパスが違うので）
 NAME = globals().get("NAME", "girl-onepiece2"); TITLE = globals().get("TITLE", "Girl (one-piece 2)")      # 出力ファイル名（NAME.vrm）と、モデルの名前
 sc = bpy.context.scene; rig = bpy.data.objects["Girl_Rig"]; arm = rig.data
 EXPS = ("aa", "ih", "ou", "ee", "oh", "happy", "surprised", "blink", "relaxed", "blinkLeft", "blinkRight", "angry", "sad")   # angry・sad は make_expressions_extra_onepiece2.py

@@ -12,6 +12,10 @@ from mathutils import kdtree
 ORIG = globals().get("ORIG", {"eye-height2-decr": 0.3, "custom-eye-slant": 1.0, "custom-eye-almond": 1.0, "eye-scale-incr": 0.5,
                               "custom-idol-eye": 0.0})
 PAIRS = (("_LashOrig_Upper", "Girl_LashStrands"), ("_LashOrig_Lower", "Girl_LashLowerStrands"))
+# 保管したまつ毛は、靴を替えて体が 2.27cm 下がる前の高さのまま。体と一緒に下げてから運ぶ（2026-11-29。
+#   下げずに流すと、まつ毛が目の 2.3cm 上にでき、仕上げで白目のふちを探せずに止まった。今の目の値のまま流して、
+#   ファイルのまつ毛との差を測ると、上 +22.6mm・下 +22.3mm のほぼ平行移動だった）
+ORIG_DZ = globals().get("ORIG_DZ", -0.0227)
 
 ob = bpy.data.objects["Girl_Body"]; kb = ob.data.shape_keys.key_blocks; rig = bpy.data.objects["Girl_Rig"]
 def body_world():
@@ -61,7 +65,7 @@ for src_name, dst_name in PAIRS:
                 if comp[b.index] < 0: comp[b.index] = c; st.append(b)
         c += 1
     bm.free()
-    def world(k): a = np.zeros(n*3); k.data.foreach_get("co", a); a = a.reshape(-1, 3); return a@Ms[:3, :3].T+Ms[:3, 3]
+    def world(k): a = np.zeros(n*3); k.data.foreach_get("co", a); a = a.reshape(-1, 3); return a@Ms[:3, :3].T+Ms[:3, 3]+np.array([0, 0, ORIG_DZ])
     W0 = world(sm.shape_keys.key_blocks[0])
     dl = np.zeros((n, 3))
     for ci in range(c):
@@ -104,7 +108,14 @@ def _edge_z(x, z0, upper):
     return None
 for name, upper in (("Girl_LashStrands", True), ("Girl_LashLowerStrands", False)):
     o = bpy.data.objects[name]; me = o.data; n = len(me.vertices); Mo = np.array(o.matrix_world); Mi = np.linalg.inv(Mo)[:3, :3]
-    co = np.zeros(n*3); me.shape_keys.key_blocks[0].data.foreach_get("co", co); co = co.reshape(-1, 3); W = co@Mo[:3, :3].T+Mo[:3, 3]
+    # 今の形（シェイプキーを混ぜた形）で測る。基本の形（key_blocks[0]）は身長・頭身を変える前の形で、体の今の目より約 3cm 上にあり、
+    #   白目のふちが探す範囲（±6mm）に入らず止まっていた（2026-11-29）。表情のキー（exp-*）は混ぜない
+    _kbs = me.shape_keys.key_blocks; co = np.zeros(n*3); _kbs[0].data.foreach_get("co", co); co = co.reshape(-1, 3); _mix = co.copy()
+    for _k in _kbs[1:]:
+        if _k.mute or _k.value == 0 or _k.name.startswith("exp-") or _k.name.startswith("_"): continue
+        _a = np.zeros(n*3); _k.data.foreach_get("co", _a); _r = np.zeros(n*3); _k.relative_key.data.foreach_get("co", _r)
+        _mix += (_a-_r).reshape(-1, 3)*_k.value
+    W = _mix@Mo[:3, :3].T+Mo[:3, 3]
     bm = bmesh.new(); bm.from_mesh(me); bm.verts.ensure_lookup_table()
     comp = -np.ones(n, int); c = 0
     for v in bm.verts:

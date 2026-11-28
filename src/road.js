@@ -167,14 +167,7 @@ function makeGarage() {
   const lamp = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.05, 0.12), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff4dc, emissiveIntensity: 1.2 }));
   lamp.position.set(cx, G.height - 0.05, cz);
   g.add(lamp);
-  // 奥の棚とタイヤ（飾り）
-  box(0.4, 1.4, 2.0, trim, G.minX + 0.3, 0.7, G.minZ + 1.2).visible = true;
-  const tire = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 });
-  for (let i = 0; i < 3; i++) {
-    const t = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.25, 16), tire));
-    t.position.set(G.minX + 0.4, 0.13 + i * 0.26, G.maxZ - 0.5);
-    g.add(t);
-  }
+  // 奥の棚と積んだタイヤ（飾り）は置かない。ガレージへ戻ってくるときの正面で、黒い壁のように見えてじゃまだった
   return g;
 }
 

@@ -326,6 +326,7 @@ export function createWheelFFB({ bridge = null } = {}) {
   let lastLeds = -1;
   let lastSent = 0;
   let busy = false;
+  let started = false;   // WebHID の FFB を始める命令を送ったか
   let impulse = 0;
   let time = 0;
   let prevAngle = 0;
@@ -354,13 +355,23 @@ export function createWheelFFB({ bridge = null } = {}) {
       status = `FFB の報告が見つかりません（${driver.missing.join(', ')}）。「機器の情報を書き出す」の内容を送ってください`;
       return;
     }
+    lastForce = null;
+    // デバイスブリッジで FFB を出しているときは、始める命令（PID のリセット・アクチュエーターの有効化）を送らない。
+    // 同じハンコンへ送ると、ブリッジ（DirectInput）が作って動かしているエフェクトまで消えてしまう。
+    // ブリッジが使えなくなって WebHID で出すことになったら、そのとき始める（update）
+    started = false;
+    if (bridge?.ffbReady) { status = `${model}：FFB はデバイスブリッジから出しています`; return; }
+    await begin();
+  }
+
+  async function begin() {
     try {
       await driver.start();
-      status = `${model}：FFB を送っています（${driver === null ? '' : d.vendorId === LOGITECH ? 'Logitech' : 'HID PID'}）`;
+      started = true;
+      status = `${model}：FFB を送っています（${device.vendorId === LOGITECH ? 'Logitech' : 'HID PID'}）`;
     } catch (error) {
       status = `${model}：FFB を始められませんでした（${error?.message ?? error}）`;
     }
-    lastForce = null;
   }
 
   async function reconnect() {
@@ -453,6 +464,10 @@ export function createWheelFFB({ bridge = null } = {}) {
     // ブリッジに FFB の機器があれば、そちらへ出す（WebHID へは出さない。同じハンコンへ二重に出さないように）
     if (bridge?.ffbReady) { updateBridge(dt, t); return; }
     if (!device?.opened || !driver?.ok) return;
+    if (!started) {
+      if (!busy) { busy = true; begin().finally(() => { busy = false; }); }
+      return;
+    }
     let force = 0;
     if (t.driving) {
       const a = clamp(t.angle / Math.max(10, t.fullDegrees), -1.5, 1.5);
@@ -486,6 +501,10 @@ export function createWheelFFB({ bridge = null } = {}) {
   function release() {
     lastForce = 0;
     if (bridge?.connected) { bridge.stop(); bridgeActive = false; }
+    // ブリッジで FFB を出しているときは、WebHID からは止める命令を送らない（PID の Stop All Effects や Logitech の
+    // 停止は、ブリッジが DirectInput で動かしているエフェクトまで止めてしまう。止まったエフェクトはブリッジが力を
+    // 変えても動き出さないので、降りたあと FFB が効かなくなっていた）。力を 0 にするのはブリッジに任せる
+    if (bridge?.ffbReady || !started) return;
     driver?.stop?.().catch(() => {});
     if (driver?.leds) driver.leds(0).catch(() => {});
   }
